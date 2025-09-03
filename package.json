@@ -1,7 +1,7 @@
-{
+﻿{
     "name": "gradeflow",
     "private": true,
-    "version": "0.0.0",
+    "version": "1.0.0",
     "type": "module",
     "scripts": {
         "dev": "vite --host",
@@ -12,6 +12,10 @@
         "optimize": "vite optimize",
         "preview": "vite preview",
         "heroku-postbuild": "npm install --include=dev && npm run build && cd backend && npm install && npm run build"
+    },
+    "engines": {
+        "node": "20.x",
+        "npm": "10.x"
     },
     "dependencies": {
         "@github/spark": "^0.0.1",
