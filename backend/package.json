@@ -1,0 +1,43 @@
+{
+  "name": "gradeflow-backend",
+  "version": "1.0.0",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "nodemon --watch src --ext ts,js --exec ts-node src/server.ts",
+    "start": "node dist/server.js",
+    "heroku-postbuild": "npm run build",
+    "migrate": "ts-node src/database/migrations.ts",
+    "test": "jest"
+  },
+  "author": "",
+  "dependencies": {
+    "@types/multer": "^2.0.0",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.1",
+    "joi": "^18.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.0.2",
+    "nodemailer": "^6.9.7",
+    "nodemon": "^3.1.10",
+    "pg": "^8.11.3",
+    "react-router-dom": "^7.8.0",
+    "typescript": "^5.9.2"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/cors": "^2.8.19",
+    "@types/dotenv": "^8.2.3",
+    "@types/express": "^4.17.23",
+    "@types/express-rate-limit": "^6.0.2",
+    "@types/helmet": "^4.0.0",
+    "@types/joi": "^17.2.3",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^24.2.0",
+    "@types/nodemailer": "^6.4.17",
+    "@types/pg": "^8.15.5",
+    "jest": "^29.7.0",
+    "ts-node": "^10.9.2"
+  }
+}

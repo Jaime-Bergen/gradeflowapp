@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: teachergrade_db
+      POSTGRES_USER: teachergrade_user
+      POSTGRES_PASSWORD: Teach&Learn
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  backend:
+    build: 
+      context: .
+      dockerfile: ./backend/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    ports:
+      - "3003:3003"
+    depends_on:
+      - db
+    volumes:
+      - ./backend:/usr/src/app
+      - /usr/src/app/node_modules
+      - ./dist:/usr/src/app/dist
+
+  frontend:
+    build:
+      context: .
+      dockerfile: ./frontend.Dockerfile
+    volumes:
+      - ./src:/usr/src/app/src
+      - ./public:/usr/src/app/public
+    ports:
+      - "5173:5173"
+    command: npm run dev -- --host
+
+volumes:
+  db_data:

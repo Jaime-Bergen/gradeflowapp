@@ -1,0 +1,11 @@
+
+        /* Button color classes */
+        .edit-btn { background-color: #2196F3; }
+        .delete-btn { background-color: #f44336; }
+        .clear-btn { background-color: #607d8b; }
+        
+        button:hover, .quotation-btn:hover, .clear-btn:hover, .duplicate-btn:hover, .calc-btn:hover {
+            background-color: #5a6268;
+            border-color: #545b62;
+        }
+        
