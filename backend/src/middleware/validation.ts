@@ -63,7 +63,7 @@ export const schemas = {
   grade: Joi.object({
     percentage: Joi.number().min(0).max(100).optional(),
     errors: Joi.number().min(0).optional(), // Allow decimal errors (e.g., 2.5)
-    points: Joi.number().integer().min(1).optional()
+    points: Joi.number().integer().min(1).optional() // Keep as integer for total points
   }),
 
   kv: Joi.object({

@@ -23,6 +23,7 @@ export const runMigrations = async (): Promise<void> => {
     await createStudentGroupLinksJunctionTable(db);
     await removeLessonTypeConstraint(db);
     await removeLegacyWeightColumns(db);
+    await updateGradesErrorsColumnType(db);
     await seedDefaultGradeCategoryTypes(db);
     
     console.log('All migrations completed successfully');
@@ -598,6 +599,19 @@ const addSchoolSettingsToUsers = async (db: any) => {
     console.log('✅ Added school settings columns to users table');
   } catch (error) {
     console.error('Error adding school settings to users table:', error);
+    throw error;
+  }
+};
+
+const updateGradesErrorsColumnType = async (db: any) => {
+  try {
+    await db.query(`
+      ALTER TABLE grades 
+      ALTER COLUMN errors TYPE DECIMAL(5,2)
+    `);
+    console.log('✅ Updated grades.errors column to support decimal values');
+  } catch (error) {
+    console.error('Error updating grades column types:', error);
     throw error;
   }
 };
