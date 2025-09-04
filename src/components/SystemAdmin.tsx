@@ -135,7 +135,7 @@ export default function SystemAdmin() {
                             Array.isArray((categoriesRes as any).data) ? (categoriesRes as any).data : []
       setGradeCategoryTypes(categoriesData)
 
-      // Load settings from KV store
+      // Load settings from Users
       await loadSettings()
 
       setLastRefresh(new Date())
@@ -242,9 +242,14 @@ export default function SystemAdmin() {
     }
 
     try {
-      const groupData = {
-        name: groupForm.name.trim(),
-        description: groupForm.description.trim()
+      const groupData: any = {
+        name: groupForm.name.trim()
+      }
+
+      // Only include description if it's not empty
+      const description = groupForm.description.trim()
+      if (description) {
+        groupData.description = description
       }
 
       if (groupDialog.mode === 'edit' && groupDialog.group) {

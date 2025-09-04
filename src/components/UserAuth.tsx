@@ -110,6 +110,26 @@ export default function UserAuth({ onUserChange }: UserAuthProps) {
       if (response.data) {
         setCurrentUser(response.data.user)
         onUserChange(response.data.user)
+        
+        // Create default grade category types for new user
+        try {
+          const defaultCategories = [
+            { name: 'Lesson', description: 'Regular lesson activities', sort_order: 0, is_active: true, is_default: true },
+            { name: 'Test', description: 'Major assessments', sort_order: 1, is_active: true, is_default: false },
+            { name: 'Quiz', description: 'Short assessments', sort_order: 2, is_active: false, is_default: false },
+            { name: 'Project', description: 'Long-term assignments', sort_order: 3, is_active: false, is_default: false }
+          ]
+          
+          for (const category of defaultCategories) {
+            await apiClient.createGradeCategoryType(category)
+          }
+          
+          console.log('Default grade category types created successfully')
+        } catch (categoryError) {
+          console.warn('Failed to create default grade categories:', categoryError)
+          // Don't show error to user as account was still created successfully
+        }
+        
         toast.success('Account created successfully!')
         setShowDialog(false)
         resetForm()
