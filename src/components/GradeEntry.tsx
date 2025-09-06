@@ -90,6 +90,12 @@ export default function GradeEntry() {
     const categoryType = gradeCategoryTypes.find(cat => cat.name === typeName);
     return categoryType?.id;
   };
+
+  // Helper function to get category color from type name
+  const getCategoryColor = (typeName: string): string => {
+    const categoryType = gradeCategoryTypes.find(cat => cat.name === typeName);
+    return categoryType?.color || '#6366f1'; // Default color
+  };
   const gridRef = useRef<HTMLDivElement>(null)
   const inputRefs = useRef<Record<string, HTMLInputElement>>({})
   const lessonPointsRef = useRef<HTMLInputElement>(null)

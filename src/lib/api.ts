@@ -232,14 +232,14 @@ class ApiClient {
     return this.request('/grade-category-types/active');
   }
 
-  async createGradeCategoryType(data: { name: string; description?: string; sort_order?: number; is_active?: boolean; is_default?: boolean }) {
+  async createGradeCategoryType(data: { name: string; description?: string; is_active?: boolean; is_default?: boolean; color?: string }) {
     return this.request('/grade-category-types', {
       method: 'POST',
       body: JSON.stringify(data),
     });
   }
 
-  async updateGradeCategoryType(id: string, data: { name: string; description?: string; sort_order?: number; is_active?: boolean; is_default?: boolean }) {
+  async updateGradeCategoryType(id: string, data: { name: string; description?: string; is_active?: boolean; is_default?: boolean; color?: string }) {
     return this.request(`/grade-category-types/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),

@@ -24,6 +24,7 @@ export const runMigrations = async (): Promise<void> => {
     await removeLessonTypeConstraint(db);
     await removeLegacyWeightColumns(db);
     await updateGradesErrorsColumnType(db);
+    await addColorToGradeCategoryTypes(db);
     await seedDefaultGradeCategoryTypes(db);
     
     console.log('All migrations completed successfully');
@@ -612,6 +613,31 @@ const updateGradesErrorsColumnType = async (db: any) => {
     console.log('✅ Updated grades.errors column to support decimal values');
   } catch (error) {
     console.error('Error updating grades column types:', error);
+    throw error;
+  }
+};
+
+const addColorToGradeCategoryTypes = async (db: any) => {
+  try {
+    // Add color column if it doesn't exist
+    await db.query(`
+      ALTER TABLE grade_category_types 
+      ADD COLUMN IF NOT EXISTS color VARCHAR(7) DEFAULT '#6366f1'
+    `);
+    
+    // Update sort_order to be auto-managed based on creation order
+    await db.query(`
+      UPDATE grade_category_types 
+      SET sort_order = (
+        SELECT ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY created_at) - 1
+        FROM grade_category_types gct2 
+        WHERE gct2.id = grade_category_types.id
+      )
+    `);
+    
+    console.log('✅ Added color column and updated sort_order to be auto-managed');
+  } catch (error) {
+    console.error('Error adding color to grade category types:', error);
     throw error;
   }
 };

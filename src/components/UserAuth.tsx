@@ -114,10 +114,10 @@ export default function UserAuth({ onUserChange }: UserAuthProps) {
         // Create default grade category types for new user
         try {
           const defaultCategories = [
-            { name: 'Lesson', description: 'Regular lesson activities', sort_order: 0, is_active: true, is_default: true },
-            { name: 'Test', description: 'Major assessments', sort_order: 1, is_active: true, is_default: false },
-            { name: 'Quiz', description: 'Short assessments', sort_order: 2, is_active: true, is_default: false },
-            { name: 'Project', description: 'Long-term assignments', sort_order: 3, is_active: true, is_default: false }
+            { name: 'Lesson', description: 'Regular lesson activities', is_active: true, is_default: true, color: '#6366f1' },
+            { name: 'Test', description: 'Major assessments', is_active: true, is_default: false, color: '#dc2626' },
+            { name: 'Quiz', description: 'Short assessments', is_active: true, is_default: false, color: '#f59e0b' },
+            { name: 'Project', description: 'Long-term assignments', is_active: true, is_default: false, color: '#059669' }
           ]
           
           for (const category of defaultCategories) {
