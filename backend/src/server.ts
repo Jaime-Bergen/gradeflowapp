@@ -15,6 +15,8 @@ import gradeRoutes from './routes/grades';
 import gradeCategoryTypesRoutes from './routes/gradeCategoryTypes';
 import reportRoutes from './routes/reports';
 import restoreRoutes from './routes/restore';
+import metadataRoutes from './routes/metadata';
+import backupRoutes from './routes/backups';
 import { errorHandler } from './middleware/errorHandler';
 import { authenticateToken } from './middleware/auth';
 
@@ -74,6 +76,8 @@ app.use('/api/grades', authenticateToken, gradeRoutes);
 app.use('/api/grade-category-types', authenticateToken, gradeCategoryTypesRoutes);
 app.use('/api/reports', authenticateToken, reportRoutes);
 app.use('/api/lessons', authenticateToken, lessonsRoutes);
+app.use('/api/metadata', metadataRoutes);
+app.use('/api/backups', backupRoutes);
 app.use('/api', restoreRoutes); // Restore routes (includes authentication)
 
 // Serve static files from the frontend build

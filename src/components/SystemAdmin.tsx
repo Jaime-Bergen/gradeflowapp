@@ -73,7 +73,7 @@ export default function SystemAdmin() {
   const [categoryForm, setCategoryForm] = useState({
     name: '',
     description: '',
-    sort_order: 0,
+    color: '#6366f1',
     is_default: false
   })
 
@@ -336,7 +336,7 @@ export default function SystemAdmin() {
       const updatedCategory = { 
         name: category.name,
         description: category.description,
-        sort_order: category.sort_order,
+        color: category.color,
         is_active: !category.is_active,
         is_default: category.is_default
       }
@@ -360,14 +360,14 @@ export default function SystemAdmin() {
       setCategoryForm({
         name: category.name || '',
         description: category.description || '',
-        sort_order: category.sort_order || 0,
+        color: category.color || '#6366f1',
         is_default: category.is_default || false
       })
     } else {
       setCategoryForm({
         name: '',
         description: '',
-        sort_order: gradeCategoryTypes.length,
+        color: '#6366f1',
         is_default: false
       })
     }
@@ -378,7 +378,7 @@ export default function SystemAdmin() {
     setCategoryForm({
       name: '',
       description: '',
-      sort_order: 0,
+      color: '#6366f1',
       is_default: false
     })
   }
@@ -393,7 +393,7 @@ export default function SystemAdmin() {
       const categoryData = {
         name: categoryForm.name.trim(),
         description: categoryForm.description.trim(),
-        sort_order: categoryForm.sort_order,
+        color: categoryForm.color,
         is_active: categoryDialog.mode === 'edit' && categoryDialog.category ? categoryDialog.category.is_active : true,
         is_default: categoryForm.is_default
       }
@@ -933,7 +933,14 @@ export default function SystemAdmin() {
                   {gradeCategoryTypes.map((category, index) => (
                     <div key={category.id || index} className="p-4 bg-muted/30 rounded-lg border">
                       <div className="flex items-center justify-between mb-2">
-                        <h4 className="font-medium">{category.name || `Category ${index + 1}`}</h4>
+                        <div className="flex items-center gap-2">
+                          <div 
+                            className="w-4 h-4 rounded-full border-2 border-gray-300"
+                            style={{ backgroundColor: category.color || '#6366f1' }}
+                            title={`Color: ${category.color || '#6366f1'}`}
+                          />
+                          <h4 className="font-medium">{category.name || `Category ${index + 1}`}</h4>
+                        </div>
                         <div className="flex items-center gap-2">
                           <div className="flex items-center gap-2">
                             <Label htmlFor={`active-${category.id}`} className="text-sm">Active</Label>
@@ -943,9 +950,6 @@ export default function SystemAdmin() {
                               onCheckedChange={() => toggleCategoryActive(category)}
                             />
                           </div>
-                          <Badge variant="outline">
-                            {category.sort_order}
-                          </Badge>
                           <Button 
                             size="icon" 
                             variant="ghost" 
@@ -970,7 +974,7 @@ export default function SystemAdmin() {
                         <p className="text-sm text-muted-foreground mb-2">{category.description}</p>
                       )}
                       <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <span>Order: {category.sort_order}</span>
+                        <span>Color: {category.color || '#6366f1'}</span>
                         {category.is_default && <Badge variant="secondary" className="text-xs">Default</Badge>}
                       </div>
                     </div>
@@ -1116,15 +1120,23 @@ export default function SystemAdmin() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="category-sort-order">Sort Order</Label>
-              <Input
-                id="category-sort-order"
-                type="number"
-                min={0}
-                value={categoryForm.sort_order}
-                onChange={(e) => setCategoryForm(prev => ({ ...prev, sort_order: parseInt(e.target.value) || 0 }))}
-                placeholder="Display order (lower numbers appear first)"
-              />
+              <Label htmlFor="category-color">Color</Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  id="category-color"
+                  type="color"
+                  value={categoryForm.color}
+                  onChange={(e) => setCategoryForm(prev => ({ ...prev, color: e.target.value }))}
+                  className="w-16 h-10 p-1 rounded border"
+                />
+                <Input
+                  type="text"
+                  value={categoryForm.color}
+                  onChange={(e) => setCategoryForm(prev => ({ ...prev, color: e.target.value }))}
+                  placeholder="#6366f1"
+                  className="flex-1"
+                />
+              </div>
             </div>
             <div className="flex items-center space-x-2">
               <Switch

@@ -17,6 +17,8 @@ export const runMigrations = async (): Promise<void> => {
     await createGradesTable(db);
     await createStudentSubjectsTable(db);
     await createSubjectWeightsTable(db);
+    await createUserMetadataTable(db);
+    await createUserBackupsTable(db);
     
     // Run essential data migrations only
     await createSubjectGroupsJunctionTable(db);
@@ -26,6 +28,7 @@ export const runMigrations = async (): Promise<void> => {
     await updateGradesErrorsColumnType(db);
     await addColorToGradeCategoryTypes(db);
     await seedDefaultGradeCategoryTypes(db);
+    await populateUserMetadata(db);
     
     console.log('All migrations completed successfully');
   } catch (error) {
@@ -555,12 +558,12 @@ const seedDefaultGradeCategoryTypes = async (db: any) => {
     const usersResult = await db.query('SELECT id FROM users');
     
     const defaultCategories = [
-      { name: 'Lesson', description: 'Regular classroom lessons and homework', sort_order: 1, is_default: true },
-      { name: 'Review', description: 'Review assignments and practice work', sort_order: 2, is_default: false },
-      { name: 'Quiz', description: 'Short assessments and quizzes', sort_order: 3, is_default: false },
-      { name: 'Test', description: 'Major tests and exams', sort_order: 4, is_default: false },
-      { name: 'Project', description: 'Long-term projects and assignments', sort_order: 5, is_default: false },
-      { name: 'Participation', description: 'Class participation and engagement', sort_order: 6, is_default: false }
+      { name: 'Lesson', description: 'Regular classroom lessons and homework', is_default: true, is_active: true, color: '#6366f1' },
+      { name: 'Review', description: 'Review assignments and practice work', is_default: false, is_active: false, color: '#10b981' },
+      { name: 'Quiz', description: 'Short assessments and quizzes', is_default: false, is_active: false, color: '#f59e0b' },
+      { name: 'Test', description: 'Major tests and exams', is_default: false, is_active: true, color: '#ef4444' },
+      { name: 'Project', description: 'Long-term projects and assignments', is_default: false, is_active: false, color: '#8b5cf6' },
+      { name: 'Participation', description: 'Class participation and engagement', is_default: false, is_active: false, color: '#06b6d4' }
     ];
     
     for (const user of usersResult.rows) {
@@ -574,10 +577,10 @@ const seedDefaultGradeCategoryTypes = async (db: any) => {
         // Insert default categories for this user
         for (const category of defaultCategories) {
           await db.query(`
-            INSERT INTO grade_category_types (user_id, name, description, sort_order, is_default)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO grade_category_types (user_id, name, description, is_default, is_active, color)
+            VALUES ($1, $2, $3, $4, $5, $6)
             ON CONFLICT (user_id, name) DO NOTHING
-          `, [user.id, category.name, category.description, category.sort_order, category.is_default]);
+          `, [user.id, category.name, category.description, category.is_default, category.is_active, category.color]);
         }
       }
     }
@@ -638,6 +641,132 @@ const addColorToGradeCategoryTypes = async (db: any) => {
     console.log('✅ Added color column and updated sort_order to be auto-managed');
   } catch (error) {
     console.error('Error adding color to grade category types:', error);
+    throw error;
+  }
+};
+
+const createUserMetadataTable = async (db: any) => {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS user_metadata (
+      user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      data_version VARCHAR(20) DEFAULT '2.0.0',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  console.log('✅ User metadata table created/verified');
+};
+
+const createUserBackupsTable = async (db: any) => {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS user_backups (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      backup_timestamp VARCHAR(50) NOT NULL,
+      backup_data JSONB NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(user_id, backup_timestamp)
+    );
+    
+    CREATE INDEX IF NOT EXISTS idx_user_backups_user_id ON user_backups(user_id);
+    CREATE INDEX IF NOT EXISTS idx_user_backups_timestamp ON user_backups(user_id, backup_timestamp);
+  `);
+  console.log('✅ User backups table created/verified');
+};
+
+const populateUserMetadata = async (db: any) => {
+  try {
+    // Create default metadata for all existing users
+    const usersResult = await db.query('SELECT id FROM users');
+    
+    for (const user of usersResult.rows) {
+      // Insert default metadata if it doesn't exist
+      await db.query(`
+        INSERT INTO user_metadata (user_id, data_version)
+        VALUES ($1, $2)
+        ON CONFLICT (user_id) DO NOTHING
+      `, [user.id, '2.0.0']);
+    }
+    
+    console.log('✅ Populated user metadata for existing users');
+  } catch (error) {
+    console.error('Error populating user metadata:', error);
+    throw error;
+  }
+};
+
+const addCategoryIdToLessons = async (db: any) => {
+  try {
+    // Add category_id column as foreign key to grade_category_types
+    await db.query(`
+      ALTER TABLE lessons 
+      ADD COLUMN IF NOT EXISTS category_id UUID REFERENCES grade_category_types(id) ON DELETE SET NULL
+    `);
+    
+    // Migrate existing lesson types to category_id foreign keys
+    // For each user, find or create matching category types and update lessons
+    const usersResult = await db.query(`
+      SELECT DISTINCT u.id as user_id 
+      FROM users u 
+      JOIN subjects s ON s.user_id = u.id 
+      JOIN lessons l ON l.subject_id = s.id
+    `);
+    
+    for (const user of usersResult.rows) {
+      // Get all unique lesson types for this user's lessons
+      const lessonTypesResult = await db.query(`
+        SELECT DISTINCT l.type 
+        FROM lessons l 
+        JOIN subjects s ON l.subject_id = s.id 
+        WHERE s.user_id = $1 AND l.type IS NOT NULL
+      `, [user.user_id]);
+      
+      for (const typeRow of lessonTypesResult.rows) {
+        const typeName = typeRow.type;
+        
+        // Find or create matching category type
+        let categoryResult = await db.query(`
+          SELECT id FROM grade_category_types 
+          WHERE user_id = $1 AND name = $2
+        `, [user.user_id, typeName]);
+        
+        if (categoryResult.rows.length === 0) {
+          // Create new category type for this lesson type
+          categoryResult = await db.query(`
+            INSERT INTO grade_category_types (user_id, name, description, is_default, sort_order, color) 
+            VALUES ($1, $2, $3, $4, $5, $6) 
+            RETURNING id
+          `, [
+            user.user_id, 
+            typeName, 
+            `Auto-migrated from lesson type: ${typeName}`,
+            typeName.toLowerCase() === 'lesson',
+            999, // High sort order for migrated types
+            '#6366f1' // Default color
+          ]);
+        }
+        
+        const categoryId = categoryResult.rows[0].id;
+        
+        // Update all lessons of this type for this user
+        await db.query(`
+          UPDATE lessons 
+          SET category_id = $1 
+          WHERE subject_id IN (
+            SELECT id FROM subjects WHERE user_id = $2
+          ) AND type = $3 AND category_id IS NULL
+        `, [categoryId, user.user_id, typeName]);
+      }
+    }
+    
+    // Create index for the new foreign key
+    await db.query(`
+      CREATE INDEX IF NOT EXISTS idx_lessons_category_id ON lessons(category_id)
+    `);
+    
+    console.log('✅ Added category_id foreign key to lessons and migrated existing data');
+  } catch (error) {
+    console.error('Error adding category_id to lessons:', error);
     throw error;
   }
 };

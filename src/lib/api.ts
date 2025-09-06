@@ -418,6 +418,73 @@ class ApiClient {
 
     return response.json();
   }
+
+  // Metadata methods (replaces KV metadata operations)
+  async getUserMetadata() {
+    return this.request<{
+      user_id: string;
+      data_version: string;
+      created_at: string;
+      updated_at: string;
+      student_count: number;
+      subject_count: number;
+      grade_count: number;
+    }>('/metadata');
+  }
+
+  async getDataStats() {
+    return this.request<{
+      totalUsers: number;
+      totalStudents: number;
+      totalSubjects: number;
+      totalGrades: number;
+      storageSize: number;
+      lastBackup?: string;
+    }>('/metadata/stats');
+  }
+
+  // Backup methods (replaces KV backup operations)
+  async createBackup() {
+    return this.request<{
+      message: string;
+      backup: {
+        id: string;
+        timestamp: string;
+        createdAt: string;
+        studentCount: number;
+        subjectCount: number;
+        gradeCount: number;
+      };
+    }>('/backups/create', { method: 'POST' });
+  }
+
+  async listBackups() {
+    return this.request<Array<{
+      id: string;
+      timestamp: string;
+      createdAt: string;
+      metadata: {
+        studentCount: number;
+        subjectCount: number;
+        gradeCount: number;
+      };
+    }>>('/backups/list');
+  }
+
+  async restoreFromBackup(timestamp: string) {
+    return this.request<{
+      message: string;
+      restored: {
+        studentCount: number;
+        subjectCount: number;
+        gradeCount: number;
+      };
+    }>(`/backups/restore/${timestamp}`, { method: 'POST' });
+  }
+
+  async deleteBackup(timestamp: string) {
+    return this.request<{ message: string }>(`/backups/${timestamp}`, { method: 'DELETE' });
+  }
 }
 
 // Create a singleton instance

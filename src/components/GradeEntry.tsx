@@ -1566,11 +1566,18 @@ const saveGrade = async (studentId: string) => {
                         .map(lesson => (
                         <th
                           key={lesson.id}
-                          className={`text-center p-2 font-medium min-w-[100px] ${
-                            !isDefaultLessonType(lesson.type)
-                              ? 'bg-blue-50 border-blue-200 border-x-2'
-                              : 'bg-muted/30'
-                          }`}
+                          className={`text-center p-2 font-medium min-w-[100px]`}
+                          style={{
+                            backgroundColor: !isDefaultLessonType(lesson.type) 
+                              ? `${getCategoryColor(lesson.type)}20` 
+                              : 'hsl(var(--muted))',
+                            borderLeft: !isDefaultLessonType(lesson.type) 
+                              ? `2px solid ${getCategoryColor(lesson.type)}` 
+                              : undefined,
+                            borderRight: !isDefaultLessonType(lesson.type) 
+                              ? `2px solid ${getCategoryColor(lesson.type)}` 
+                              : undefined
+                          }}
                         >
                           {editingLesson === lesson.id ? (
                             <div className="space-y-1">
@@ -1614,8 +1621,8 @@ const saveGrade = async (studentId: string) => {
                                 {lesson.name}
                               </div>
                               <Badge
-                                variant={!isDefaultLessonType(lesson.type) ? 'default' : 'outline'}
-                                className="text-xs"
+                                className="text-xs text-white border-0"
+                                style={{ backgroundColor: getCategoryColor(lesson.type) }}
                               >
                                 {lesson.type}
                               </Badge>
@@ -1694,9 +1701,12 @@ const saveGrade = async (studentId: string) => {
                           return (
                             <td
                               key={lesson.id}
-                              className={`text-center p-2 border-x border-border cursor-pointer hover:bg-muted/50 transition-colors ${
-                                !isDefaultLessonType(lesson.type) ? 'bg-blue-50/50' : ''
-                              }`}
+                              className={`text-center p-2 border-x border-border cursor-pointer hover:bg-muted/50 transition-colors`}
+                              style={{ 
+                                backgroundColor: !isDefaultLessonType(lesson.type) 
+                                  ? `${getCategoryColor(lesson.type)}10` 
+                                  : undefined 
+                              }}
                               onClick={() => {
                                 if (editingCell?.studentId === student.id && editingCell?.lessonId === lesson.id) {
                                   return; // Already editing this cell
@@ -2049,7 +2059,10 @@ const saveGrade = async (studentId: string) => {
                               <SelectItem key={lesson.id} value={lesson.id}>
                                 <div className={`flex items-center gap-2 ${hasGrades ? 'text-green-700' : 'text-gray-600'}`}>
                                   <span className={hasGrades ? 'font-medium' : ''}>{lesson.name}</span>
-                                  <Badge variant="outline" className={`text-xs ${hasGrades ? 'border-green-300 bg-green-50' : ''}`}>
+                                  <Badge 
+                                    className={`text-xs text-white border-0 ${hasGrades ? 'opacity-90' : ''}`}
+                                    style={{ backgroundColor: getCategoryColor(lesson.type) }}
+                                  >
                                     {lesson.type}
                                   </Badge>
                                   <Badge variant="outline" className={`text-xs ${hasGrades ? 'border-green-300 bg-green-50' : ''}`}>
@@ -2365,7 +2378,12 @@ const saveGrade = async (studentId: string) => {
                 <CardContent className="space-y-3">
                   <div>
                     <Label className="text-sm">Type</Label>
-                    <Badge className="ml-2 capitalize">{selectedLesson.type}</Badge>
+                    <Badge 
+                      className="ml-2 capitalize text-white border-0"
+                      style={{ backgroundColor: getCategoryColor(selectedLesson.type) }}
+                    >
+                      {selectedLesson.type}
+                    </Badge>
                   </div>
                   <div>
                     <Label className="text-sm">Max Points</Label>
@@ -2478,13 +2496,20 @@ const saveGrade = async (studentId: string) => {
                 </div>
                 <div>
                   <Label htmlFor="edit-lesson-type">Type</Label>
-                  <select id="edit-lesson-type" name="type" defaultValue={editLessonDialog.lesson.type} className="w-full border rounded px-2 py-1">
-                    {gradeCategoryTypes.map(categoryType => (
-                      <option key={categoryType.id} value={categoryType.name}>
-                        {categoryType.name}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="flex items-center gap-2">
+                    <select id="edit-lesson-type" name="type" defaultValue={editLessonDialog.lesson.type} className="flex-1 border rounded px-2 py-1">
+                      {gradeCategoryTypes.map(categoryType => (
+                        <option key={categoryType.id} value={categoryType.name}>
+                          {categoryType.name}
+                        </option>
+                      ))}
+                    </select>
+                    <div 
+                      className="w-4 h-4 rounded-full border border-gray-300"
+                      style={{ backgroundColor: getCategoryColor(editLessonDialog.lesson.type) }}
+                      title={`Color for ${editLessonDialog.lesson.type}`}
+                    ></div>
+                  </div>
                 </div>
                 <div>
                   <Label htmlFor="edit-lesson-points">Points</Label>
