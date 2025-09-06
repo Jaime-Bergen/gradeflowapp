@@ -24,7 +24,7 @@ router.get('/student/:studentId', async (req: AuthRequest, res, next) => {
     
     // Get all subjects and grades for this student
     const subjectsResult = await db.query(
-      `SELECT DISTINCT s.id, s.name, s.lesson_weight, s.review_weight, s.test_weight, s.quiz_weight
+      `SELECT DISTINCT s.id, s.name
        FROM subjects s
        JOIN lessons l ON s.id = l.subject_id
        LEFT JOIN grades g ON l.id = g.lesson_id AND g.student_id = $1
@@ -42,49 +42,68 @@ router.get('/student/:studentId', async (req: AuthRequest, res, next) => {
     for (const subject of subjectsResult.rows) {
       const gradesResult = await db.query(
         `SELECT 
-          l.id as lesson_id, l.name as lesson_name, l.type as lesson_type, l.points as lesson_points,
-          g.percentage, g.errors, g.points as grade_points
+          l.id as lesson_id, l.name as lesson_name, l.category_id, l.points as lesson_points,
+          g.percentage, g.errors, g.points as grade_points,
+          gct.name as lesson_type
          FROM lessons l
          LEFT JOIN grades g ON l.id = g.lesson_id AND g.student_id = $1
+         LEFT JOIN grade_category_types gct ON l.category_id = gct.id
          WHERE l.subject_id = $2
          ORDER BY l.order_index`,
         [studentId, subject.id]
       );
       
-      // Calculate weighted average
+      // Get weights for this subject using category_id directly
+      const weightsResult = await db.query(
+        `SELECT category_id, weight
+         FROM subject_weights sw
+         WHERE sw.subject_id = $1`,
+        [subject.id]
+      );
+      
+      // Convert weights to a map for direct lookup by category_id
+      const weights = {};
+      weightsResult.rows.forEach(row => {
+        weights[row.category_id] = row.weight;
+      });
+      
+      // Group grades by category_id (not lesson_type string)
+      const gradesByCategory = {};
+      gradesResult.rows.forEach(grade => {
+        if (grade.percentage !== null && grade.category_id) {
+          if (!gradesByCategory[grade.category_id]) {
+            gradesByCategory[grade.category_id] = [];
+          }
+          gradesByCategory[grade.category_id].push(grade.percentage);
+        }
+      });
+      
+      // Calculate averages by category and apply weights - direct lookup!
       let totalWeightedPoints = 0;
       let totalWeight = 0;
-      const gradesByType = { lesson: [], review: [], test: [], quiz: [] };
-      
-      gradesResult.rows.forEach(grade => {
-        if (grade.percentage !== null) {
-          gradesByType[grade.lesson_type].push(grade.percentage);
-        }
-      });
-      
-      // Calculate averages by type and apply weights
-      const weights = {
-        lesson: subject.lesson_weight,
-        review: subject.review_weight,
-        test: subject.test_weight,
-        quiz: subject.quiz_weight
-      };
-      
-      let weightedAverage = null;
       const typeAverages = {};
       
-      Object.keys(gradesByType).forEach(type => {
-        if (gradesByType[type].length > 0) {
-          const avg = gradesByType[type].reduce((sum, grade) => sum + grade, 0) / gradesByType[type].length;
-          typeAverages[type] = Math.round(avg * 10) / 10;
-          totalWeightedPoints += avg * weights[type];
-          totalWeight += weights[type];
+      Object.keys(gradesByCategory).forEach(categoryId => {
+        const categoryGrades = gradesByCategory[categoryId];
+        if (categoryGrades.length > 0) {
+          const avg = categoryGrades.reduce((sum, grade) => sum + grade, 0) / categoryGrades.length;
+          
+          // Get the lesson type name for display purposes
+          const sampleGrade = gradesResult.rows.find(g => g.category_id === categoryId);
+          const lessonTypeName = sampleGrade?.lesson_type || 'Unknown';
+          typeAverages[lessonTypeName] = Math.round(avg * 10) / 10;
+          
+          // Use direct weight lookup by category_id - no guessing needed!
+          const weight = weights[categoryId] || 0;
+          totalWeightedPoints += avg * weight;
+          totalWeight += weight;
         }
       });
       
+      let weightedAverage = null;
       if (totalWeight > 0) {
         weightedAverage = Math.round((totalWeightedPoints / totalWeight) * 10) / 10;
-      }
+      } 
       
       reportData.subjects.push({
         ...subject,
@@ -147,7 +166,7 @@ router.get('/group/:groupId', async (req: AuthRequest, res, next) => {
       for (const subject of subjectsResult.rows) {
         // Get grades for this student in this subject
         const gradesResult = await db.query(
-          `SELECT g.percentage, l.type
+          `SELECT g.percentage, l.category_id
            FROM grades g
            JOIN lessons l ON g.lesson_id = l.id
            WHERE g.student_id = $1 AND l.subject_id = $2`,
@@ -155,28 +174,40 @@ router.get('/group/:groupId', async (req: AuthRequest, res, next) => {
         );
         
         if (gradesResult.rows.length > 0) {
-          // Calculate weighted average for this subject
-          const gradesByType: { [key: string]: number[] } = { lesson: [], review: [], test: [], quiz: [] };
+          // Get weights for this subject using category_id directly
+          const weightsResult = await db.query(
+            `SELECT category_id, weight
+             FROM subject_weights sw
+             WHERE sw.subject_id = $1`,
+            [subject.id]
+          );
           
-          gradesResult.rows.forEach((grade: any) => {
-            gradesByType[grade.type].push(grade.percentage);
+          // Convert weights to a map for direct lookup by category_id
+          const weights: { [key: string]: number } = {};
+          weightsResult.rows.forEach((row: any) => {
+            weights[row.category_id] = row.weight;
           });
           
-          const weights: { [key: string]: number } = {
-            lesson: subject.lesson_weight,
-            review: subject.review_weight,
-            test: subject.test_weight,
-            quiz: subject.quiz_weight
-          };
+          // Group grades by category_id directly
+          const gradesByCategory: { [key: string]: number[] } = {};
+          gradesResult.rows.forEach((grade: any) => {
+            if (grade.category_id) {
+              if (!gradesByCategory[grade.category_id]) {
+                gradesByCategory[grade.category_id] = [];
+              }
+              gradesByCategory[grade.category_id].push(grade.percentage);
+            }
+          });
           
           let subjectWeightedPoints = 0;
           let subjectWeight = 0;
           
-          Object.keys(gradesByType).forEach((type: string) => {
-            if (gradesByType[type].length > 0) {
-              const avg = gradesByType[type].reduce((sum: number, grade: number) => sum + grade, 0) / gradesByType[type].length;
-              subjectWeightedPoints += avg * weights[type];
-              subjectWeight += weights[type];
+          Object.keys(gradesByCategory).forEach((categoryId: string) => {
+            if (gradesByCategory[categoryId].length > 0) {
+              const avg = gradesByCategory[categoryId].reduce((sum: number, grade: number) => sum + grade, 0) / gradesByCategory[categoryId].length;
+              const weight = weights[categoryId] || 0; // Direct lookup by category_id
+              subjectWeightedPoints += avg * weight;
+              subjectWeight += weight;
             }
           });
           

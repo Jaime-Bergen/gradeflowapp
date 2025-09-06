@@ -27,43 +27,21 @@ export interface Subject {
   studentGroupId?: string
   group_name?: string
   lessons: Lesson[]
-  gradeWeights: GradeWeights
-  // New weights structure from backend
-  weights?: { [categoryId: string]: number }
+  // Dynamic weights structure using category IDs
+  weights: { [categoryId: string]: number }
 }
 
 export interface Lesson {
   id: string
   name: string
   subjectId: string
-  type: 'lesson' | 'homework' | 'quiz' | 'test' | 'project' | 'participation' | 'review'
+  type: string // Allow any custom grade category type
+  categoryId?: string // Foreign key to grade_category_types
   points?: number // For compatibility with backend bulk add
   maxPoints?: number // For compatibility with other endpoints
   orderIndex?: number // Used for ordering lessons in a subject
   dueDate?: string
   description?: string
-}
-
-export interface GradeWeights {
-  homework: number
-  quiz: number
-  test: number
-  project: number
-  participation: number
-  review: number
-}
-
-export interface GradeWeightTemplate {
-  id: string
-  name: string
-  description?: string
-  lessonWeight: number
-  reviewWeight: number
-  quizWeight: number
-  testWeight: number
-  projectWeight: number
-  participationWeight: number
-  isDefault?: boolean
 }
 
 export interface GradeCategoryType {

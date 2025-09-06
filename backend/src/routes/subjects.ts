@@ -320,7 +320,7 @@ router.delete('/:id', async (req: AuthRequest, res, next) => {
 router.post('/:id/lessons/bulk', async (req: AuthRequest, res, next) => {
   try {
     const { id } = req.params;
-    const { count, namePrefix = 'Lesson', type = 'lesson', points = 100 } = req.body;
+    const { count, namePrefix = 'Lesson', type, categoryId, points = 100 } = req.body;
     const db = getDB();
 
     if (!count || count < 1 || count > 200) {
@@ -335,6 +335,32 @@ router.post('/:id/lessons/bulk', async (req: AuthRequest, res, next) => {
 
     if (subjectCheck.rows.length === 0) {
       return res.status(404).json({ error: 'Subject not found' });
+    }
+
+    // Determine category_id - support both new categoryId and legacy type
+    let finalCategoryId = categoryId;
+    if (!finalCategoryId && type) {
+      // Look up category by name for backwards compatibility
+      const categoryResult = await db.query(
+        'SELECT id FROM grade_category_types WHERE name = $1 AND user_id = $2',
+        [type, req.userId]
+      );
+      if (categoryResult.rows.length > 0) {
+        finalCategoryId = categoryResult.rows[0].id;
+      }
+    }
+    
+    // If still no category, use the first default category
+    if (!finalCategoryId) {
+      const defaultCategoryResult = await db.query(
+        'SELECT id FROM grade_category_types WHERE user_id = $1 AND is_default = true ORDER BY sort_order LIMIT 1',
+        [req.userId]
+      );
+      if (defaultCategoryResult.rows.length > 0) {
+        finalCategoryId = defaultCategoryResult.rows[0].id;
+      } else {
+        return res.status(400).json({ error: 'No grade categories found. Please create grade categories first.' });
+      }
     }
 
     // Get current max order index
@@ -352,8 +378,8 @@ router.post('/:id/lessons/bulk', async (req: AuthRequest, res, next) => {
       const lessons = [];
       for (let i = 0; i < count; i++) {
         const lessonResult = await db.query(
-          'INSERT INTO lessons (subject_id, name, type, points, order_index) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-          [id, `${namePrefix} ${startOrder + i}`, type, points, startOrder + i]
+          'INSERT INTO lessons (subject_id, name, category_id, points, order_index) VALUES ($1, $2, $3, $4, $5) RETURNING l.*, gct.name as type FROM lessons l LEFT JOIN grade_category_types gct ON l.category_id = gct.id WHERE l.id = (SELECT currval(pg_get_serial_sequence(\'lessons\', \'id\')))',
+          [id, `${namePrefix} ${startOrder + i}`, finalCategoryId, points, startOrder + i]
         );
         lessons.push(lessonResult.rows[0]);
       }

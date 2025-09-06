@@ -14,7 +14,7 @@ class ApiClient {
       method: 'DELETE',
     });
   }
-  async updateLesson(lessonId: string, data: Partial<{ name: string; type: string; points: number; orderIndex: number }>) {
+  async updateLesson(lessonId: string, data: Partial<{ name: string; type: string; categoryId: string; points: number; orderIndex: number }>) {
     return this.request(`/lessons/${lessonId}`, {
       method: 'PUT',
       body: JSON.stringify(data),
@@ -291,11 +291,12 @@ class ApiClient {
     count: number,
     namePrefix?: string,
     type?: string,
-    points?: number
+    points?: number,
+    categoryId?: string
   ) {
     return this.request(`/subjects/${subjectId}/lessons/bulk`, {
       method: 'POST',
-      body: JSON.stringify({ count, namePrefix, type, points }),
+      body: JSON.stringify({ count, namePrefix, type, points, categoryId }),
     });
   }
 

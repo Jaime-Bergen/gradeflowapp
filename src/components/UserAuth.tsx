@@ -116,8 +116,8 @@ export default function UserAuth({ onUserChange }: UserAuthProps) {
           const defaultCategories = [
             { name: 'Lesson', description: 'Regular lesson activities', sort_order: 0, is_active: true, is_default: true },
             { name: 'Test', description: 'Major assessments', sort_order: 1, is_active: true, is_default: false },
-            { name: 'Quiz', description: 'Short assessments', sort_order: 2, is_active: false, is_default: false },
-            { name: 'Project', description: 'Long-term assignments', sort_order: 3, is_active: false, is_default: false }
+            { name: 'Quiz', description: 'Short assessments', sort_order: 2, is_active: true, is_default: false },
+            { name: 'Project', description: 'Long-term assignments', sort_order: 3, is_active: true, is_default: false }
           ]
           
           for (const category of defaultCategories) {

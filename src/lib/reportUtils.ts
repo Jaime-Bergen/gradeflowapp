@@ -97,59 +97,32 @@ export const calculateSubjectGrade = (
   const subjectWeights = subject.weights || {}
 
   // Create a mapping from lesson type to weight
-  // The key insight is that lesson types should match grade category names
-  // For your example: "lesson" type should use weight for "Lesson" category (34%)
-  // and "test" type should use weight for "Test" category (66%)
+  // TODO: This should be updated to use the same dynamic system as the backend reports
+  // For now, we distribute weights in order among the lesson types that have grades
   
   const weightMapping: Record<string, number> = {}
-  
-  // Since we don't have the category names here, we need to make reasonable assumptions
-  // based on common naming conventions. This is temporary until we can pass
-  // the grade category types to this function
   
   const subjectWeightEntries = Object.entries(subjectWeights)
   console.log('calculateSubjectGrade: Available weights', { subjectWeights, subjectWeightEntries })
   
-  // For each lesson type, try to find a matching weight
+  // For each lesson type, try to find a matching weight by name
+  // This is a simplified approach - ideally we should get the actual category mappings
+  // from the backend like the reports route does
   Object.keys(gradesByType).forEach(lessonType => {
-    const normalizedLessonType = lessonType.toLowerCase()
-    
-    // Try to find a weight that matches this lesson type
-    // This is done by checking if any weight "belongs to" this lesson type
-    // Since we have weights as an object with category IDs as keys, we need to map them
-    
-    // For now, let's use a simple strategy:
-    // 1. If there are exactly 2 weights and we have "lesson" and "test" types,
-    //    assume smaller weight goes to "lesson" and larger weight goes to "test"
-    // 2. Otherwise, distribute weights based on order
-    
+    // For now, just distribute weights evenly among all lesson types
+    // This is much simpler and more predictable than guessing
     const weightValues = Object.values(subjectWeights).filter(w => w > 0)
-    const hasLessonType = Object.keys(gradesByType).includes('lesson')
-    const hasTestType = Object.keys(gradesByType).includes('test')
+    const lessonTypes = Object.keys(gradesByType)
+    const typeIndex = lessonTypes.indexOf(lessonType)
     
-    if (weightValues.length === 2 && hasLessonType && hasTestType) {
-      // Special case for your scenario: lesson=34%, test=66%
-      const sortedWeights = [...weightValues].sort((a, b) => a - b)
-      if (normalizedLessonType === 'lesson') {
-        weightMapping[lessonType] = sortedWeights[0] // smaller weight (0.34)
-      } else if (normalizedLessonType === 'test') {
-        weightMapping[lessonType] = sortedWeights[1] // larger weight (0.66)
-      } else {
-        // For other types, use the first weight as fallback
-        weightMapping[lessonType] = weightValues[0]
-      }
+    if (typeIndex !== -1 && typeIndex < weightValues.length) {
+      weightMapping[lessonType] = weightValues[typeIndex]
+    } else if (weightValues.length > 0) {
+      // If we have more lesson types than weights, distribute the remaining weight evenly
+      const avgWeight = weightValues.reduce((sum, w) => sum + w, 0) / lessonTypes.length
+      weightMapping[lessonType] = avgWeight
     } else {
-      // Fallback: distribute weights in order of lesson types
-      const lessonTypeOrder = ['lesson', 'review', 'quiz', 'test', 'project', 'participation']
-      const typeIndex = lessonTypeOrder.indexOf(normalizedLessonType)
-      
-      if (typeIndex !== -1 && typeIndex < weightValues.length) {
-        weightMapping[lessonType] = weightValues[typeIndex]
-      } else if (weightValues.length > 0) {
-        weightMapping[lessonType] = weightValues[0]
-      } else {
-        weightMapping[lessonType] = 0
-      }
+      weightMapping[lessonType] = 1 / lessonTypes.length // Equal weight if no weights defined
     }
   })
 

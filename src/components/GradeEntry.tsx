@@ -84,6 +84,12 @@ export default function GradeEntry() {
     const categoryType = gradeCategoryTypes.find(cat => cat.name === lessonType);
     return categoryType?.is_default || false;
   };
+
+  // Helper function to get categoryId from type name
+  const getCategoryIdFromTypeName = (typeName: string): string | undefined => {
+    const categoryType = gradeCategoryTypes.find(cat => cat.name === typeName);
+    return categoryType?.id;
+  };
   const gridRef = useRef<HTMLDivElement>(null)
   const inputRefs = useRef<Record<string, HTMLInputElement>>({})
   const lessonPointsRef = useRef<HTMLInputElement>(null)
@@ -495,7 +501,18 @@ export default function GradeEntry() {
     if (!editLessonDialog.lesson || !editLessonDialog.subjectId) return
     
     try {
-      await apiClient.updateLesson(editLessonDialog.lesson.id, updated)
+      // Convert type name to categoryId if type is provided
+      const updateData: any = { ...updated };
+      if (updated.type) {
+        const categoryId = getCategoryIdFromTypeName(updated.type);
+        if (categoryId) {
+          updateData.categoryId = categoryId;
+          // Remove type since we're sending categoryId
+          delete updateData.type;
+        }
+      }
+      
+      await apiClient.updateLesson(editLessonDialog.lesson.id, updateData)
       
       // Refresh lessons for this subject
       const subjectId = String(editLessonDialog.subjectId)
@@ -524,12 +541,17 @@ export default function GradeEntry() {
       
       // If there are no lessons, add the first lesson with default properties
       if (currentLessons.length === 0) {
+        // Find the first default category to use as the initial lesson type
+        const defaultCategory = gradeCategoryTypes.find(cat => cat.is_default);
+        const categoryId = defaultCategory?.id;
+        
         await apiClient.addLessonsToSubject(
           selectedSubjectId, 
           1, 
           "Lesson", // Default name
-          "lesson", // Default type
-          10 // Default points
+          undefined, // Don't send type, use categoryId instead
+          10, // Default points
+          categoryId // Send categoryId directly
         )
 
         // Refresh lessons and select the new one
@@ -583,12 +605,14 @@ export default function GradeEntry() {
         // For middle insertion, we'll add the lesson and then reorder everything
         
         // Add the new lesson first
+        const categoryId = getCategoryIdFromTypeName(selectedLesson.type);
         await apiClient.addLessonsToSubject(
           selectedSubjectId, 
           1, 
           newLessonName,
-          selectedLesson.type,
-          selectedLesson.points
+          undefined, // Don't send type, use categoryId instead
+          selectedLesson.points,
+          categoryId
         )
 
         // Get all lessons including the newly added one
@@ -630,12 +654,14 @@ export default function GradeEntry() {
         }
       } else {
         // For last lesson, just add normally
+        const categoryId = getCategoryIdFromTypeName(selectedLesson.type);
         await apiClient.addLessonsToSubject(
           selectedSubjectId, 
           1, 
           newLessonName,
-          selectedLesson.type,
-          selectedLesson.points
+          undefined, // Don't send type, use categoryId instead
+          selectedLesson.points,
+          categoryId
         )
 
         // Refresh lessons and select the new one
@@ -1297,10 +1323,13 @@ const saveGrade = async (studentId: string) => {
 
   const saveLessonInline = async (lessonId: string) => {
     try {
-      const updates: Partial<{ name: string; type: Lesson['type']; points: number; orderIndex: number }> = {};
+      const updates: any = {};
 
       if (tempLessonData.type) {
-        updates.type = tempLessonData.type as Lesson['type'];
+        const categoryId = getCategoryIdFromTypeName(tempLessonData.type);
+        if (categoryId) {
+          updates.categoryId = categoryId;
+        }
       }
 
       if (tempLessonData.points !== undefined) {
@@ -1549,13 +1578,11 @@ const saveGrade = async (studentId: string) => {
                                   className="text-xs p-1 border rounded"
                                   autoFocus={!lessonEditFocusOnPoints}
                                 >
-                                  <option value="lesson">lesson</option>
-                                  <option value="homework">homework</option>
-                                  <option value="quiz">quiz</option>
-                                  <option value="test">test</option>
-                                  <option value="project">project</option>
-                                  <option value="participation">participation</option>
-                                  <option value="review">review</option>
+                                  {gradeCategoryTypes.map(categoryType => (
+                                    <option key={categoryType.id} value={categoryType.name}>
+                                      {categoryType.name}
+                                    </option>
+                                  ))}
                                 </select>
                                 <input
                                   type="number"
@@ -2434,7 +2461,7 @@ const saveGrade = async (studentId: string) => {
               const formData = new FormData(e.currentTarget);
               handleEditLessonSave({
                 name: formData.get('name') as string,
-                type: formData.get('type') as 'lesson' | 'homework' | 'quiz' | 'test' | 'project' | 'participation' | 'review',
+                type: formData.get('type') as string, // Allow any custom grade category type
                 points: parseInt(formData.get('points') as string) || 0
               });
             }}>
@@ -2446,13 +2473,11 @@ const saveGrade = async (studentId: string) => {
                 <div>
                   <Label htmlFor="edit-lesson-type">Type</Label>
                   <select id="edit-lesson-type" name="type" defaultValue={editLessonDialog.lesson.type} className="w-full border rounded px-2 py-1">
-                    <option value="lesson">Lesson</option>
-                    <option value="quiz">Quiz</option>
-                    <option value="test">Test</option>
-                    <option value="project">Project</option>
-                    <option value="homework">Homework</option>
-                    <option value="participation">Participation</option>
-                    <option value="review">Review</option>
+                    {gradeCategoryTypes.map(categoryType => (
+                      <option key={categoryType.id} value={categoryType.name}>
+                        {categoryType.name}
+                      </option>
+                    ))}
                   </select>
                 </div>
                 <div>

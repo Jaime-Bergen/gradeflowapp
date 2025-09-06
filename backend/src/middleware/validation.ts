@@ -56,7 +56,7 @@ export const schemas = {
 
   lesson: Joi.object({
     name: Joi.string().min(1).max(100).required(),
-    type: Joi.string().valid('lesson', 'review', 'test', 'quiz').default('lesson'),
+    type: Joi.string().min(1).max(50).default('lesson'), // Allow any custom lesson type
     points: Joi.number().integer().min(1).max(1000).default(100)
   }),
 
