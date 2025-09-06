@@ -353,7 +353,7 @@ router.post('/:id/lessons/bulk', async (req: AuthRequest, res, next) => {
     // If still no category, use the first default category
     if (!finalCategoryId) {
       const defaultCategoryResult = await db.query(
-        'SELECT id FROM grade_category_types WHERE user_id = $1 AND is_default = true ORDER BY sort_order LIMIT 1',
+        'SELECT id FROM grade_category_types WHERE user_id = $1 AND is_default = true ORDER BY created_at LIMIT 1',
         [req.userId]
       );
       if (defaultCategoryResult.rows.length > 0) {

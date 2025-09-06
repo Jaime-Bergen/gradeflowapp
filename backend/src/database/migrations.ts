@@ -110,14 +110,13 @@ const createGradeCategoryTypesTable = async (db: any) => {
       name VARCHAR(100) NOT NULL,
       description TEXT,
       is_default BOOLEAN DEFAULT false,
-      sort_order INTEGER DEFAULT 0,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(user_id, name)
     );
     
     CREATE INDEX IF NOT EXISTS idx_grade_category_types_user_id ON grade_category_types(user_id);
-    CREATE INDEX IF NOT EXISTS idx_grade_category_types_sort_order ON grade_category_types(user_id, sort_order);
+    CREATE INDEX IF NOT EXISTS idx_grade_category_types_created_at ON grade_category_types(user_id, created_at);
   `);
   
   console.log('✅ Grade category types table created/verified');
@@ -628,17 +627,7 @@ const addColorToGradeCategoryTypes = async (db: any) => {
       ADD COLUMN IF NOT EXISTS color VARCHAR(7) DEFAULT '#6366f1'
     `);
     
-    // Update sort_order to be auto-managed based on creation order
-    await db.query(`
-      UPDATE grade_category_types 
-      SET sort_order = (
-        SELECT ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY created_at) - 1
-        FROM grade_category_types gct2 
-        WHERE gct2.id = grade_category_types.id
-      )
-    `);
-    
-    console.log('✅ Added color column and updated sort_order to be auto-managed');
+    console.log('✅ Added color column to grade category types');
   } catch (error) {
     console.error('Error adding color to grade category types:', error);
     throw error;
@@ -733,15 +722,14 @@ const addCategoryIdToLessons = async (db: any) => {
         if (categoryResult.rows.length === 0) {
           // Create new category type for this lesson type
           categoryResult = await db.query(`
-            INSERT INTO grade_category_types (user_id, name, description, is_default, sort_order, color) 
-            VALUES ($1, $2, $3, $4, $5, $6) 
+            INSERT INTO grade_category_types (user_id, name, description, is_default, color) 
+            VALUES ($1, $2, $3, $4, $5) 
             RETURNING id
           `, [
             user.user_id, 
             typeName, 
             `Auto-migrated from lesson type: ${typeName}`,
             typeName.toLowerCase() === 'lesson',
-            999, // High sort order for migrated types
             '#6366f1' // Default color
           ]);
         }
@@ -770,3 +758,16 @@ const addCategoryIdToLessons = async (db: any) => {
     throw error;
   }
 };
+
+// Run migrations if this file is executed directly
+if (require.main === module) {
+  runMigrations()
+    .then(() => {
+      console.log('All migrations completed successfully');
+      process.exit(0);
+    })
+    .catch((error) => {
+      console.error('Migration failed:', error);
+      process.exit(1);
+    });
+}

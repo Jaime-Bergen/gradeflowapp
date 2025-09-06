@@ -11,10 +11,10 @@ router.use(authenticateToken);
 router.get('/', async (req: AuthRequest, res: Response) => {
   try {
     const result = await getDB().query(`
-      SELECT id, name, description, is_default, is_active, sort_order, color, created_at, updated_at
+      SELECT id, name, description, is_default, is_active, color, created_at, updated_at
       FROM grade_category_types 
       WHERE user_id = $1 
-      ORDER BY sort_order ASC, name ASC
+      ORDER BY created_at ASC, name ASC
     `, [req.userId]);
 
     res.json({ data: result.rows });
@@ -28,10 +28,10 @@ router.get('/', async (req: AuthRequest, res: Response) => {
 router.get('/active', async (req: AuthRequest, res: Response) => {
   try {
     const result = await getDB().query(`
-      SELECT id, name, description, is_default, is_active, sort_order, color, created_at, updated_at
+      SELECT id, name, description, is_default, is_active, color, created_at, updated_at
       FROM grade_category_types 
       WHERE user_id = $1 AND is_active = true
-      ORDER BY sort_order ASC, name ASC
+      ORDER BY created_at ASC, name ASC
     `, [req.userId]);
 
     res.json({ data: result.rows });
@@ -57,14 +57,6 @@ router.post('/', async (req: AuthRequest, res: Response) => {
 
     const db = getDB();
     
-    // Get the next sort_order by counting existing categories for this user
-    const sortOrderResult = await db.query(`
-      SELECT COALESCE(MAX(sort_order), -1) + 1 as next_sort_order
-      FROM grade_category_types 
-      WHERE user_id = $1
-    `, [req.userId]);
-    const nextSortOrder = sortOrderResult.rows[0].next_sort_order;
-    
     // If setting this as default, clear other defaults first
     if (is_default) {
       await db.query(`
@@ -75,10 +67,10 @@ router.post('/', async (req: AuthRequest, res: Response) => {
     }
 
     const result = await db.query(`
-      INSERT INTO grade_category_types (user_id, name, description, sort_order, is_active, is_default, color)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
-      RETURNING id, name, description, is_default, is_active, sort_order, color, created_at, updated_at
-    `, [req.userId, name.trim(), description || null, nextSortOrder, is_active !== undefined ? is_active : true, is_default || false, color || '#6366f1']);
+      INSERT INTO grade_category_types (user_id, name, description, is_active, is_default, color)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING id, name, description, is_default, is_active, color, created_at, updated_at
+    `, [req.userId, name.trim(), description || null, is_active !== undefined ? is_active : true, is_default || false, color || '#6366f1']);
 
     res.status(201).json({ data: result.rows[0] });
   } catch (error: any) {
@@ -123,7 +115,7 @@ router.put('/:id', async (req: AuthRequest, res: Response) => {
       UPDATE grade_category_types 
       SET name = $1, description = $2, is_active = $3, is_default = $4, color = $5, updated_at = CURRENT_TIMESTAMP
       WHERE id = $6 AND user_id = $7
-      RETURNING id, name, description, is_default, is_active, sort_order, color, created_at, updated_at
+      RETURNING id, name, description, is_default, is_active, color, created_at, updated_at
     `, [name.trim(), description || null, is_active !== undefined ? is_active : true, is_default || false, color || '#6366f1', id, req.userId]);
 
     if (result.rows.length === 0) {

@@ -50,7 +50,6 @@ export interface GradeCategoryType {
   description?: string
   is_default: boolean
   is_active: boolean
-  sort_order: number
   color: string
   created_at: string
   updated_at: string
