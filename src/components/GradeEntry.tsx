@@ -53,7 +53,7 @@ export default function GradeEntry() {
         }
 
         // Load grade category types for styling
-        const categoryTypesRes = await apiClient.getActiveGradeCategoryTypes();
+        const categoryTypesRes = await apiClient.getGradeCategoryTypes();
         if (categoryTypesRes.data) {
           setGradeCategoryTypes(Array.isArray(categoryTypesRes.data) ? categoryTypesRes.data : []);
         }

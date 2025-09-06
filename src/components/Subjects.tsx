@@ -308,6 +308,12 @@ function Subjects() {
     studentGroupId: '',
     weights: {} as { [categoryId: string]: number }
   });
+
+  // Helper function to get category color from type name
+  const getCategoryColor = (typeName: string): string => {
+    const categoryType = gradeCategoryTypes.find(cat => cat.name === typeName);
+    return categoryType?.color || '#6366f1'; // Default color
+  };
   const [expandedSubjects, setExpandedSubjects] = useState<{ [id: string]: boolean }>({});
   const [addLessonDialog, setAddLessonDialog] = useState<{ open: boolean, subjectId: string | null }>({ open: false, subjectId: null });
   const [lessonCount, setLessonCount] = useState(1);
@@ -332,7 +338,7 @@ function Subjects() {
         const [subjectsRes, groupsRes, categoriesRes] = await Promise.all([
           apiClient.getSubjects(),
           apiClient.getStudentGroups(),
-          apiClient.getActiveGradeCategoryTypes()
+          apiClient.getGradeCategoryTypes()
         ]);
         setSubjects(Array.isArray(subjectsRes.data) ? subjectsRes.data : []);
         setStudentGroups(Array.isArray(groupsRes.data) ? groupsRes.data : []);
@@ -833,7 +839,12 @@ function Subjects() {
                           .map((lesson: Lesson, idx: number) => (
                             <li key={lesson.id} className="flex items-center gap-2 bg-white rounded p-2 shadow-sm">
                               <span className="flex-1 font-medium">{lesson.name}</span>
-                              <span className="text-xs px-2 py-1 rounded bg-gray-100 border">{lesson.type}</span>
+                              <span 
+                                className="text-xs px-2 py-1 rounded border text-white font-medium"
+                                style={{ backgroundColor: getCategoryColor(lesson.type) }}
+                              >
+                                {lesson.type}
+                              </span>
                               <span className="text-xs px-2">{lesson.points ?? lesson.maxPoints} pts</span>
                               <Button size="icon" variant="ghost" onClick={() => insertLessonAt(subject.id, idx)} title="Add a new lesson below this one"><Plus size={14} className="text-primary" /></Button>
                               <Button size="icon" variant="ghost" onClick={() => editLesson(lesson, subject.id)} title="Edit">✎</Button>
