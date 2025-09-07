@@ -91,9 +91,9 @@ sudo -u postgres psql
 
 # Create database and user
 CREATE DATABASE teachergrade_db;
-CREATE USER teachergrade_user WITH PASSWORD 'secure_password_here';
-GRANT ALL PRIVILEGES ON DATABASE teachergrade_db TO teachergrade_user;
-ALTER USER teachergrade_user CREATEDB;
+CREATE USER gradeflow_user WITH PASSWORD 'secure_password_here';
+GRANT ALL PRIVILEGES ON DATABASE gradeflow_db TO gradeflow_user;
+ALTER USER gradeflow_user CREATEDB;
 \q
 
 # Configure PostgreSQL for remote connections (if needed)
@@ -101,7 +101,7 @@ sudo nano /etc/postgresql/*/main/postgresql.conf
 # Uncomment: listen_addresses = 'localhost'
 
 sudo nano /etc/postgresql/*/main/pg_hba.conf
-# Add: local   all   teachergrade_user   md5
+# Add: local   all   gradeflow_user   md5
 
 sudo systemctl restart postgresql
 ```

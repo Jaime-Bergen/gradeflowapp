@@ -5,9 +5,9 @@ services:
     image: postgres:16
     restart: unless-stopped
     environment:
-      POSTGRES_DB: teachergrade_db
-      POSTGRES_USER: teachergrade_user
-      POSTGRES_PASSWORD: Teach&Learn
+      POSTGRES_DB: gradeflow_db
+      POSTGRES_USER: gradeflow_user
+      POSTGRES_PASSWORD: your_secure_password_here
     volumes:
       - db_data:/var/lib/postgresql/data
     ports:
