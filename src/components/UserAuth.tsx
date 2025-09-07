@@ -7,10 +7,15 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { User, SignIn, SignOut, UserPlus, Trash, Eye, EyeSlash, Database } from "@phosphor-icons/react"
+import { User, SignIn, SignOut, UserPlus, Trash, Eye, EyeSlash, Database, Download } from "@phosphor-icons/react"
 import { toast } from 'sonner'
 import { migrateLegacyData, hasLegacyData, getLegacyDataStats } from '@/lib/dataMigration'
 import { apiClient } from '@/lib/api'
+
+// Check if running in Tauri (desktop app)
+const isTauri = (): boolean => {
+  return typeof window !== 'undefined' && 'window' in window && '__TAURI__' in window
+}
 
 interface UserAuthProps {
   onUserChange: (userData: UserData | null) => void
@@ -315,6 +320,32 @@ export default function UserAuth({ onUserChange }: UserAuthProps) {
               Create Account
             </Button>
           </CardContent>
+          
+          {/* Download App Link - Only show for web users */}
+          {!isTauri() && (
+            <div className="px-6 pb-6">
+              <div className="border-t pt-4">
+                <div className="text-center">
+                  <p className="text-sm text-muted-foreground mb-2">
+                    Get the desktop app for a better experience
+                  </p>
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={() => {
+                      // Download the latest Windows installer from GitHub Releases
+                      const downloadUrl = 'https://github.com/Jaime-Bergen/gradeflowapp/releases/latest/download/GradeFlowApp_0.1.0_x64-setup.exe'
+                      window.open(downloadUrl, '_blank')
+                    }}
+                    className="text-sm"
+                  >
+                    <Download size={16} className="mr-2" />
+                    Download Desktop App
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
         </Card>
 
         <Dialog open={showDialog} onOpenChange={(open) => {
