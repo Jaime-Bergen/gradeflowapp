@@ -145,10 +145,7 @@ router.delete('/:id', async (req: AuthRequest, res: Response) => {
       SELECT COUNT(*) as count 
       FROM lessons l
       JOIN subjects s ON l.subject_id = s.id
-      WHERE s.user_id = $1 AND l.type = (
-        SELECT name FROM grade_category_types 
-        WHERE id = $2 AND user_id = $1
-      )
+      WHERE s.user_id = $1 AND l.category_id = $2
     `, [req.userId, id]);
 
     if (parseInt(usageCheck.rows[0].count) > 0) {

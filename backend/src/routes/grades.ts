@@ -17,11 +17,12 @@ router.get('/', async (req: AuthRequest, res, next) => {
         g.created_at, g.updated_at,
         s.id as student_id, s.name as student_name,
         sub.id as subject_id, sub.name as subject_name,
-        l.id as lesson_id, l.name as lesson_name, l.type as lesson_type, 
+        l.id as lesson_id, l.name as lesson_name, gct.name as lesson_type, 
         l.points as lesson_points, l.order_index
        FROM grades g
        JOIN students s ON g.student_id = s.id
        JOIN lessons l ON g.lesson_id = l.id
+       LEFT JOIN grade_category_types gct ON l.category_id = gct.id
        JOIN subjects sub ON l.subject_id = sub.id
        WHERE s.user_id = $1
        ORDER BY sub.name, s.name, l.order_index`,
@@ -69,9 +70,10 @@ router.get('/student/:studentId/subject/:subjectId', async (req: AuthRequest, re
     }
     
     const result = await db.query(
-      `SELECT g.*, l.name as lesson_name, l.type as lesson_type, l.points as lesson_points, l.order_index
+      `SELECT g.*, l.name as lesson_name, gct.name as lesson_type, l.points as lesson_points, l.order_index
        FROM grades g
        JOIN lessons l ON g.lesson_id = l.id
+       LEFT JOIN grade_category_types gct ON l.category_id = gct.id
        WHERE g.student_id = $1 AND l.subject_id = $2
        ORDER BY l.order_index`,
       [studentId, subjectId]
@@ -102,11 +104,12 @@ router.get('/subject/:subjectId', async (req: AuthRequest, res, next) => {
     const result = await db.query(
       `SELECT 
         s.id as student_id, s.name as student_name,
-        l.id as lesson_id, l.name as lesson_name, l.type as lesson_type, 
+        l.id as lesson_id, l.name as lesson_name, gct.name as lesson_type, 
         l.points as lesson_points, l.order_index,
         g.id as grade_id, g.percentage, g.errors, g.points as grade_points
        FROM students s
        CROSS JOIN lessons l
+       LEFT JOIN grade_category_types gct ON l.category_id = gct.id
        LEFT JOIN grades g ON s.id = g.student_id AND l.id = g.lesson_id
        WHERE l.subject_id = $1 AND s.user_id = $2
        ORDER BY s.name, l.order_index`,
@@ -271,14 +274,15 @@ router.get('/subject/:subjectId/stats', async (req: AuthRequest, res, next) => {
     // Get lesson type breakdown
     const lessonTypesResult = await db.query(
       `SELECT 
-        l.type,
+        gct.name as type,
         COUNT(l.id) as lesson_count,
         AVG(g.percentage) as average_percentage
        FROM lessons l
+       LEFT JOIN grade_category_types gct ON l.category_id = gct.id
        LEFT JOIN grades g ON l.id = g.lesson_id
        WHERE l.subject_id = $1
-       GROUP BY l.type
-       ORDER BY l.type`,
+       GROUP BY gct.name
+       ORDER BY gct.name`,
       [subjectId]
     );
     
