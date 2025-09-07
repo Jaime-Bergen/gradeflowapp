@@ -1359,16 +1359,14 @@ const saveGrade = async (studentId: string) => {
 
       await apiClient.updateLesson(lessonId, updates);
 
-      // Update local state
-      setSubjectLessons(current => ({
-        ...current,
-        [selectedSubjectId]: (current[selectedSubjectId] || []).map(lesson =>
-          lesson.id === lessonId ? { ...lesson, ...updates } : lesson
-        )
-      }));
+      // Refresh lessons for this subject to get updated type and type_color
+      const lessonsRes = await apiClient.getLessonsForSubject(selectedSubjectId);
+      const lessonsData = Array.isArray(lessonsRes.data) ? lessonsRes.data : [];
+      setSubjectLessons(prev => ({ ...prev, [selectedSubjectId]: lessonsData }));
 
       setEditingLesson(null);
       setLessonEditFocusOnPoints(false);
+      setTempLessonData({}); // Clear temporary data
       
       // After saving lesson, focus on first student in table mode
       if (activeView === 'table' && enrolledStudents.length > 0) {
@@ -1615,6 +1613,7 @@ const saveGrade = async (studentId: string) => {
                                     } else if (e.key === 'Escape') {
                                       setEditingLesson(null);
                                       setLessonEditFocusOnPoints(false);
+                                      setTempLessonData({}); // Clear temporary data
                                     }
                                   }}
                                 />
