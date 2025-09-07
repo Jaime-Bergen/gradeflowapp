@@ -212,6 +212,7 @@ interface ReportCardPDFProps {
   student: Student
   reportCard: ReportCard
   schoolName?: string
+  showPercentage?: boolean
 }
 
 const getGPAPoints = (percentage: number): number => {
@@ -279,7 +280,7 @@ const getGradeStyle = (grade: string) => {
   }
 }
 
-const ReportCardPDF: React.FC<ReportCardPDFProps> = ({ student, reportCard, schoolName = "Lincoln Elementary School" }) => {
+const ReportCardPDF: React.FC<ReportCardPDFProps> = ({ student, reportCard, schoolName = "Lincoln Elementary School", showPercentage = true }) => {
   // Add safety checks for required props
   if (!student || !reportCard) {
     return (
@@ -328,14 +329,19 @@ const ReportCardPDF: React.FC<ReportCardPDFProps> = ({ student, reportCard, scho
             </View>
           </View>
           <View style={styles.gpaSection}>
-            <Text style={styles.gpaLabel}>Overall GPA</Text>
+            <Text style={styles.gpaLabel}>{showPercentage ? 'Overall Percentage' : 'Overall GPA'}</Text>
             <Text style={styles.gpa}>
               {(() => {
                 const gpa = typeof reportCard.overallGPA === 'number' && !isNaN(reportCard.overallGPA) && isFinite(reportCard.overallGPA) 
                   ? reportCard.overallGPA 
                   : 0
-                const gpaPoints = getGPAPoints(gpa)
-                return typeof gpaPoints === 'number' ? gpaPoints.toFixed(2) : '0.00'
+                
+                if (showPercentage) {
+                  return `${gpa.toFixed(1)}%`
+                } else {
+                  const gpaPoints = getGPAPoints(gpa)
+                  return typeof gpaPoints === 'number' ? gpaPoints.toFixed(2) : '0.00'
+                }
               })()}
             </Text>
             <Text style={styles.gradeLevel}>
@@ -352,7 +358,7 @@ const ReportCardPDF: React.FC<ReportCardPDFProps> = ({ student, reportCard, scho
               <Text style={[styles.tableHeaderText, styles.subjectCol]}>Subject</Text>
               <Text style={[styles.tableHeaderText, styles.percentCol]}>Percentage</Text>
               <Text style={[styles.tableHeaderText, styles.gradeCol]}>Grade</Text>
-              <Text style={[styles.tableHeaderText, styles.pointsCol]}>Points</Text>
+              <Text style={[styles.tableHeaderText, styles.pointsCol]}>{showPercentage ? 'Percentage' : 'Points'}</Text>
             </View>
             {reportCard.subjects && Array.isArray(reportCard.subjects) && reportCard.subjects.length > 0 ? reportCard.subjects.map((subject, index) => {
               // Add comprehensive safety checks for undefined values
@@ -362,7 +368,7 @@ const ReportCardPDF: React.FC<ReportCardPDFProps> = ({ student, reportCard, scho
                     <Text style={[styles.tableCell, styles.subjectCol]}>Invalid Subject</Text>
                     <Text style={[styles.tableCellCenter, styles.percentCol]}>0.0%</Text>
                     <Text style={[styles.tableCellCenter, styles.gradeCol]}>N/A</Text>
-                    <Text style={[styles.tableCellCenter, styles.pointsCol]}>0.0</Text>
+                    <Text style={[styles.tableCellCenter, styles.pointsCol]}>{showPercentage ? '0.0%' : '0.0'}</Text>
                   </View>
                 )
               }
@@ -387,7 +393,7 @@ const ReportCardPDF: React.FC<ReportCardPDFProps> = ({ student, reportCard, scho
                     {letterGrade}
                   </Text>
                   <Text style={[styles.tableCellCenter, styles.pointsCol]}>
-                    {safeGpaPoints.toFixed(1)}
+                    {showPercentage ? `${average.toFixed(1)}%` : safeGpaPoints.toFixed(1)}
                   </Text>
                 </View>
               )

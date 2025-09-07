@@ -1623,6 +1623,7 @@ const saveGrade = async (studentId: string) => {
                                   className="text-xs p-1 border rounded w-full"
                                   placeholder="points"
                                   autoFocus={lessonEditFocusOnPoints}
+                                  onFocus={(e) => e.target.select()}
                                   onKeyDown={(e) => {
                                     if (e.key === 'Enter') {
                                       saveLessonInline(lesson.id);
@@ -2151,6 +2152,7 @@ const saveGrade = async (studentId: string) => {
                     type="number"
                     value={lessonPoints}
                     onChange={(e) => setLessonPoints(e.target.value)}
+                    onFocus={(e) => e.target.select()}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
                         e.preventDefault();
@@ -2512,7 +2514,7 @@ const saveGrade = async (studentId: string) => {
               <div className="space-y-4">
                 <div>
                   <Label htmlFor="edit-lesson-name">Name</Label>
-                  <Input id="edit-lesson-name" name="name" defaultValue={editLessonDialog.lesson.name} />
+                  <Input id="edit-lesson-name" name="name" defaultValue={editLessonDialog.lesson.name} onFocus={(e) => e.target.select()} />
                 </div>
                 <div>
                   <Label htmlFor="edit-lesson-type">Type</Label>
@@ -2533,7 +2535,7 @@ const saveGrade = async (studentId: string) => {
                 </div>
                 <div>
                   <Label htmlFor="edit-lesson-points">Points</Label>
-                  <Input id="edit-lesson-points" name="points" type="number" defaultValue={editLessonDialog.lesson.points} />
+                  <Input id="edit-lesson-points" name="points" type="number" defaultValue={editLessonDialog.lesson.points} onFocus={(e) => e.target.select()} />
                 </div>
                 <div className="flex justify-end gap-2">
                   <Button type="button" variant="outline" onClick={closeEditLessonDialog}>

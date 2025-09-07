@@ -22,6 +22,7 @@ export default function Reports() {
   const [selectedStudents, setSelectedStudents] = useState<string[]>([])
   const [reportPeriod, setReportPeriod] = useState("")
   const [includeComments, setIncludeComments] = useState(true)
+  const [showPercentage, setShowPercentage] = useState(true) // Default to percentage instead of GPA
   const [comments, setComments] = useState<Record<string, string>>({})
   const [previewStudent, setPreviewStudent] = useState<string>("")
   const [schoolSettings, setSchoolSettings] = useState({
@@ -284,7 +285,7 @@ export default function Reports() {
         console.log('Student data:', student)
         
         try {
-          const pdfDoc = <ReportCardPDF reportCard={validatedReportCard} student={student} schoolName={schoolSettings.schoolName} />
+          const pdfDoc = <ReportCardPDF reportCard={validatedReportCard} student={student} schoolName={schoolSettings.schoolName} showPercentage={showPercentage} />
           console.log('PDF component created successfully')
           
           const asPdf = pdf(pdfDoc)
@@ -344,7 +345,7 @@ export default function Reports() {
           }
           
           try {
-            const pdfDoc = <ReportCardPDF reportCard={validatedReportCard} student={student} schoolName={schoolSettings.schoolName} />
+            const pdfDoc = <ReportCardPDF reportCard={validatedReportCard} student={student} schoolName={schoolSettings.schoolName} showPercentage={showPercentage} />
             const asPdf = pdf(pdfDoc)
             const blob = await asPdf.toBlob()
             
@@ -437,7 +438,7 @@ export default function Reports() {
       console.log('Preview - Validated report card:', validatedReportCard)
       console.log('Preview - Student data:', student)
 
-      const pdfDoc = <ReportCardPDF reportCard={validatedReportCard} student={student} schoolName={schoolSettings.schoolName} />
+      const pdfDoc = <ReportCardPDF reportCard={validatedReportCard} student={student} schoolName={schoolSettings.schoolName} showPercentage={showPercentage} />
       console.log('Preview - PDF component created successfully')
       
       const asPdf = pdf(pdfDoc)
@@ -656,6 +657,15 @@ export default function Reports() {
                   onCheckedChange={(checked) => setIncludeComments(checked === true)}
                 />
                 <Label htmlFor="include-comments">Include teacher comments</Label>
+              </div>
+
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="show-percentage"
+                  checked={showPercentage}
+                  onCheckedChange={(checked) => setShowPercentage(checked === true)}
+                />
+                <Label htmlFor="show-percentage">Show overall percentage instead of GPA</Label>
               </div>
 
               <div className="space-y-2">
