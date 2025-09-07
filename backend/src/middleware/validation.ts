@@ -34,6 +34,10 @@ export const schemas = {
     password: Joi.string().required()
   }),
 
+  resetPassword: Joi.object({
+    email: Joi.string().email().required()
+  }),
+
   student: Joi.object({
     name: Joi.string().min(2).max(100).required(),
     groupIds: Joi.array().items(Joi.string().uuid()).optional() // Many-to-many format

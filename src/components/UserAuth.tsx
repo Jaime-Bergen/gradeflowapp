@@ -39,6 +39,8 @@ export default function UserAuth({ onUserChange }: UserAuthProps) {
   const [showPassword, setShowPassword] = useState(false)
   const [hasLegacy, setHasLegacy] = useState(false)
   const [legacyStats, setLegacyStats] = useState({ hasData: false, recordCount: 0 })
+  const [showResetDialog, setShowResetDialog] = useState(false)
+  const [resetEmail, setResetEmail] = useState('')
   
   // Form fields
   const [email, setEmail] = useState('')
@@ -188,6 +190,36 @@ export default function UserAuth({ onUserChange }: UserAuthProps) {
     } catch (error) {
       console.error('Sign out error:', error)
       toast.error('Error signing out')
+    }
+  }
+
+  const handleResetPassword = async () => {
+    if (!resetEmail.trim()) {
+      toast.error('Please enter your email address')
+      return
+    }
+
+    if (!isValidEmail(resetEmail)) {
+      toast.error('Please enter a valid email address')
+      return
+    }
+
+    try {
+      const response = await apiClient.resetPassword(resetEmail.toLowerCase())
+      
+      if (response.error) {
+        toast.error(response.error)
+        return
+      }
+
+      if (response.data) {
+        toast.success(response.data.message)
+        setShowResetDialog(false)
+        setResetEmail('')
+      }
+    } catch (error) {
+      console.error('Password reset error:', error)
+      toast.error('Failed to send reset password. Please try again.')
     }
   }
 
@@ -351,6 +383,16 @@ export default function UserAuth({ onUserChange }: UserAuthProps) {
                     </Button>
                   </div>
                 </form>
+                <div className="text-center pt-2">
+                  <Button 
+                    type="button" 
+                    variant="link" 
+                    className="text-sm text-muted-foreground"
+                    onClick={() => setShowResetDialog(true)}
+                  >
+                    Forgot your password?
+                  </Button>
+                </div>
               </TabsContent>
 
               <TabsContent value="signup" className="space-y-4 mt-4">
@@ -420,6 +462,48 @@ export default function UserAuth({ onUserChange }: UserAuthProps) {
                 </form>
               </TabsContent>
             </Tabs>
+          </DialogContent>
+        </Dialog>
+
+        {/* Password Reset Dialog */}
+        <Dialog open={showResetDialog} onOpenChange={setShowResetDialog}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Reset Password</DialogTitle>
+              <DialogDescription>
+                Enter your email address and we'll send you a new password.
+              </DialogDescription>
+            </DialogHeader>
+            <form onSubmit={(e) => { e.preventDefault(); handleResetPassword(); }}>
+              <div className="space-y-4">
+                <div>
+                  <Label htmlFor="reset-email">Email</Label>
+                  <Input
+                    id="reset-email"
+                    type="email"
+                    value={resetEmail}
+                    onChange={(e) => setResetEmail(e.target.value)}
+                    placeholder="your@email.com"
+                    autoComplete="email"
+                  />
+                </div>
+                <div className="flex gap-2 pt-2">
+                  <Button type="submit" className="flex-1">
+                    Send New Password
+                  </Button>
+                  <Button 
+                    type="button" 
+                    variant="outline" 
+                    onClick={() => {
+                      setShowResetDialog(false)
+                      setResetEmail('')
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            </form>
           </DialogContent>
         </Dialog>
       </>

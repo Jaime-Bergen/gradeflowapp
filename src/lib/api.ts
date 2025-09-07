@@ -119,6 +119,13 @@ class ApiClient {
     return response;
   }
 
+  async resetPassword(email: string) {
+    return this.request<{message: string}>('/auth/reset-password', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    });
+  }
+
   async getProfile() {
     return this.request<User>('/users/profile');
   }

@@ -123,4 +123,77 @@ router.post('/login', validateRequest(schemas.login), async (req, res, next): Pr
   }
 });
 
+// Password reset
+router.post('/reset-password', validateRequest(schemas.resetPassword), async (req, res, next): Promise<void> => {
+  try {
+    const { email } = req.body;
+    
+    if (!email) {
+      res.status(400).json({ error: 'Email is required' });
+      return;
+    }
+
+    const db = getDB();
+
+    // Find user by email
+    const result = await db.query(
+      'SELECT id, email, name FROM users WHERE email = $1 AND is_active = true',
+      [email]
+    );
+
+    if (result.rows.length === 0) {
+      // For security, don't reveal if email exists or not
+      res.json({ message: 'If an account with that email exists, a new password has been sent to it.' });
+      return;
+    }
+
+    const user = result.rows[0];
+
+    // Generate a simple but random password (6-8 characters, mix of letters and numbers)
+    const generateSimplePassword = (): string => {
+      const length = Math.floor(Math.random() * 3) + 6; // 6-8 characters
+      const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+      let password = '';
+      for (let i = 0; i < length; i++) {
+        password += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+      return password;
+    };
+
+    const newPassword = generateSimplePassword();
+
+    // Hash the new password
+    const saltRounds = 12;
+    const passwordHash = await bcrypt.hash(newPassword, saltRounds);
+
+    // Update user's password
+    await db.query(
+      'UPDATE users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [passwordHash, user.id]
+    );
+
+    // Send email with new password
+    await sendResetEmail(user.email, user.name, newPassword);
+
+    res.json({ 
+      message: 'If an account with that email exists, a new password has been sent to it.' 
+    });
+  } catch (error) {
+    console.error('Password reset error:', error);
+    next(error);
+  }
+});
+
+// Simple email sending function (you can replace this with a proper email service)
+async function sendResetEmail(email: string, name: string, newPassword: string): Promise<void> {
+  // For now, just log the password to console (in production, you'd use a real email service)
+  console.log(`[PASSWORD RESET] Email: ${email}, Name: ${name}, New Password: ${newPassword}`);
+  
+  // If you want to integrate with a real email service, you can add that here
+  // For example, using Nodemailer, SendGrid, or another service
+  
+  // Simulated email sending
+  return Promise.resolve();
+}
+
 export default router;

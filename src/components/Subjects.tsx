@@ -860,7 +860,7 @@ function Subjects() {
                               </span>
                               <span className="text-xs px-2">{lesson.points ?? lesson.maxPoints} pts</span>
                               <Button size="icon" variant="ghost" onClick={() => insertLessonAt(subject.id, idx)} title="Add a new lesson below this one"><Plus size={14} className="text-primary" /></Button>
-                              <Button size="icon" variant="ghost" onClick={() => editLesson(lesson, subject.id)} title="Edit">✎</Button>
+                              <Button size="icon" variant="ghost" onClick={() => editLesson(lesson, subject.id)} title="Edit"><PencilSimple size={14} /></Button>
                               <Button size="icon" variant="ghost" onClick={() => handleDeleteLesson(subject.id, lesson.id)} title="Delete"><Trash size={14} /></Button>
                             </li>
                           ))}

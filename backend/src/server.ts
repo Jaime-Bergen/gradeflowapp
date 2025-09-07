@@ -46,8 +46,8 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-// Trust proxy for Heroku
-app.set('trust proxy', true);
+// Trust proxy for Heroku (more specific configuration)
+app.set('trust proxy', 1); // Trust first proxy (Heroku)
 
 // Rate limiting
 const limiter = rateLimit({
