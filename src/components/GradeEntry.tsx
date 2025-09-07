@@ -1590,7 +1590,23 @@ const saveGrade = async (studentId: string) => {
                               <div className="flex flex-col gap-1">
                                 <select
                                   value={tempLessonData.type || lesson.type}
-                                  onChange={(e) => setTempLessonData(prev => ({ ...prev, type: e.target.value }))}
+                                  onChange={async (e) => {
+                                    setTempLessonData(prev => ({ ...prev, type: e.target.value }));
+                                    // Auto-save when category changes
+                                    const categoryId = getCategoryIdFromTypeName(e.target.value);
+                                    if (categoryId) {
+                                      try {
+                                        await apiClient.updateLesson(lesson.id, { categoryId });
+                                        // Refresh lessons for this subject to get updated type and type_color
+                                        const lessonsRes = await apiClient.getLessonsForSubject(selectedSubjectId);
+                                        const lessonsData = Array.isArray(lessonsRes.data) ? lessonsRes.data : [];
+                                        setSubjectLessons(prev => ({ ...prev, [selectedSubjectId]: lessonsData }));
+                                      } catch (error) {
+                                        console.error('Failed to update lesson category:', error);
+                                        toast.error('Failed to update lesson category');
+                                      }
+                                    }
+                                  }}
                                   className="text-xs p-1 border rounded"
                                   autoFocus={!lessonEditFocusOnPoints}
                                 >
