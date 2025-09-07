@@ -2,6 +2,7 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt, { SignOptions } from 'jsonwebtoken';
 import crypto from 'crypto';
+import nodemailer from 'nodemailer';
 import { getDB } from '../database/connection';
 import { validateRequest, schemas } from '../middleware/validation';
 import { AuthRequest } from '../middleware/auth';
@@ -184,16 +185,65 @@ router.post('/reset-password', validateRequest(schemas.resetPassword), async (re
   }
 });
 
-// Simple email sending function (you can replace this with a proper email service)
+// Email sending function using Nodemailer
 async function sendResetEmail(email: string, name: string, newPassword: string): Promise<void> {
-  // For now, just log the password to console (in production, you'd use a real email service)
-  console.log(`[PASSWORD RESET] Email: ${email}, Name: ${name}, New Password: ${newPassword}`);
-  
-  // If you want to integrate with a real email service, you can add that here
-  // For example, using Nodemailer, SendGrid, or another service
-  
-  // Simulated email sending
-  return Promise.resolve();
+  try {
+    // Create transporter using environment variables
+    const transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: parseInt(process.env.SMTP_PORT || '587'),
+      secure: false, // true for 465, false for other ports
+      auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS,
+      },
+    });
+
+    // Email content
+    const mailOptions = {
+      from: `"${process.env.FROM_NAME || 'GradeFlow'}" <${process.env.FROM_EMAIL}>`,
+      to: email,
+      subject: 'Password Reset - GradeFlow',
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #333;">Password Reset - GradeFlow</h2>
+          <p>Hello ${name},</p>
+          <p>Your password has been reset as requested. Here is your new temporary password:</p>
+          <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
+            <strong style="font-size: 18px; color: #2563eb;">${newPassword}</strong>
+          </div>
+          <p><strong>Important:</strong> Please log in with this temporary password and change it to something you'll remember.</p>
+          <p>If you didn't request this password reset, please contact support immediately.</p>
+          <hr style="margin: 30px 0; border: none; border-top: 1px solid #ddd;">
+          <p style="color: #666; font-size: 12px;">
+            This email was sent from GradeFlow. Please do not reply to this email.
+          </p>
+        </div>
+      `,
+      text: `
+        Password Reset - GradeFlow
+        
+        Hello ${name},
+        
+        Your password has been reset as requested. Here is your new temporary password:
+        
+        ${newPassword}
+        
+        Important: Please log in with this temporary password and change it to something you'll remember.
+        
+        If you didn't request this password reset, please contact support immediately.
+      `,
+    };
+
+    // Send email
+    const info = await transporter.sendMail(mailOptions);
+    console.log(`[PASSWORD RESET] Email sent to ${email}. Message ID: ${info.messageId}`);
+    
+  } catch (error) {
+    console.error(`[PASSWORD RESET ERROR] Failed to send email to ${email}:`, error);
+    // Don't throw the error - we don't want to reveal email sending failures to the user
+    // Just log it for debugging purposes
+  }
 }
 
 export default router;
