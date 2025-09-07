@@ -17,7 +17,7 @@ router.get('/', async (req: AuthRequest, res: Response) => {
       ORDER BY created_at ASC, name ASC
     `, [req.userId]);
 
-    res.json({ data: result.rows });
+    res.json(result.rows);
   } catch (error) {
     console.error('Error fetching grade category types:', error);
     res.status(500).json({ error: 'Failed to fetch grade category types' });
@@ -34,7 +34,7 @@ router.get('/active', async (req: AuthRequest, res: Response) => {
       ORDER BY created_at ASC, name ASC
     `, [req.userId]);
 
-    res.json({ data: result.rows });
+    res.json(result.rows);
   } catch (error) {
     console.error('Error fetching active grade category types:', error);
     res.status(500).json({ error: 'Failed to fetch active grade category types' });
@@ -122,7 +122,7 @@ router.put('/:id', async (req: AuthRequest, res: Response) => {
       return res.status(404).json({ error: 'Grade category type not found' });
     }
 
-    res.json({ data: result.rows[0] });
+    res.json(result.rows[0]);
   } catch (error: any) {
     console.error('Error updating grade category type:', error);
     
