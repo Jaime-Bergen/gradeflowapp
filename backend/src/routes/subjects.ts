@@ -96,7 +96,11 @@ router.get('/:id', async (req: AuthRequest, res, next) => {
 
     // Get lessons for this subject
     const lessonsResult = await db.query(
-      'SELECT * FROM lessons WHERE subject_id = $1 ORDER BY order_index',
+      `SELECT l.*, gct.name as type, gct.color as type_color 
+       FROM lessons l 
+       LEFT JOIN grade_category_types gct ON l.category_id = gct.id 
+       WHERE l.subject_id = $1 
+       ORDER BY l.order_index`,
       [id]
     );
     
@@ -412,7 +416,11 @@ router.get('/:id/lessons', async (req: AuthRequest, res, next) => {
     }
     
     const result = await db.query(
-      'SELECT * FROM lessons WHERE subject_id = $1 ORDER BY order_index',
+      `SELECT l.*, gct.name as type 
+       FROM lessons l 
+       LEFT JOIN grade_category_types gct ON l.category_id = gct.id 
+       WHERE l.subject_id = $1 
+       ORDER BY l.order_index`,
       [id]
     );
     
@@ -426,7 +434,7 @@ router.get('/:id/lessons', async (req: AuthRequest, res, next) => {
 router.post('/:id/lessons', validateRequest(schemas.lesson), async (req: AuthRequest, res, next) => {
   try {
     const { id } = req.params;
-    const { name, type, points } = req.body;
+    const { name, type, categoryId, points } = req.body;
     const db = getDB();
     
     // Verify subject belongs to user
@@ -438,6 +446,32 @@ router.post('/:id/lessons', validateRequest(schemas.lesson), async (req: AuthReq
     if (subjectCheck.rows.length === 0) {
       return res.status(404).json({ error: 'Subject not found' });
     }
+
+    // Determine category_id - support both new categoryId and legacy type
+    let finalCategoryId = categoryId;
+    if (!finalCategoryId && type) {
+      // Look up category by name for backwards compatibility
+      const categoryResult = await db.query(
+        'SELECT id FROM grade_category_types WHERE name = $1 AND user_id = $2',
+        [type, req.userId]
+      );
+      if (categoryResult.rows.length > 0) {
+        finalCategoryId = categoryResult.rows[0].id;
+      }
+    }
+    
+    // If still no category, use the first default category
+    if (!finalCategoryId) {
+      const defaultCategoryResult = await db.query(
+        'SELECT id FROM grade_category_types WHERE user_id = $1 AND is_default = true ORDER BY created_at LIMIT 1',
+        [req.userId]
+      );
+      if (defaultCategoryResult.rows.length > 0) {
+        finalCategoryId = defaultCategoryResult.rows[0].id;
+      } else {
+        return res.status(400).json({ error: 'No grade categories found. Please create grade categories first.' });
+      }
+    }
     
     // Get next order index
     const maxOrderResult = await db.query(
@@ -448,8 +482,13 @@ router.post('/:id/lessons', validateRequest(schemas.lesson), async (req: AuthReq
     const nextOrder = maxOrderResult.rows[0].next_order;
     
     const result = await db.query(
-      'INSERT INTO lessons (subject_id, name, type, points, order_index) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-      [id, name, type, points, nextOrder]
+      `INSERT INTO lessons (subject_id, name, category_id, points, order_index) 
+       VALUES ($1, $2, $3, $4, $5) 
+       RETURNING l.*, gct.name as type, gct.color as type_color 
+       FROM lessons l 
+       LEFT JOIN grade_category_types gct ON l.category_id = gct.id 
+       WHERE l.id = (SELECT currval(pg_get_serial_sequence('lessons', 'id')))`,
+      [id, name, finalCategoryId, points, nextOrder]
     );
     
     res.status(201).json(result.rows[0]);
@@ -462,16 +501,32 @@ router.post('/:id/lessons', validateRequest(schemas.lesson), async (req: AuthReq
 router.put('/:subjectId/lessons/:lessonId', validateRequest(schemas.lesson), async (req: AuthRequest, res, next) => {
   try {
     const { subjectId, lessonId } = req.params;
-    const { name, type, points } = req.body;
+    const { name, type, categoryId, points } = req.body;
     const db = getDB();
     
-    // Verify subject belongs to user and lesson belongs to subject
+    // Determine category_id - support both new categoryId and legacy type
+    let finalCategoryId = categoryId;
+    if (!finalCategoryId && type) {
+      // Look up category by name for backwards compatibility
+      const categoryResult = await db.query(
+        'SELECT id FROM grade_category_types WHERE name = $1 AND EXISTS (SELECT 1 FROM subjects WHERE id = $2 AND user_id = $3)',
+        [type, subjectId, req.userId]
+      );
+      if (categoryResult.rows.length > 0) {
+        finalCategoryId = categoryResult.rows[0].id;
+      }
+    }
+    
+    // Verify subject belongs to user and lesson belongs to subject, then update
     const result = await db.query(
-      `UPDATE lessons SET name = $1, type = $2, points = $3, updated_at = CURRENT_TIMESTAMP 
+      `UPDATE lessons SET name = $1, category_id = $2, points = $3, updated_at = CURRENT_TIMESTAMP 
        WHERE id = $4 AND subject_id = $5 
        AND EXISTS (SELECT 1 FROM subjects WHERE id = $5 AND user_id = $6)
-       RETURNING *`,
-      [name, type, points, lessonId, subjectId, req.userId]
+       RETURNING l.*, gct.name as type, gct.color as type_color 
+       FROM lessons l 
+       LEFT JOIN grade_category_types gct ON l.category_id = gct.id 
+       WHERE l.id = $4`,
+      [name, finalCategoryId, points, lessonId, subjectId, req.userId]
     );
     
     if (result.rows.length === 0) {

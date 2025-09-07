@@ -35,7 +35,8 @@ export interface Lesson {
   id: string
   name: string
   subjectId: string
-  type: string // Allow any custom grade category type
+  type: string // Grade category type name (from JOIN)
+  type_color?: string // Grade category color (from JOIN)
   categoryId?: string // Foreign key to grade_category_types
   points?: number // For compatibility with backend bulk add
   maxPoints?: number // For compatibility with other endpoints

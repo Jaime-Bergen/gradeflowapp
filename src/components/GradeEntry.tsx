@@ -91,9 +91,14 @@ export default function GradeEntry() {
     return categoryType?.id;
   };
 
-  // Helper function to get category color from type name
-  const getCategoryColor = (typeName: string): string => {
-    const categoryType = gradeCategoryTypes.find(cat => cat.name === typeName);
+  // Helper function to get category color from type name or lesson data
+  const getCategoryColor = (lesson: any): string => {
+    // First try to use the type_color field from the API response
+    if (lesson.type_color) {
+      return lesson.type_color;
+    }
+    // Fallback to looking up by type name
+    const categoryType = gradeCategoryTypes.find(cat => cat.name === lesson.type);
     return categoryType?.color || '#6366f1'; // Default color
   };
   const gridRef = useRef<HTMLDivElement>(null)
@@ -1569,13 +1574,13 @@ const saveGrade = async (studentId: string) => {
                           className={`text-center p-2 font-medium min-w-[100px]`}
                           style={{
                             backgroundColor: !isDefaultLessonType(lesson.type) 
-                              ? `${getCategoryColor(lesson.type)}20` 
+                              ? `${getCategoryColor(lesson)}20` 
                               : 'hsl(var(--muted))',
                             borderLeft: !isDefaultLessonType(lesson.type) 
-                              ? `2px solid ${getCategoryColor(lesson.type)}` 
+                              ? `2px solid ${getCategoryColor(lesson)}` 
                               : undefined,
                             borderRight: !isDefaultLessonType(lesson.type) 
-                              ? `2px solid ${getCategoryColor(lesson.type)}` 
+                              ? `2px solid ${getCategoryColor(lesson)}` 
                               : undefined
                           }}
                         >
@@ -1622,7 +1627,7 @@ const saveGrade = async (studentId: string) => {
                               </div>
                               <Badge
                                 className="text-xs text-white border-0"
-                                style={{ backgroundColor: getCategoryColor(lesson.type) }}
+                                style={{ backgroundColor: getCategoryColor(lesson) }}
                               >
                                 {lesson.type}
                               </Badge>
@@ -1704,7 +1709,7 @@ const saveGrade = async (studentId: string) => {
                               className={`text-center p-2 border-x border-border cursor-pointer hover:bg-muted/50 transition-colors`}
                               style={{ 
                                 backgroundColor: !isDefaultLessonType(lesson.type) 
-                                  ? `${getCategoryColor(lesson.type)}10` 
+                                  ? `${getCategoryColor(lesson)}10` 
                                   : undefined 
                               }}
                               onClick={() => {
@@ -2061,7 +2066,7 @@ const saveGrade = async (studentId: string) => {
                                   <span className={hasGrades ? 'font-medium' : ''}>{lesson.name}</span>
                                   <Badge 
                                     className={`text-xs text-white border-0 ${hasGrades ? 'opacity-90' : ''}`}
-                                    style={{ backgroundColor: getCategoryColor(lesson.type) }}
+                                    style={{ backgroundColor: getCategoryColor(lesson) }}
                                   >
                                     {lesson.type}
                                   </Badge>
@@ -2380,7 +2385,7 @@ const saveGrade = async (studentId: string) => {
                     <Label className="text-sm">Type</Label>
                     <Badge 
                       className="ml-2 capitalize text-white border-0"
-                      style={{ backgroundColor: getCategoryColor(selectedLesson.type) }}
+                      style={{ backgroundColor: getCategoryColor(selectedLesson) }}
                     >
                       {selectedLesson.type}
                     </Badge>
@@ -2506,7 +2511,7 @@ const saveGrade = async (studentId: string) => {
                     </select>
                     <div 
                       className="w-4 h-4 rounded-full border border-gray-300"
-                      style={{ backgroundColor: getCategoryColor(editLessonDialog.lesson.type) }}
+                      style={{ backgroundColor: getCategoryColor(editLessonDialog.lesson) }}
                       title={`Color for ${editLessonDialog.lesson.type}`}
                     ></div>
                   </div>

@@ -309,9 +309,14 @@ function Subjects() {
     weights: {} as { [categoryId: string]: number }
   });
 
-  // Helper function to get category color from type name
-  const getCategoryColor = (typeName: string): string => {
-    const categoryType = gradeCategoryTypes.find(cat => cat.name === typeName);
+  // Helper function to get category color from lesson object or type name
+  const getCategoryColor = (lesson: any): string => {
+    // First try to use the type_color field from the API response
+    if (lesson.type_color) {
+      return lesson.type_color;
+    }
+    // Fallback to looking up by type name
+    const categoryType = gradeCategoryTypes.find(cat => cat.name === lesson.type);
     return categoryType?.color || '#6366f1'; // Default color
   };
   const [expandedSubjects, setExpandedSubjects] = useState<{ [id: string]: boolean }>({});
@@ -841,7 +846,7 @@ function Subjects() {
                               <span className="flex-1 font-medium">{lesson.name}</span>
                               <span 
                                 className="text-xs px-2 py-1 rounded border text-white font-medium"
-                                style={{ backgroundColor: getCategoryColor(lesson.type) }}
+                                style={{ backgroundColor: getCategoryColor(lesson) }}
                               >
                                 {lesson.type}
                               </span>

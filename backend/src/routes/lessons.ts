@@ -9,7 +9,7 @@ router.get('/subject/:subjectId', async (req, res) => {
   const db = getDB();
   try {
     const { rows: lessons } = await db.query(
-      'SELECT l.*, gct.name as type FROM lessons l LEFT JOIN grade_category_types gct ON l.category_id = gct.id WHERE l.subject_id = $1 ORDER BY l.order_index ASC',
+      'SELECT l.*, gct.name as type, gct.color as type_color FROM lessons l LEFT JOIN grade_category_types gct ON l.category_id = gct.id WHERE l.subject_id = $1 ORDER BY l.order_index ASC',
       [subjectId]
     );
     res.json(lessons);
@@ -24,7 +24,7 @@ router.get('/:lessonId', async (req, res) => {
   const db = getDB();
   try {
     const { rows } = await db.query(
-      'SELECT l.*, gct.name as type FROM lessons l LEFT JOIN grade_category_types gct ON l.category_id = gct.id WHERE l.id = $1', 
+      'SELECT l.*, gct.name as type, gct.color as type_color FROM lessons l LEFT JOIN grade_category_types gct ON l.category_id = gct.id WHERE l.id = $1', 
       [lessonId]
     );
     const lesson = rows[0];
@@ -64,7 +64,7 @@ router.post('/subject/:subjectId', async (req, res) => {
     
     // Fetch the lesson with category name for response
     const { rows: lessonRows } = await db.query(
-      'SELECT l.*, gct.name as type FROM lessons l LEFT JOIN grade_category_types gct ON l.category_id = gct.id WHERE l.id = $1',
+      'SELECT l.*, gct.name as type, gct.color as type_color FROM lessons l LEFT JOIN grade_category_types gct ON l.category_id = gct.id WHERE l.id = $1',
       [rows[0].id]
     );
     
@@ -83,7 +83,7 @@ router.put('/:lessonId', async (req, res) => {
   try {
     // First, get the current lesson data
     const { rows: currentRows } = await db.query(
-      'SELECT l.*, gct.name as type FROM lessons l LEFT JOIN grade_category_types gct ON l.category_id = gct.id WHERE l.id = $1',
+      'SELECT l.*, gct.name as type, gct.color as type_color FROM lessons l LEFT JOIN grade_category_types gct ON l.category_id = gct.id WHERE l.id = $1',
       [lessonId]
     );
     const currentLesson = currentRows[0];
@@ -124,7 +124,7 @@ router.put('/:lessonId', async (req, res) => {
     
     // Fetch the updated lesson with category name for response
     const { rows: lessonRows } = await db.query(
-      'SELECT l.*, gct.name as type FROM lessons l LEFT JOIN grade_category_types gct ON l.category_id = gct.id WHERE l.id = $1',
+      'SELECT l.*, gct.name as type, gct.color as type_color FROM lessons l LEFT JOIN grade_category_types gct ON l.category_id = gct.id WHERE l.id = $1',
       [lessonId]
     );
     
