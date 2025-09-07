@@ -341,12 +341,12 @@ router.post('/:id/lessons/bulk', async (req: AuthRequest, res, next) => {
       return res.status(404).json({ error: 'Subject not found' });
     }
 
-    // Determine category_id - support both new categoryId and legacy type
+    // Determine category_id - prioritize categoryId over type
     let finalCategoryId = categoryId;
     if (!finalCategoryId && type) {
-      // Look up category by name for backwards compatibility
+      // Look up category by name for backwards compatibility (case-insensitive)
       const categoryResult = await db.query(
-        'SELECT id FROM grade_category_types WHERE name = $1 AND user_id = $2',
+        'SELECT id FROM grade_category_types WHERE LOWER(name) = LOWER($1) AND user_id = $2',
         [type, req.userId]
       );
       if (categoryResult.rows.length > 0) {
@@ -381,10 +381,20 @@ router.post('/:id/lessons/bulk', async (req: AuthRequest, res, next) => {
     try {
       const lessons = [];
       for (let i = 0; i < count; i++) {
-        const lessonResult = await db.query(
-          'INSERT INTO lessons (subject_id, name, category_id, points, order_index) VALUES ($1, $2, $3, $4, $5) RETURNING l.*, gct.name as type FROM lessons l LEFT JOIN grade_category_types gct ON l.category_id = gct.id WHERE l.id = (SELECT currval(pg_get_serial_sequence(\'lessons\', \'id\')))',
+        // First insert the lesson
+        const insertResult = await db.query(
+          'INSERT INTO lessons (subject_id, name, category_id, points, order_index) VALUES ($1, $2, $3, $4, $5) RETURNING id',
           [id, `${namePrefix} ${startOrder + i}`, finalCategoryId, points, startOrder + i]
         );
+        
+        const lessonId = insertResult.rows[0].id;
+        
+        // Then fetch the lesson with joined category data
+        const lessonResult = await db.query(
+          'SELECT l.*, gct.name as type, gct.color as type_color FROM lessons l LEFT JOIN grade_category_types gct ON l.category_id = gct.id AND gct.user_id = $2 WHERE l.id = $1',
+          [lessonId, req.userId]
+        );
+        
         lessons.push(lessonResult.rows[0]);
       }
 
@@ -450,9 +460,9 @@ router.post('/:id/lessons', validateRequest(schemas.lesson), async (req: AuthReq
     // Determine category_id - support both new categoryId and legacy type
     let finalCategoryId = categoryId;
     if (!finalCategoryId && type) {
-      // Look up category by name for backwards compatibility
+      // Look up category by name for backwards compatibility (case-insensitive)
       const categoryResult = await db.query(
-        'SELECT id FROM grade_category_types WHERE name = $1 AND user_id = $2',
+        'SELECT id FROM grade_category_types WHERE LOWER(name) = LOWER($1) AND user_id = $2',
         [type, req.userId]
       );
       if (categoryResult.rows.length > 0) {
@@ -507,9 +517,9 @@ router.put('/:subjectId/lessons/:lessonId', validateRequest(schemas.lesson), asy
     // Determine category_id - support both new categoryId and legacy type
     let finalCategoryId = categoryId;
     if (!finalCategoryId && type) {
-      // Look up category by name for backwards compatibility
+      // Look up category by name for backwards compatibility (case-insensitive)
       const categoryResult = await db.query(
-        'SELECT id FROM grade_category_types WHERE name = $1 AND EXISTS (SELECT 1 FROM subjects WHERE id = $2 AND user_id = $3)',
+        'SELECT id FROM grade_category_types WHERE LOWER(name) = LOWER($1) AND EXISTS (SELECT 1 FROM subjects WHERE id = $2 AND user_id = $3)',
         [type, subjectId, req.userId]
       );
       if (categoryResult.rows.length > 0) {

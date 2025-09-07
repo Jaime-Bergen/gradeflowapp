@@ -29,6 +29,7 @@ export const runMigrations = async (): Promise<void> => {
     await addColorToGradeCategoryTypes(db);
     await seedDefaultGradeCategoryTypes(db);
     await populateUserMetadata(db);
+    await dropLessonTypeColumn(db);
     
     console.log('All migrations completed successfully');
   } catch (error) {
@@ -755,6 +756,23 @@ const addCategoryIdToLessons = async (db: any) => {
     console.log('✅ Added category_id foreign key to lessons and migrated existing data');
   } catch (error) {
     console.error('Error adding category_id to lessons:', error);
+    throw error;
+  }
+};
+
+const dropLessonTypeColumn = async (db: any) => {
+  try {
+    console.log('🔧 Dropping type column from lessons table...');
+    
+    // Drop the type column from lessons table since we now use category_id foreign key
+    await db.query(`
+      ALTER TABLE lessons 
+      DROP COLUMN IF EXISTS type
+    `);
+    
+    console.log('✅ Successfully dropped type column from lessons table');
+  } catch (error) {
+    console.error('❌ Error dropping type column from lessons:', error);
     throw error;
   }
 };
