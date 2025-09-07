@@ -1,16 +1,28 @@
 import express from 'express';
 import { getDB } from '../database/connection';
+import { AuthRequest } from '../middleware/auth';
 
 const router = express.Router();
 
 // Get all lessons for a subject
-router.get('/subject/:subjectId', async (req, res) => {
+router.get('/subject/:subjectId', async (req: AuthRequest, res) => {
   const { subjectId } = req.params;
+  const userId = req.userId;
   const db = getDB();
   try {
+    // First verify that the subject belongs to the authenticated user
+    const subjectCheck = await db.query(
+      'SELECT id FROM subjects WHERE id = $1 AND user_id = $2',
+      [subjectId, userId]
+    );
+    
+    if (subjectCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Subject not found' });
+    }
+
     const { rows: lessons } = await db.query(
-      'SELECT l.*, gct.name as type, gct.color as type_color FROM lessons l LEFT JOIN grade_category_types gct ON l.category_id = gct.id WHERE l.subject_id = $1 ORDER BY l.order_index ASC',
-      [subjectId]
+      'SELECT l.*, gct.name as type, gct.color as type_color FROM lessons l LEFT JOIN grade_category_types gct ON l.category_id = gct.id AND gct.user_id = $2 WHERE l.subject_id = $1 ORDER BY l.order_index ASC',
+      [subjectId, userId]
     );
     res.json(lessons);
   } catch (err) {
@@ -19,13 +31,18 @@ router.get('/subject/:subjectId', async (req, res) => {
 });
 
 // Get a single lesson by id
-router.get('/:lessonId', async (req, res) => {
+router.get('/:lessonId', async (req: AuthRequest, res) => {
   const { lessonId } = req.params;
+  const userId = req.userId;
   const db = getDB();
   try {
     const { rows } = await db.query(
-      'SELECT l.*, gct.name as type, gct.color as type_color FROM lessons l LEFT JOIN grade_category_types gct ON l.category_id = gct.id WHERE l.id = $1', 
-      [lessonId]
+      `SELECT l.*, gct.name as type, gct.color as type_color 
+       FROM lessons l 
+       LEFT JOIN grade_category_types gct ON l.category_id = gct.id AND gct.user_id = $2
+       LEFT JOIN subjects s ON l.subject_id = s.id
+       WHERE l.id = $1 AND s.user_id = $2`, 
+      [lessonId, userId]
     );
     const lesson = rows[0];
     if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
@@ -36,21 +53,31 @@ router.get('/:lessonId', async (req, res) => {
 });
 
 // Add a lesson to a subject
-router.post('/subject/:subjectId', async (req, res) => {
+router.post('/subject/:subjectId', async (req: AuthRequest, res) => {
   const { subjectId } = req.params;
   const { name, type, categoryId, maxPoints, orderIndex } = req.body;
+  const userId = req.userId;
   const db = getDB();
   try {
+    // First verify that the subject belongs to the authenticated user
+    const subjectCheck = await db.query(
+      'SELECT id FROM subjects WHERE id = $1 AND user_id = $2',
+      [subjectId, userId]
+    );
+    
+    if (subjectCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Subject not found' });
+    }
+
     // Support both new categoryId and legacy type for backwards compatibility
     let finalCategoryId = categoryId;
     
     if (!finalCategoryId && type) {
-      // Look up category by type name for backwards compatibility
+      // Look up category by type name for backwards compatibility  
       const { rows: categoryRows } = await db.query(
-        `SELECT gct.id FROM grade_category_types gct 
-         JOIN subjects s ON s.user_id = gct.user_id 
-         WHERE s.id = $1 AND LOWER(gct.name) = LOWER($2) LIMIT 1`,
-        [subjectId, type]
+        `SELECT id FROM grade_category_types 
+         WHERE user_id = $1 AND LOWER(name) = LOWER($2) LIMIT 1`,
+        [userId, type]
       );
       if (categoryRows.length > 0) {
         finalCategoryId = categoryRows[0].id;
@@ -75,16 +102,21 @@ router.post('/subject/:subjectId', async (req, res) => {
 });
 
 // Update a lesson
-router.put('/:lessonId', async (req, res) => {
+router.put('/:lessonId', async (req: AuthRequest, res) => {
   const { lessonId } = req.params;
   const { name, type, categoryId, maxPoints, points, orderIndex } = req.body;
+  const userId = req.userId;
   const db = getDB();
   
   try {
-    // First, get the current lesson data
+    // First, get the current lesson data and verify user access
     const { rows: currentRows } = await db.query(
-      'SELECT l.*, gct.name as type, gct.color as type_color FROM lessons l LEFT JOIN grade_category_types gct ON l.category_id = gct.id WHERE l.id = $1',
-      [lessonId]
+      `SELECT l.*, gct.name as type, gct.color as type_color 
+       FROM lessons l 
+       LEFT JOIN grade_category_types gct ON l.category_id = gct.id AND gct.user_id = $2
+       LEFT JOIN subjects s ON l.subject_id = s.id
+       WHERE l.id = $1 AND s.user_id = $2`,
+      [lessonId, userId]
     );
     const currentLesson = currentRows[0];
     
@@ -102,11 +134,9 @@ router.put('/:lessonId', async (req, res) => {
     } else if (type !== undefined && type !== currentLesson.type) {
       // Look up category by type name for backwards compatibility
       const { rows: categoryRows } = await db.query(
-        `SELECT gct.id FROM grade_category_types gct 
-         JOIN subjects s ON s.user_id = gct.user_id 
-         JOIN lessons l ON l.subject_id = s.id
-         WHERE l.id = $1 AND LOWER(gct.name) = LOWER($2) LIMIT 1`,
-        [lessonId, type]
+        `SELECT id FROM grade_category_types 
+         WHERE user_id = $1 AND LOWER(name) = LOWER($2) LIMIT 1`,
+        [userId, type]
       );
       if (categoryRows.length > 0) {
         updatedCategoryId = categoryRows[0].id;
@@ -136,10 +166,23 @@ router.put('/:lessonId', async (req, res) => {
 });
 
 // Delete a lesson
-router.delete('/:lessonId', async (req, res) => {
+router.delete('/:lessonId', async (req: AuthRequest, res) => {
   const { lessonId } = req.params;
+  const userId = req.userId;
   const db = getDB();
   try {
+    // First verify that the lesson belongs to a subject owned by the authenticated user
+    const { rows } = await db.query(
+      `SELECT l.id FROM lessons l 
+       JOIN subjects s ON l.subject_id = s.id 
+       WHERE l.id = $1 AND s.user_id = $2`,
+      [lessonId, userId]
+    );
+    
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Lesson not found' });
+    }
+    
     await db.query('DELETE FROM lessons WHERE id = $1', [lessonId]);
     res.status(204).end();
   } catch (err) {
