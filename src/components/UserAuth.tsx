@@ -329,19 +329,34 @@ export default function UserAuth({ onUserChange }: UserAuthProps) {
                   <p className="text-sm text-muted-foreground mb-2">
                     Get the desktop app for a better experience
                   </p>
-                  <Button 
-                    variant="outline" 
-                    size="sm"
-                    onClick={() => {
-                      // Download the latest Windows installer from GitHub Releases
-                      const downloadUrl = 'https://github.com/Jaime-Bergen/gradeflowapp/releases/latest/download/GradeFlowApp_0.1.0_x64-setup.exe'
-                      window.open(downloadUrl, '_blank')
-                    }}
-                    className="text-sm"
-                  >
-                    <Download size={16} className="mr-2" />
-                    Download Desktop App
-                  </Button>
+                  <div className="flex gap-2 justify-center">
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => {
+                        // Download Windows installer
+                        const downloadUrl = 'https://github.com/Jaime-Bergen/gradeflowapp/releases/latest/download/GradeFlowApp_0.1.0_x64-setup.exe'
+                        window.open(downloadUrl, '_blank')
+                      }}
+                      className="text-sm"
+                    >
+                      <Download size={16} className="mr-2" />
+                      Windows
+                    </Button>
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => {
+                        // Download macOS installer (once available)
+                        const downloadUrl = 'https://github.com/Jaime-Bergen/gradeflowapp/releases/latest/download/GradeFlowApp_0.1.0_universal.dmg'
+                        window.open(downloadUrl, '_blank')
+                      }}
+                      className="text-sm"
+                    >
+                      <Download size={16} className="mr-2" />
+                      macOS
+                    </Button>
+                  </div>
                 </div>
               </div>
             </div>
