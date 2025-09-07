@@ -30,8 +30,6 @@ export default function Students() {
 
   const [newStudent, setNewStudent] = useState({
     name: '',
-    studentGroupId: '',
-    groupName: '', // Added groupName to the state
     subjects: [] as string[]
   })
 
@@ -141,7 +139,7 @@ export default function Students() {
     
     await apiClient.createStudent(student)
     await fetchData() // Refresh data
-    setNewStudent({ name: '', studentGroupId: '', groupName: '', subjects: [] })
+    setNewStudent({ name: '', subjects: [] })
     setSelectedGroupIds([])
     setIsAddDialogOpen(false)
     toast.success("Student added successfully")
@@ -151,8 +149,6 @@ export default function Students() {
     setEditingStudent(student)
     setNewStudent({
       name: student.name,
-      studentGroupId: student.group_name || '', // Keep for backward compatibility
-      groupName: student.group_name || '', 
       subjects: [...student.subjects]
     })
     // Set selected groups for editing
@@ -184,7 +180,7 @@ export default function Students() {
     
     await apiClient.updateStudent(editingStudent.id, updatedStudent)
     await fetchData() // Refresh data
-    setNewStudent({ name: '', studentGroupId: '', groupName: '', subjects: [] })
+    setNewStudent({ name: '', subjects: [] })
     setEditSelectedGroupIds([])
     setEditingStudent(null)
     setIsEditDialogOpen(false)
@@ -250,8 +246,6 @@ export default function Students() {
             newStudents.push({
               id: Date.now().toString() + i,
               name: values[0],
-          studentGroupId: values[1] || undefined,
-          group_name: values[2] || undefined,
               subjects: []
             })
           }
@@ -401,7 +395,7 @@ export default function Students() {
                   <Button variant="outline" onClick={() => {
                     setIsAddDialogOpen(false)
                     setSelectedGroupIds([])
-                    setNewStudent({ name: '', studentGroupId: '', groupName: '', subjects: [] })
+                    setNewStudent({ name: '', subjects: [] })
                   }}>
                     Cancel
                   </Button>
@@ -517,7 +511,7 @@ export default function Students() {
                     setIsEditDialogOpen(false)
                     setEditingStudent(null)
                     setEditSelectedGroupIds([])
-                    setNewStudent({ name: '', studentGroupId: '', groupName: '', subjects: [] })
+                    setNewStudent({ name: '', subjects: [] })
                   }}>
                     Cancel
                   </Button>

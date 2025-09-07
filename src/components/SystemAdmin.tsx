@@ -273,19 +273,10 @@ export default function SystemAdmin() {
   }
 
   const deleteStudentGroup = async (group: any) => {
-    // Calculate student count more accurately
-    const studentCount = students.filter(student => {
-      // Primary check: studentGroupId matches group.id
-      if (student.studentGroupId === group.id) return true
-      
-      // Fallback check: group_name contains this group name
-      if (student.group_name && group.name) {
-        const studentGroups = student.group_name.split(',').map(g => g.trim())
-        return studentGroups.includes(group.name)
-      }
-      
-      return false
-    }).length
+    // Calculate student count using modern studentGroupId field
+    const studentCount = students.filter(student => 
+      student.studentGroupId === group.id
+    ).length
 
     const confirmMessage = studentCount > 0
       ? `Are you sure you want to delete "${group.name}"? This group has ${studentCount} student(s) assigned to it. The students will not be deleted, but they will be removed from this group.`
@@ -847,20 +838,10 @@ export default function SystemAdmin() {
               ) : (
                 <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
                   {studentGroups.map((group, index) => {
-                    // Calculate actual student count by counting students in this group
-                    // Check both studentGroupId and group_name for backward compatibility
-                    const studentCount = students.filter(student => {
-                      // Primary check: studentGroupId matches group.id
-                      if (student.studentGroupId === group.id) return true
-                      
-                      // Fallback check: group_name contains this group name
-                      if (student.group_name && group.name) {
-                        const studentGroups = student.group_name.split(',').map(g => g.trim())
-                        return studentGroups.includes(group.name)
-                      }
-                      
-                      return false
-                    }).length
+                    // Calculate student count using modern studentGroupId field
+                    const studentCount = students.filter(student => 
+                      student.studentGroupId === group.id
+                    ).length
                     
                     return (
                       <div key={group.id || index} className="p-4 bg-muted/30 rounded-lg border">

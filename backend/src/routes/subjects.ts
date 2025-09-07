@@ -324,7 +324,7 @@ router.delete('/:id', async (req: AuthRequest, res, next) => {
 router.post('/:id/lessons/bulk', async (req: AuthRequest, res, next) => {
   try {
     const { id } = req.params;
-    const { count, namePrefix = 'Lesson', type, categoryId, points = 100 } = req.body;
+    const { count, namePrefix = 'Lesson', categoryId, points = 100 } = req.body;
     const db = getDB();
 
     if (!count || count < 1 || count > 200) {
@@ -341,20 +341,9 @@ router.post('/:id/lessons/bulk', async (req: AuthRequest, res, next) => {
       return res.status(404).json({ error: 'Subject not found' });
     }
 
-    // Determine category_id - prioritize categoryId over type
     let finalCategoryId = categoryId;
-    if (!finalCategoryId && type) {
-      // Look up category by name for backwards compatibility (case-insensitive)
-      const categoryResult = await db.query(
-        'SELECT id FROM grade_category_types WHERE LOWER(name) = LOWER($1) AND user_id = $2',
-        [type, req.userId]
-      );
-      if (categoryResult.rows.length > 0) {
-        finalCategoryId = categoryResult.rows[0].id;
-      }
-    }
     
-    // If still no category, use the first default category
+    // If no category provided, use the first default category
     if (!finalCategoryId) {
       const defaultCategoryResult = await db.query(
         'SELECT id FROM grade_category_types WHERE user_id = $1 AND is_default = true ORDER BY created_at LIMIT 1',
@@ -444,7 +433,7 @@ router.get('/:id/lessons', async (req: AuthRequest, res, next) => {
 router.post('/:id/lessons', validateRequest(schemas.lesson), async (req: AuthRequest, res, next) => {
   try {
     const { id } = req.params;
-    const { name, type, categoryId, points } = req.body;
+    const { name, categoryId, points } = req.body;
     const db = getDB();
     
     // Verify subject belongs to user
@@ -457,20 +446,9 @@ router.post('/:id/lessons', validateRequest(schemas.lesson), async (req: AuthReq
       return res.status(404).json({ error: 'Subject not found' });
     }
 
-    // Determine category_id - support both new categoryId and legacy type
     let finalCategoryId = categoryId;
-    if (!finalCategoryId && type) {
-      // Look up category by name for backwards compatibility (case-insensitive)
-      const categoryResult = await db.query(
-        'SELECT id FROM grade_category_types WHERE LOWER(name) = LOWER($1) AND user_id = $2',
-        [type, req.userId]
-      );
-      if (categoryResult.rows.length > 0) {
-        finalCategoryId = categoryResult.rows[0].id;
-      }
-    }
     
-    // If still no category, use the first default category
+    // If no category provided, use the first default category
     if (!finalCategoryId) {
       const defaultCategoryResult = await db.query(
         'SELECT id FROM grade_category_types WHERE user_id = $1 AND is_default = true ORDER BY created_at LIMIT 1',
@@ -511,21 +489,8 @@ router.post('/:id/lessons', validateRequest(schemas.lesson), async (req: AuthReq
 router.put('/:subjectId/lessons/:lessonId', validateRequest(schemas.lesson), async (req: AuthRequest, res, next) => {
   try {
     const { subjectId, lessonId } = req.params;
-    const { name, type, categoryId, points } = req.body;
+    const { name, categoryId, points } = req.body;
     const db = getDB();
-    
-    // Determine category_id - support both new categoryId and legacy type
-    let finalCategoryId = categoryId;
-    if (!finalCategoryId && type) {
-      // Look up category by name for backwards compatibility (case-insensitive)
-      const categoryResult = await db.query(
-        'SELECT id FROM grade_category_types WHERE LOWER(name) = LOWER($1) AND EXISTS (SELECT 1 FROM subjects WHERE id = $2 AND user_id = $3)',
-        [type, subjectId, req.userId]
-      );
-      if (categoryResult.rows.length > 0) {
-        finalCategoryId = categoryResult.rows[0].id;
-      }
-    }
     
     // Verify subject belongs to user and lesson belongs to subject, then update
     const result = await db.query(
@@ -536,7 +501,7 @@ router.put('/:subjectId/lessons/:lessonId', validateRequest(schemas.lesson), asy
        FROM lessons l 
        LEFT JOIN grade_category_types gct ON l.category_id = gct.id 
        WHERE l.id = $4`,
-      [name, finalCategoryId, points, lessonId, subjectId, req.userId]
+      [name, categoryId, points, lessonId, subjectId, req.userId]
     );
     
     if (result.rows.length === 0) {

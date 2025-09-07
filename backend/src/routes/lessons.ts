@@ -55,7 +55,7 @@ router.get('/:lessonId', async (req: AuthRequest, res) => {
 // Add a lesson to a subject
 router.post('/subject/:subjectId', async (req: AuthRequest, res) => {
   const { subjectId } = req.params;
-  const { name, type, categoryId, maxPoints, orderIndex } = req.body;
+  const { name, categoryId, maxPoints, orderIndex } = req.body;
   const userId = req.userId;
   const db = getDB();
   try {
@@ -69,24 +69,9 @@ router.post('/subject/:subjectId', async (req: AuthRequest, res) => {
       return res.status(404).json({ error: 'Subject not found' });
     }
 
-    // Support both new categoryId and legacy type for backwards compatibility
-    let finalCategoryId = categoryId;
-    
-    if (!finalCategoryId && type) {
-      // Look up category by type name for backwards compatibility  
-      const { rows: categoryRows } = await db.query(
-        `SELECT id FROM grade_category_types 
-         WHERE user_id = $1 AND LOWER(name) = LOWER($2) LIMIT 1`,
-        [userId, type]
-      );
-      if (categoryRows.length > 0) {
-        finalCategoryId = categoryRows[0].id;
-      }
-    }
-    
     const { rows } = await db.query(
       'INSERT INTO lessons (subject_id, name, category_id, points, order_index) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-      [subjectId, name, finalCategoryId, maxPoints, orderIndex ?? 0]
+      [subjectId, name, categoryId, maxPoints, orderIndex ?? 0]
     );
     
     // Fetch the lesson with category name for response
@@ -104,7 +89,7 @@ router.post('/subject/:subjectId', async (req: AuthRequest, res) => {
 // Update a lesson
 router.put('/:lessonId', async (req: AuthRequest, res) => {
   const { lessonId } = req.params;
-  const { name, type, categoryId, maxPoints, points, orderIndex } = req.body;
+  const { name, categoryId, maxPoints, points, orderIndex } = req.body;
   const userId = req.userId;
   const db = getDB();
   
@@ -126,22 +111,7 @@ router.put('/:lessonId', async (req: AuthRequest, res) => {
     
     // Use current values as defaults for any undefined fields
     const updatedName = name !== undefined ? name : currentLesson.name;
-    
-    // Handle category ID - support both new categoryId and legacy type
-    let updatedCategoryId = currentLesson.category_id;
-    if (categoryId !== undefined) {
-      updatedCategoryId = categoryId;
-    } else if (type !== undefined && type !== currentLesson.type) {
-      // Look up category by type name for backwards compatibility
-      const { rows: categoryRows } = await db.query(
-        `SELECT id FROM grade_category_types 
-         WHERE user_id = $1 AND LOWER(name) = LOWER($2) LIMIT 1`,
-        [userId, type]
-      );
-      if (categoryRows.length > 0) {
-        updatedCategoryId = categoryRows[0].id;
-      }
-    }
+    const updatedCategoryId = categoryId !== undefined ? categoryId : currentLesson.category_id;
     
     // Accept either 'points' or 'maxPoints' for backwards compatibility
     const updatedMaxPoints = (maxPoints !== undefined ? maxPoints : points !== undefined ? points : currentLesson.points);

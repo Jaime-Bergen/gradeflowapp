@@ -13,13 +13,14 @@ import { Lesson } from '@/lib/types'
 import { apiClient } from '@/lib/api'
 
 function Subjects() {
-  // Helper function to get default weights for categories
+  // Helper function to get default weights for categories (only active ones)
   const getDefaultWeights = () => {
     const defaultWeights: { [categoryId: string]: number } = {};
-    gradeCategoryTypes.forEach((category, index) => {
+    const activeCategories = gradeCategoryTypes.filter(category => category.is_active !== false);
+    activeCategories.forEach((category, index) => {
       // Set default weights: first two categories get more weight
       if (index === 0) defaultWeights[category.id] = 34;
-      else if (index === gradeCategoryTypes.length - 1 && gradeCategoryTypes.length > 1) defaultWeights[category.id] = 66;
+      else if (index === activeCategories.length - 1 && activeCategories.length > 1) defaultWeights[category.id] = 66;
       else defaultWeights[category.id] = 0;
     });
     return defaultWeights;
@@ -30,7 +31,6 @@ function Subjects() {
     setNewSubject({
       name: '',
       report_card_name: '',
-      studentGroupId: '',
       weights: getDefaultWeights()
     });
     setSelectedGroups([]);
@@ -52,14 +52,14 @@ function Subjects() {
     gradeCategoryTypes.forEach(category => {
       // Use the new weights structure from the backend
       const weight = subject.weights?.[category.id] || 0;
-      weights[category.id] = Math.round(weight * 100); // Convert decimal to percentage (0.34 -> 34)
+      // Set weight to 0 for disabled categories
+      weights[category.id] = category.is_active === false ? 0 : Math.round(weight * 100); // Convert decimal to percentage (0.34 -> 34)
     });
 
     // Populate the form with current subject data
     setNewSubject({
       name: subject.name,
       report_card_name: subject.report_card_name || '',
-      studentGroupId: subject.group_name || '', // Keep for backwards compatibility
       weights
     });
 
@@ -116,11 +116,13 @@ function Subjects() {
         payload.report_card_name = reportCardName;
       }
       
-      // Add weights object for the new structure
+      // Add weights object for the new structure (only include active categories)
       const weights: { [categoryId: string]: number } = {};
       gradeCategoryTypes.forEach(category => {
-        const weight = newSubject.weights[category.id] || 0;
-        weights[category.id] = Number(weight) / 100 || 0; // Convert percentage to decimal (0-1)
+        if (category.is_active !== false) {
+          const weight = newSubject.weights[category.id] || 0;
+          weights[category.id] = Number(weight) / 100 || 0; // Convert percentage to decimal (0-1)
+        }
       });
       payload.weights = weights;
       
@@ -130,7 +132,6 @@ function Subjects() {
           .filter(group => selectedGroups.includes(group.name))
           .map(group => group.id);
         payload.groupIds = groupIds;
-        payload.groupName = selectedGroups.join(', '); // For backward compatibility
       }
       
       if (isEditing && editingSubjectId) {
@@ -146,7 +147,6 @@ function Subjects() {
       setNewSubject({
         name: '',
         report_card_name: '',
-        studentGroupId: '',
         weights: getDefaultWeights()
       });
       setSelectedGroups([]);
@@ -305,7 +305,6 @@ function Subjects() {
   const [newSubject, setNewSubject] = useState({
     name: '',
     report_card_name: '',
-    studentGroupId: '',
     weights: {} as { [categoryId: string]: number }
   });
 
@@ -333,8 +332,10 @@ function Subjects() {
     }
   }, [gradeCategoryTypes]);
 
-  // Calculate total weight for validation
-  const totalWeight = Object.values(newSubject.weights).reduce((sum, weight) => sum + (weight || 0), 0);
+  // Calculate total weight for validation (only include active categories)
+  const totalWeight = gradeCategoryTypes
+    .filter(category => category.is_active !== false)
+    .reduce((sum, category) => sum + (newSubject.weights[category.id] || 0), 0);
 
   // Fetch subjects and student groups from API on mount
   useEffect(() => {
@@ -645,21 +646,29 @@ function Subjects() {
                   <>
                     <div className="grid grid-cols-2 gap-2 mt-2">
                       {gradeCategoryTypes.map((category) => (
-                        <div key={category.id}>
-                          <Label htmlFor={`${category.id}Weight`}>{category.name}</Label>
+                        <div key={category.id} className={category.is_active === false ? 'opacity-50' : ''}>
+                          <Label htmlFor={`${category.id}Weight`} className={category.is_active === false ? 'text-muted-foreground' : ''}>
+                            {category.name}
+                            {category.is_active === false && <span className="text-xs ml-1">(disabled)</span>}
+                          </Label>
                           <Input
                             id={`${category.id}Weight`}
                             type="number"
                             min={0}
                             max={100}
-                            value={newSubject.weights[category.id] || 0}
-                            onChange={e => setNewSubject(prev => ({ 
-                              ...prev, 
-                              weights: { 
-                                ...prev.weights, 
-                                [category.id]: Number(e.target.value) 
-                              }
-                            }))}
+                            value={category.is_active === false ? 0 : (newSubject.weights[category.id] || 0)}
+                            onChange={e => {
+                              if (category.is_active === false) return; // Prevent editing disabled categories
+                              setNewSubject(prev => ({ 
+                                ...prev, 
+                                weights: { 
+                                  ...prev.weights, 
+                                  [category.id]: Number(e.target.value) 
+                                }
+                              }))
+                            }}
+                            disabled={category.is_active === false}
+                            className={category.is_active === false ? 'bg-muted cursor-not-allowed' : ''}
                           />
                         </div>
                       ))}
@@ -701,7 +710,6 @@ function Subjects() {
                   setNewSubject({
                     name: '',
                     report_card_name: '',
-                    studentGroupId: '',
                     weights: getDefaultWeights()
                   });
                   setSelectedGroups([]);

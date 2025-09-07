@@ -36,8 +36,7 @@ export const schemas = {
 
   student: Joi.object({
     name: Joi.string().min(2).max(100).required(),
-    groupName: Joi.string().max(100).optional(), // For backward compatibility
-    groupIds: Joi.array().items(Joi.string().uuid()).optional() // New many-to-many format
+    groupIds: Joi.array().items(Joi.string().uuid()).optional() // Many-to-many format
   }),
 
   studentGroup: Joi.object({
@@ -49,14 +48,13 @@ export const schemas = {
     name: Joi.string().min(2).max(100).required(),
     report_card_name: Joi.string().min(2).max(100).optional(),
     description: Joi.string().max(500).optional(),
-    groupName: Joi.string().allow('').optional(), // For backward compatibility
-    groupIds: Joi.array().items(Joi.string().uuid()).optional(), // New many-to-many format
-    weights: Joi.object().pattern(Joi.string().uuid(), Joi.number().min(0).max(1)).optional() // New weights structure
+    groupIds: Joi.array().items(Joi.string().uuid()).optional(), // Many-to-many format
+    weights: Joi.object().pattern(Joi.string().uuid(), Joi.number().min(0).max(1)).optional() // Weights structure
   }),
 
   lesson: Joi.object({
     name: Joi.string().min(1).max(100).required(),
-    type: Joi.string().min(1).max(50).default('lesson'), // Allow any custom lesson type
+    categoryId: Joi.string().uuid().optional(),
     points: Joi.number().integer().min(1).max(1000).default(100)
   }),
 

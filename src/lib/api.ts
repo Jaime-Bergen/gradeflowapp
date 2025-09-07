@@ -14,7 +14,7 @@ class ApiClient {
       method: 'DELETE',
     });
   }
-  async updateLesson(lessonId: string, data: Partial<{ name: string; type: string; categoryId: string; points: number; orderIndex: number }>) {
+  async updateLesson(lessonId: string, data: Partial<{ name: string; categoryId: string; points: number; orderIndex: number }>) {
     return this.request(`/lessons/${lessonId}`, {
       method: 'PUT',
       body: JSON.stringify(data),

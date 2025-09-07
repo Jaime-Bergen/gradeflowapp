@@ -145,6 +145,16 @@ export default function GradeEntry() {
   const startEditingGrade = (studentId: string, lessonId: string, currentValue: string) => {
     setEditingCell({ studentId, lessonId });
     setTempGradeValue(currentValue);
+    
+    // Ensure text selection happens after the input is rendered and focused
+    if (currentValue) {
+      setTimeout(() => {
+        const activeElement = document.activeElement as HTMLInputElement;
+        if (activeElement && activeElement.tagName === 'INPUT') {
+          activeElement.select();
+        }
+      }, 50);
+    }
   };
 
   // Function to switch between entry and table modes while preserving current selection
@@ -1748,7 +1758,7 @@ const saveGrade = async (studentId: string) => {
                                     onKeyDown={(e) => {
                                       if (e.key === 'Enter') {
                                         saveGradeInline(student.id, lesson.id, true);
-                                        setTimeout(() => navigateToNextCell(student.id, lesson.id), 100);
+                                        setTimeout(() => navigateToNextCell(student.id, lesson.id), 50);
                                       } else if (e.key === 'Escape') {
                                         setEditingCell(null);
                                       } else if (e.key === ' ') {
