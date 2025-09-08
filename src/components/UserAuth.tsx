@@ -17,6 +17,50 @@ const isTauri = (): boolean => {
   return typeof window !== 'undefined' && 'window' in window && '__TAURI__' in window
 }
 
+// Detect user's platform
+const getPlatform = (): 'windows' | 'macos' | 'linux' | 'unknown' => {
+  if (typeof navigator === 'undefined') return 'unknown'
+  
+  const userAgent = navigator.userAgent.toLowerCase()
+  if (userAgent.includes('win')) return 'windows'
+  if (userAgent.includes('mac')) return 'macos'
+  if (userAgent.includes('linux')) return 'linux'
+  return 'unknown'
+}
+
+// Get download URL for user's platform
+const getDownloadUrl = (): { url: string; label: string; icon: string } => {
+  const platform = getPlatform()
+  const baseUrl = 'https://github.com/Jaime-Bergen/gradeflowapp/releases/latest/download/'
+  
+  switch (platform) {
+    case 'windows':
+      return {
+        url: `${baseUrl}GradeFlowApp_0.1.3_x64-setup.exe`,
+        label: 'Download for Windows',
+        icon: '🖥️'
+      }
+    case 'macos':
+      return {
+        url: `${baseUrl}GradeFlowApp_0.1.3_universal.dmg`,
+        label: 'Download for macOS',
+        icon: '🍎'
+      }
+    case 'linux':
+      return {
+        url: `${baseUrl}gradeflowapp_0.1.3_amd64.AppImage`,
+        label: 'Download for Linux',
+        icon: '🐧'
+      }
+    default:
+      return {
+        url: `${baseUrl}GradeFlowApp_0.1.3_x64-setup.exe`,
+        label: 'Download Desktop App',
+        icon: '💻'
+      }
+  }
+}
+
 interface UserAuthProps {
   onUserChange: (userData: UserData | null) => void
 }
@@ -329,34 +373,61 @@ export default function UserAuth({ onUserChange }: UserAuthProps) {
                   <p className="text-sm text-muted-foreground mb-2">
                     Get the desktop app for a better experience
                   </p>
-                  <div className="flex gap-2 justify-center">
-                    <Button 
-                      variant="outline" 
-                      size="sm"
-                      onClick={() => {
-                        // Download Windows installer
-                        const downloadUrl = 'https://github.com/Jaime-Bergen/gradeflowapp/releases/latest/download/GradeFlowApp_0.1.0_x64-setup.exe'
-                        window.open(downloadUrl, '_blank')
-                      }}
-                      className="text-sm"
-                    >
-                      <Download size={16} className="mr-2" />
-                      Windows
-                    </Button>
-                    <Button 
-                      variant="outline" 
-                      size="sm"
-                      onClick={() => {
-                        // Download macOS installer (once available)
-                        const downloadUrl = 'https://github.com/Jaime-Bergen/gradeflowapp/releases/latest/download/GradeFlowApp_0.1.0_universal.dmg'
-                        window.open(downloadUrl, '_blank')
-                      }}
-                      className="text-sm"
-                    >
-                      <Download size={16} className="mr-2" />
-                      macOS
-                    </Button>
-                  </div>
+                  {(() => {
+                    const download = getDownloadUrl()
+                    return (
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={() => {
+                          window.open(download.url, '_blank')
+                        }}
+                        className="text-sm"
+                      >
+                        <Download size={16} className="mr-2" />
+                        {download.label}
+                      </Button>
+                    )
+                  })()}
+                  
+                  {/* Show all platform options on smaller text for other platforms */}
+                  <details className="mt-2">
+                    <summary className="text-xs text-muted-foreground cursor-pointer">
+                      Other platforms
+                    </summary>
+                    <div className="mt-2 space-y-1">
+                      <div>
+                        <a 
+                          href="https://github.com/Jaime-Bergen/gradeflowapp/releases/latest/download/GradeFlowApp_0.1.3_x64-setup.exe"
+                          className="text-xs text-blue-600 hover:underline"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          🖥️ Windows (exe)
+                        </a>
+                      </div>
+                      <div>
+                        <a 
+                          href="https://github.com/Jaime-Bergen/gradeflowapp/releases/latest/download/GradeFlowApp_0.1.3_universal.dmg"
+                          className="text-xs text-blue-600 hover:underline"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          🍎 macOS (dmg)
+                        </a>
+                      </div>
+                      <div>
+                        <a 
+                          href="https://github.com/Jaime-Bergen/gradeflowapp/releases/latest/download/gradeflowapp_0.1.3_amd64.AppImage"
+                          className="text-xs text-blue-600 hover:underline"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          🐧 Linux (AppImage)
+                        </a>
+                      </div>
+                    </div>
+                  </details>
                 </div>
               </div>
             </div>
