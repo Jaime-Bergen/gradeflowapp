@@ -36,25 +36,25 @@ const getDownloadUrl = (): { url: string; label: string; icon: string } => {
   switch (platform) {
     case 'windows':
       return {
-        url: `${baseUrl}GradeFlowApp_0.1.3_x64-setup.exe`,
+        url: `${baseUrl}GradeFlowApp_0.1.0_x64-setup.exe`,
         label: 'Download for Windows',
         icon: '🖥️'
       }
     case 'macos':
       return {
-        url: `${baseUrl}GradeFlowApp_0.1.3_universal.dmg`,
+        url: `${baseUrl}GradeFlowApp_0.1.0_aarch64.dmg`,
         label: 'Download for macOS',
         icon: '🍎'
       }
     case 'linux':
       return {
-        url: `${baseUrl}gradeflowapp_0.1.3_amd64.AppImage`,
+        url: `${baseUrl}GradeFlowApp_0.1.0_amd64.AppImage`,
         label: 'Download for Linux',
         icon: '🐧'
       }
     default:
       return {
-        url: `${baseUrl}GradeFlowApp_0.1.3_x64-setup.exe`,
+        url: `${baseUrl}GradeFlowApp_0.1.0_x64-setup.exe`,
         label: 'Download Desktop App',
         icon: '💻'
       }
@@ -398,7 +398,7 @@ export default function UserAuth({ onUserChange }: UserAuthProps) {
                     <div className="mt-2 space-y-1">
                       <div>
                         <a 
-                          href="https://github.com/Jaime-Bergen/gradeflowapp/releases/latest/download/GradeFlowApp_0.1.3_x64-setup.exe"
+                          href="https://github.com/Jaime-Bergen/gradeflowapp/releases/latest/download/GradeFlowApp_0.1.0_x64-setup.exe"
                           className="text-xs text-blue-600 hover:underline"
                           target="_blank"
                           rel="noopener noreferrer"
@@ -408,22 +408,42 @@ export default function UserAuth({ onUserChange }: UserAuthProps) {
                       </div>
                       <div>
                         <a 
-                          href="https://github.com/Jaime-Bergen/gradeflowapp/releases/latest/download/GradeFlowApp_0.1.3_universal.dmg"
+                          href="https://github.com/Jaime-Bergen/gradeflowapp/releases/latest/download/GradeFlowApp_0.1.0_aarch64.dmg"
                           className="text-xs text-blue-600 hover:underline"
                           target="_blank"
                           rel="noopener noreferrer"
                         >
-                          🍎 macOS (dmg)
+                          🍎 macOS Apple Silicon (dmg)
                         </a>
                       </div>
                       <div>
                         <a 
-                          href="https://github.com/Jaime-Bergen/gradeflowapp/releases/latest/download/gradeflowapp_0.1.3_amd64.AppImage"
+                          href="https://github.com/Jaime-Bergen/gradeflowapp/releases/latest/download/GradeFlowApp_0.1.0_x64_en-US.msi"
+                          className="text-xs text-blue-600 hover:underline"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          🖥️ Windows (msi)
+                        </a>
+                      </div>
+                      <div>
+                        <a 
+                          href="https://github.com/Jaime-Bergen/gradeflowapp/releases/latest/download/GradeFlowApp_0.1.0_amd64.AppImage"
                           className="text-xs text-blue-600 hover:underline"
                           target="_blank"
                           rel="noopener noreferrer"
                         >
                           🐧 Linux (AppImage)
+                        </a>
+                      </div>
+                      <div>
+                        <a 
+                          href="https://github.com/Jaime-Bergen/gradeflowapp/releases/latest/download/GradeFlowApp_0.1.0_amd64.deb"
+                          className="text-xs text-blue-600 hover:underline"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          🐧 Linux (deb)
                         </a>
                       </div>
                     </div>
