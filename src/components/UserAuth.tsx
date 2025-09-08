@@ -525,7 +525,13 @@ export default function UserAuth({ onUserChange }: UserAuthProps) {
                     type="button" 
                     variant="link" 
                     className="text-sm text-muted-foreground"
-                    onClick={() => setShowResetDialog(true)}
+                    onClick={() => {
+                      // Auto-fill reset email if login email is valid
+                      if (email.trim() && isValidEmail(email)) {
+                        setResetEmail(email.toLowerCase())
+                      }
+                      setShowResetDialog(true)
+                    }}
                   >
                     Forgot your password?
                   </Button>
