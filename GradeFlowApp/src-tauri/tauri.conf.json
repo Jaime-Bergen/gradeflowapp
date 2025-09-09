@@ -18,6 +18,16 @@
         "resizable": false
       }
     ],
+    "macOS": {
+      "entitlements": "entitlements.plist",
+      "exceptionDomain": "",
+      "signingIdentity": null,
+      "hardenedRuntime": true,
+      "entitlementsAllowlist": [],
+      "sign": {
+        "identity": "Developer ID Application: RP866R85MM"
+      }
+    }
     "security": {
       "csp": null
     }
