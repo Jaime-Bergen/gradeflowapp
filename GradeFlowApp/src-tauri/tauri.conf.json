@@ -10,6 +10,16 @@
     "frontendDist": null
   },
   "app": {
+    "macOS": {
+      "entitlements": "entitlements.plist",
+      "exceptionDomain": "",
+      "signingIdentity": null,
+      "hardenedRuntime": true,
+      "entitlementsAllowlist": [],
+      "sign": {
+        "identity": "Developer ID Application: James Bergen (RP866R85MM)"
+      }
+    },
     "windows": [
       {
         "title": "GradeFlowApp",
