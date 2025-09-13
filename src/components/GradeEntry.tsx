@@ -147,12 +147,6 @@ export default function GradeEntry() {
     return 'partial';
   };
 
-  // Helper function to check if a lesson has any grades (backward compatibility)
-  const lessonHasGrades = (lessonId: string): boolean => {
-    const status = getLessonGradingStatus(lessonId);
-    return status === 'partial' || status === 'complete';
-  };
-
   // Inline editing functions
   const startEditingGrade = (studentId: string, lessonId: string, currentValue: string) => {
     setEditingCell({ studentId, lessonId });

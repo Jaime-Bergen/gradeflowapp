@@ -759,7 +759,6 @@ function Subjects() {
                       variant="ghost"
                       size="sm"
                       onClick={() => handleEditSubject(subject.id)}
-                      className="opacity-0 group-hover:opacity-100 transition-opacity"
                     >
                       <PencilSimple size={16} />
                     </Button>
@@ -768,7 +767,6 @@ function Subjects() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="opacity-0 group-hover:opacity-100 transition-opacity"
                         >
                           <Trash size={16} className="text-destructive" />
                         </Button>

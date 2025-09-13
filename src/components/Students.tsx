@@ -557,7 +557,6 @@ export default function Students() {
                       variant="ghost"
                       size="sm"
                       onClick={() => editStudent(student)}
-                      className="opacity-0 group-hover:opacity-100 transition-opacity"
                     >
                       <PencilSimple size={16} />
                     </Button>
@@ -566,7 +565,6 @@ export default function Students() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="opacity-0 group-hover:opacity-100 transition-opacity"
                         >
                           <Trash size={16} className="text-destructive" />
                         </Button>
