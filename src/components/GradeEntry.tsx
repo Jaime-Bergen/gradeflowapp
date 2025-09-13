@@ -131,14 +131,26 @@ export default function GradeEntry() {
   )
   const currentSubjectIndex = availableSubjects.findIndex(s => s.id === selectedSubjectId)
 
-  // Helper function to check if a lesson has any grades
-  const lessonHasGrades = (lessonId: string): boolean => {
-    return enrolledStudents.some(student => {
+  // Helper function to check lesson grading status
+  const getLessonGradingStatus = (lessonId: string): 'none' | 'partial' | 'complete' => {
+    if (enrolledStudents.length === 0) return 'none';
+    
+    const studentsWithGrades = enrolledStudents.filter(student => {
       const existingGrade = grades.find(
         g => g.studentId === student.id && g.lessonId === lessonId
       );
       return existingGrade !== undefined;
     });
+    
+    if (studentsWithGrades.length === 0) return 'none';
+    if (studentsWithGrades.length === enrolledStudents.length) return 'complete';
+    return 'partial';
+  };
+
+  // Helper function to check if a lesson has any grades (backward compatibility)
+  const lessonHasGrades = (lessonId: string): boolean => {
+    const status = getLessonGradingStatus(lessonId);
+    return status === 'partial' || status === 'complete';
   };
 
   // Inline editing functions
@@ -2085,25 +2097,50 @@ const saveGrade = async (studentId: string) => {
                         </SelectTrigger>
                         <SelectContent>
                           {(subjectLessons[selectedSubjectId] || []).map(lesson => {
-                            const hasGrades = lessonHasGrades(lesson.id);
+                            const gradingStatus = getLessonGradingStatus(lesson.id);
+                            const getStatusColor = () => {
+                              switch (gradingStatus) {
+                                case 'complete': return 'text-green-700';
+                                case 'partial': return 'text-orange-600';
+                                default: return 'text-gray-600';
+                              }
+                            };
+                            const getStatusBadge = () => {
+                              switch (gradingStatus) {
+                                case 'complete': return 'border-green-300 bg-green-50';
+                                case 'partial': return 'border-orange-300 bg-orange-50';
+                                default: return '';
+                              }
+                            };
+                            const getGradedBadge = () => {
+                              switch (gradingStatus) {
+                                case 'complete': return { bg: 'bg-green-100', text: 'text-green-800', label: '✓ Complete' };
+                                case 'partial': return { bg: 'bg-orange-100', text: 'text-orange-800', label: '⚠ Partial' };
+                                default: return null;
+                              }
+                            };
+                            
                             return (
                               <SelectItem key={lesson.id} value={lesson.id}>
-                                <div className={`flex items-center gap-2 ${hasGrades ? 'text-green-700' : 'text-gray-600'}`}>
-                                  <span className={hasGrades ? 'font-medium' : ''}>{lesson.name}</span>
+                                <div className={`flex items-center gap-2 ${getStatusColor()}`}>
+                                  <span className={gradingStatus !== 'none' ? 'font-medium' : ''}>{lesson.name}</span>
                                   <Badge 
-                                    className={`text-xs text-white border-0 ${hasGrades ? 'opacity-90' : ''}`}
+                                    className={`text-xs text-white border-0 ${gradingStatus !== 'none' ? 'opacity-90' : ''}`}
                                     style={{ backgroundColor: getCategoryColor(lesson) }}
                                   >
                                     {lesson.type}
                                   </Badge>
-                                  <Badge variant="outline" className={`text-xs ${hasGrades ? 'border-green-300 bg-green-50' : ''}`}>
+                                  <Badge variant="outline" className={`text-xs ${getStatusBadge()}`}>
                                     {lesson.points}pts
                                   </Badge>
-                                  {hasGrades && (
-                                    <Badge variant="secondary" className="text-xs bg-green-100 text-green-800">
-                                      ✓ Graded
-                                    </Badge>
-                                  )}
+                                  {(() => {
+                                    const badge = getGradedBadge();
+                                    return badge ? (
+                                      <Badge variant="secondary" className={`text-xs ${badge.bg} ${badge.text}`}>
+                                        {badge.label}
+                                      </Badge>
+                                    ) : null;
+                                  })()}
                                 </div>
                               </SelectItem>
                             );
