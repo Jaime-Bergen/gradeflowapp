@@ -4,7 +4,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import path from 'path';
-import { connectDB } from './database/connection';
+import { connectDB, closeDB } from './database/connection';
 import { runMigrations } from './database/migrations';
 import authRoutes from './routes/auth';
 import userRoutes from './routes/users';
@@ -134,14 +134,19 @@ async function startServer() {
 }
 
 // Graceful shutdown
-process.on('SIGINT', () => {
-  console.log('\n🛑 Shutting down gracefully...');
-  process.exit(0);
-});
+const gracefulShutdown = async (signal: string) => {
+  console.log(`\n🛑 Received ${signal}. Shutting down gracefully...`);
+  try {
+    await closeDB();
+    console.log('✅ Database connections closed');
+    process.exit(0);
+  } catch (error) {
+    console.error('❌ Error during shutdown:', error);
+    process.exit(1);
+  }
+};
 
-process.on('SIGTERM', () => {
-  console.log('\n🛑 Shutting down gracefully...');
-  process.exit(0);
-});
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
 startServer();
