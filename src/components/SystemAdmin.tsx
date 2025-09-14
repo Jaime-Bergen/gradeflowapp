@@ -273,10 +273,14 @@ export default function SystemAdmin() {
   }
 
   const deleteStudentGroup = async (group: any) => {
-    // Calculate student count using modern studentGroupId field
-    const studentCount = students.filter(student => 
-      student.studentGroupId === group.id
-    ).length
+    // Calculate student count using group_name field (comma-separated names)
+    const studentCount = students.filter(student => {
+      if (!student.group_name || !group.name) return false;
+      
+      // Split group_name by comma and check if group.name is included
+      const studentGroups = student.group_name.split(',').map(g => g.trim());
+      return studentGroups.includes(group.name);
+    }).length
 
     const confirmMessage = studentCount > 0
       ? `Are you sure you want to delete "${group.name}"? This group has ${studentCount} student(s) assigned to it. The students will not be deleted, but they will be removed from this group.`
@@ -838,10 +842,14 @@ export default function SystemAdmin() {
               ) : (
                 <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
                   {studentGroups.map((group, index) => {
-                    // Calculate student count using modern studentGroupId field
-                    const studentCount = students.filter(student => 
-                      student.studentGroupId === group.id
-                    ).length
+                    // Calculate student count using group_name field (comma-separated names)
+                    const studentCount = students.filter(student => {
+                      if (!student.group_name || !group.name) return false;
+                      
+                      // Split group_name by comma and check if group.name is included
+                      const studentGroups = student.group_name.split(',').map(g => g.trim());
+                      return studentGroups.includes(group.name);
+                    }).length
                     
                     return (
                       <div key={group.id || index} className="p-4 bg-muted/30 rounded-lg border">
