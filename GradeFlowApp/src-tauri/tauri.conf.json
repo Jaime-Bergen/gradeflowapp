@@ -33,8 +33,6 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "entitlements": "entitlements.plist",
-      "exceptionDomain": "",
       "signingIdentity": "Developer ID Application: James Bergen (RP866R85MM)",
       "hardenedRuntime": true
     }
