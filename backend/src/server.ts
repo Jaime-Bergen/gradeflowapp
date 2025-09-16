@@ -39,12 +39,16 @@ app.use((req, res, next) => {
 
 // CORS configuration
 const corsOrigins = process.env.CORS_ORIGIN?.split(',') || ['http://localhost:5173'];
-app.use(cors({
-  origin: corsOrigins,
+
+// Handle wildcard CORS or specific origins
+const corsConfig = {
+  origin: process.env.CORS_ORIGIN === '*' ? true : corsOrigins,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization']
-}));
+};
+
+app.use(cors(corsConfig));
 
 // Trust proxy for Heroku (more specific configuration)
 app.set('trust proxy', 1); // Trust first proxy (Heroku)

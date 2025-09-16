@@ -1836,7 +1836,7 @@ const saveGrade = async (studentId: string) => {
                                     placeholder={entryMode === 'percentage' ? '%' : 'errors'}
                                     autoFocus
                                     onFocus={(e) => e.target.select()}
-                                    onKeyDown={(e) => {
+                                    onKeyDown={async (e) => {
                                       if (e.key === 'Enter') {
                                         saveGradeInline(student.id, lesson.id, true);
                                         setTimeout(() => navigateToNextCell(student.id, lesson.id), 50);
@@ -1863,15 +1863,23 @@ const saveGrade = async (studentId: string) => {
                                         setEditingCell(null);
                                       } else if (e.key === 'ArrowUp') {
                                         e.preventDefault();
+                                        // Save current cell before navigating
+                                        await saveGradeInline(student.id, lesson.id, false);
                                         navigateToCell('up', student.id, lesson.id);
                                       } else if (e.key === 'ArrowDown') {
                                         e.preventDefault();
+                                        // Save current cell before navigating
+                                        await saveGradeInline(student.id, lesson.id, false);
                                         navigateToCell('down', student.id, lesson.id);
                                       } else if (e.key === 'ArrowLeft') {
                                         e.preventDefault();
+                                        // Save current cell before navigating
+                                        await saveGradeInline(student.id, lesson.id, false);
                                         navigateToCell('left', student.id, lesson.id);
                                       } else if (e.key === 'ArrowRight') {
                                         e.preventDefault();
+                                        // Save current cell before navigating
+                                        await saveGradeInline(student.id, lesson.id, false);
                                         navigateToCell('right', student.id, lesson.id);
                                       } else if (e.key === 'PageUp') {
                                         e.preventDefault();

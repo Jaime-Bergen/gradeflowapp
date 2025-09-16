@@ -106,7 +106,50 @@ export default function Students() {
     }
   }
 
-  // Get subjects that are available for a specific group name
+  // Check if removing a group would affect enrolled subjects
+  const checkGroupRemovalWarning = (groupToRemove: any, student: Student) => {
+    if (!student || !groupToRemove) return null;
+    
+    // Get the group names that would remain after removal
+    const remainingGroupIds = editSelectedGroupIds.filter(id => id !== groupToRemove.id);
+    const remainingGroupNames = remainingGroupIds
+      .map(id => studentGroups.find(g => g.id === id)?.name)
+      .filter(Boolean)
+      .join(',');
+    
+    // Get subjects available to remaining groups
+    const remainingAvailableSubjects = getAvailableSubjects(remainingGroupNames);
+    const remainingSubjectIds = remainingAvailableSubjects.map(s => s.id);
+    
+    // Find enrolled subjects that would no longer be available
+    const affectedSubjects = student.subjects
+      .map(subjectId => subjects.find(s => s.id === subjectId))
+      .filter(subject => subject && !remainingSubjectIds.includes(subject.id));
+    
+    return affectedSubjects.length > 0 ? affectedSubjects : null;
+  };
+
+  const handleGroupDeselection = (group: any) => {
+    if (!editingStudent) return;
+    
+    const affectedSubjects = checkGroupRemovalWarning(group, editingStudent);
+    
+    if (affectedSubjects && affectedSubjects.length > 0) {
+      const subjectNames = affectedSubjects.map(s => s?.name).filter(Boolean).join(', ');
+      const proceed = window.confirm(
+        `Warning: Removing "${group.name}" will make these enrolled subjects unavailable: ${subjectNames}.\n\n` +
+        `The student will be automatically unenrolled from these subjects. Do you want to continue?`
+      );
+      
+      if (!proceed) {
+        return; // User cancelled, don't remove the group
+      }
+    }
+    
+    // Proceed with removal
+    setEditSelectedGroupIds(prev => prev.filter(id => id !== group.id));
+  };
+
   const getAvailableSubjects = (groupNames?: string) => {
     return subjects.filter(subject => {
       // If subject has no group restriction, it's available to all
@@ -464,7 +507,7 @@ export default function Students() {
                                       prev.includes(group.id) ? prev : [...prev, group.id]
                                     )
                                   } else {
-                                    setEditSelectedGroupIds(prev => prev.filter(id => id !== group.id))
+                                    handleGroupDeselection(group)
                                   }
                                 }}
                               />
