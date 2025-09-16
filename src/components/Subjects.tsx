@@ -869,12 +869,19 @@ function Subjects() {
             <DialogTitle>Edit Lesson</DialogTitle>
           </DialogHeader>
           {editLessonDialog.lesson && (
-            <form onSubmit={e => { e.preventDefault(); handleEditLessonSave({
-              name: (e.target as any).name.value,
-              type: (e.target as any).type.value,
-              points: Number((e.target as any).points.value),
-              maxPoints: Number((e.target as any).points.value)
-            }); }} className="space-y-4">
+            <form onSubmit={e => { 
+              e.preventDefault(); 
+              const formData = e.target as any;
+              const selectedTypeName = formData.type.value;
+              // Find the category ID from the name
+              const selectedCategory = gradeCategoryTypes.find(cat => cat.name.toLowerCase() === selectedTypeName);
+              handleEditLessonSave({
+                name: formData.name.value,
+                categoryId: selectedCategory?.id, // Send categoryId instead of type name
+                points: Number(formData.points.value),
+                maxPoints: Number(formData.points.value)
+              }); 
+            }} className="space-y-4">
               <div>
                 <Label htmlFor="edit-lesson-name">Name</Label>
                 <Input id="edit-lesson-name" name="name" defaultValue={editLessonDialog.lesson.name} />
