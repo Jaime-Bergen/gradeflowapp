@@ -229,6 +229,10 @@ export default function Students() {
     };
     
     await apiClient.updateStudent(editingStudent.id, updatedStudent)
+    
+    // Update student subjects (including any that were removed due to group deselection)
+    await apiClient.updateStudentSubjects(editingStudent.id, { subjects: newStudent.subjects })
+    
     await fetchData() // Refresh data
     setNewStudent({ name: '', subjects: [] })
     setEditSelectedGroupIds([])
