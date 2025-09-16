@@ -336,40 +336,43 @@ export default function GradeEntry() {
           }
           keyboardEvent.preventDefault();
           if (currentLessonIndex > 0) {
-            const prevLesson = filteredSubjectLessons[currentLessonIndex - 1];
-            setSelectedLessonId(prevLesson.id);
-            
-            if (activeView === 'table') {
-              // Table mode: auto-select first student in new lesson (no toast)
-              setTimeout(() => {
-                if (enrolledStudents.length > 0) {
-                  const firstStudent = enrolledStudents[0];
-                  const existingGrade = grades.find(g => g.studentId === firstStudent.id && g.lessonId === prevLesson.id);
-                  const isSkipped = existingGrade && existingGrade.percentage === 0 && existingGrade.errors === (existingGrade.maxPoints || existingGrade.points);
-                  const currentValue = existingGrade
-                    ? (isSkipped ? 'S' : (entryMode === 'percentage' 
-                        ? ((existingGrade.percentage || 0) > 0 ? (existingGrade.percentage || 0).toString() : '') 
-                        : ((existingGrade.errors || 0) > 0 ? (existingGrade.errors || 0).toString() : '')))
-                    : '';
-                  startEditingGrade(firstStudent.id, prevLesson.id, currentValue);
-                }
-              }, 100);
-            } else {
-              // Entry mode: focus first input with toast
-              setTimeout(() => {
-                const firstStudentId = enrolledStudents[0]?.id;
-                if (firstStudentId) {
-                  const firstInput = inputRefs.current[firstStudentId];
-                  firstInput?.focus();
-                  // Auto-select the text if there's a value
-                  if (firstInput && firstInput.value) {
-                    setTimeout(() => firstInput.select(), 0);
+            // Save all pending grades before switching lessons
+            saveAllPendingGrades().then(() => {
+              const prevLesson = filteredSubjectLessons[currentLessonIndex - 1];
+              setSelectedLessonId(prevLesson.id);
+              
+              if (activeView === 'table') {
+                // Table mode: auto-select first student in new lesson (no toast)
+                setTimeout(() => {
+                  if (enrolledStudents.length > 0) {
+                    const firstStudent = enrolledStudents[0];
+                    const existingGrade = grades.find(g => g.studentId === firstStudent.id && g.lessonId === prevLesson.id);
+                    const isSkipped = existingGrade && existingGrade.percentage === 0 && existingGrade.errors === (existingGrade.maxPoints || existingGrade.points);
+                    const currentValue = existingGrade
+                      ? (isSkipped ? 'S' : (entryMode === 'percentage' 
+                          ? ((existingGrade.percentage || 0) > 0 ? (existingGrade.percentage || 0).toString() : '') 
+                          : ((existingGrade.errors || 0) > 0 ? (existingGrade.errors || 0).toString() : '')))
+                      : '';
+                    startEditingGrade(firstStudent.id, prevLesson.id, currentValue);
                   }
-                  setFocusedCell({ row: 0, col: 0 });
-                }
-              }, 100);
-              toast.success(`Switched to ${prevLesson.name}`);
-            }
+                }, 100);
+              } else {
+                // Entry mode: focus first input with toast
+                setTimeout(() => {
+                  const firstStudentId = enrolledStudents[0]?.id;
+                  if (firstStudentId) {
+                    const firstInput = inputRefs.current[firstStudentId];
+                    firstInput?.focus();
+                    // Auto-select the text if there's a value
+                    if (firstInput && firstInput.value) {
+                      setTimeout(() => firstInput.select(), 0);
+                    }
+                    setFocusedCell({ row: 0, col: 0 });
+                  }
+                }, 100);
+                toast.success(`Switched to ${prevLesson.name}`);
+              }
+            });
           }
           break;
 
@@ -380,40 +383,43 @@ export default function GradeEntry() {
           }
           keyboardEvent.preventDefault();
           if (currentLessonIndex < filteredSubjectLessons.length - 1) {
-            const nextLesson = filteredSubjectLessons[currentLessonIndex + 1];
-            setSelectedLessonId(nextLesson.id);
-            
-            if (activeView === 'table') {
-              // Table mode: auto-select first student in new lesson (no toast)
-              setTimeout(() => {
-                if (enrolledStudents.length > 0) {
-                  const firstStudent = enrolledStudents[0];
-                  const existingGrade = grades.find(g => g.studentId === firstStudent.id && g.lessonId === nextLesson.id);
-                  const isSkipped = existingGrade && existingGrade.percentage === 0 && existingGrade.errors === (existingGrade.maxPoints || existingGrade.points);
-                  const currentValue = existingGrade
-                    ? (isSkipped ? 'S' : (entryMode === 'percentage' 
-                        ? ((existingGrade.percentage || 0) > 0 ? (existingGrade.percentage || 0).toString() : '') 
-                        : ((existingGrade.errors || 0) > 0 ? (existingGrade.errors || 0).toString() : '')))
-                    : '';
-                  startEditingGrade(firstStudent.id, nextLesson.id, currentValue);
-                }
-              }, 100);
-            } else {
-              // Entry mode: focus first input with toast
-              setTimeout(() => {
-                const firstStudentId = enrolledStudents[0]?.id;
-                if (firstStudentId) {
-                  const firstInput = inputRefs.current[firstStudentId];
-                  firstInput?.focus();
-                  // Auto-select the text if there's a value
-                  if (firstInput && firstInput.value) {
-                    setTimeout(() => firstInput.select(), 0);
+            // Save all pending grades before switching lessons
+            saveAllPendingGrades().then(() => {
+              const nextLesson = filteredSubjectLessons[currentLessonIndex + 1];
+              setSelectedLessonId(nextLesson.id);
+              
+              if (activeView === 'table') {
+                // Table mode: auto-select first student in new lesson (no toast)
+                setTimeout(() => {
+                  if (enrolledStudents.length > 0) {
+                    const firstStudent = enrolledStudents[0];
+                    const existingGrade = grades.find(g => g.studentId === firstStudent.id && g.lessonId === nextLesson.id);
+                    const isSkipped = existingGrade && existingGrade.percentage === 0 && existingGrade.errors === (existingGrade.maxPoints || existingGrade.points);
+                    const currentValue = existingGrade
+                      ? (isSkipped ? 'S' : (entryMode === 'percentage' 
+                          ? ((existingGrade.percentage || 0) > 0 ? (existingGrade.percentage || 0).toString() : '') 
+                          : ((existingGrade.errors || 0) > 0 ? (existingGrade.errors || 0).toString() : '')))
+                      : '';
+                    startEditingGrade(firstStudent.id, nextLesson.id, currentValue);
                   }
-                  setFocusedCell({ row: 0, col: 0 });
-                }
-              }, 100);
-              toast.success(`Switched to ${nextLesson.name}`);
-            }
+                }, 100);
+              } else {
+                // Entry mode: focus first input with toast
+                setTimeout(() => {
+                  const firstStudentId = enrolledStudents[0]?.id;
+                  if (firstStudentId) {
+                    const firstInput = inputRefs.current[firstStudentId];
+                    firstInput?.focus();
+                    // Auto-select the text if there's a value
+                    if (firstInput && firstInput.value) {
+                      setTimeout(() => firstInput.select(), 0);
+                    }
+                    setFocusedCell({ row: 0, col: 0 });
+                  }
+                }, 100);
+                toast.success(`Switched to ${nextLesson.name}`);
+              }
+            });
           }
           break;
 
@@ -421,15 +427,18 @@ export default function GradeEntry() {
           if (keyboardEvent.shiftKey) {
             keyboardEvent.preventDefault();
             if (currentSubjectIndex > 0) {
-              const prevSubject = availableSubjects[currentSubjectIndex - 1];
-              setSelectedSubjectId(prevSubject.id);
-              setSelectedLessonId('');
-              // Set flag to focus first student after lesson auto-selection
-              setShouldFocusFirstStudent(true);
-              // Only show toast in entry mode
-              if (activeView === 'entry') {
-                toast.success(`Switched to ${prevSubject.name}`);
-              }
+              // Save all pending grades before switching subjects
+              saveAllPendingGrades().then(() => {
+                const prevSubject = availableSubjects[currentSubjectIndex - 1];
+                setSelectedSubjectId(prevSubject.id);
+                setSelectedLessonId('');
+                // Set flag to focus first student after lesson auto-selection
+                setShouldFocusFirstStudent(true);
+                // Only show toast in entry mode
+                if (activeView === 'entry') {
+                  toast.success(`Switched to ${prevSubject.name}`);
+                }
+              });
             }
           }
           break;
@@ -438,15 +447,18 @@ export default function GradeEntry() {
           if (keyboardEvent.shiftKey) {
             keyboardEvent.preventDefault();
             if (currentSubjectIndex < availableSubjects.length - 1) {
-              const nextSubject = availableSubjects[currentSubjectIndex + 1];
-              setSelectedSubjectId(nextSubject.id);
-              setSelectedLessonId('');
-              // Set flag to focus first student after lesson auto-selection
-              setShouldFocusFirstStudent(true);
-              // Only show toast in entry mode
-              if (activeView === 'entry') {
-                toast.success(`Switched to ${nextSubject.name}`);
-              }
+              // Save all pending grades before switching subjects
+              saveAllPendingGrades().then(() => {
+                const nextSubject = availableSubjects[currentSubjectIndex + 1];
+                setSelectedSubjectId(nextSubject.id);
+                setSelectedLessonId('');
+                // Set flag to focus first student after lesson auto-selection
+                setShouldFocusFirstStudent(true);
+                // Only show toast in entry mode
+                if (activeView === 'entry') {
+                  toast.success(`Switched to ${nextSubject.name}`);
+                }
+              });
             }
           }
           break;
@@ -1065,6 +1077,54 @@ export default function GradeEntry() {
     ? (selectedLesson.points || selectedLesson.maxPoints || 0).toString()
     : "0";
 
+  // Save all pending grades for the current lesson
+  const saveAllPendingGrades = async () => {
+    if (!selectedLessonId) return;
+    
+    const savePromises = [];
+    
+    // Find all students with unsaved grade values
+    for (const studentId of Object.keys(gradeValues)) {
+      const currentValue = gradeValues[studentId];
+      
+      // Only save if there's a value and the student is enrolled in this subject
+      if (currentValue && currentValue.trim() && enrolledStudents.some(s => s.id === studentId)) {
+        // Check if this value is different from the existing grade
+        const existingGrade = grades.find(g => g.studentId === studentId && g.lessonId === selectedLessonId);
+        const existingValue = getGradeDisplayValue(existingGrade);
+        
+        if (currentValue !== existingValue) {
+          savePromises.push(saveGrade(studentId));
+        }
+      }
+    }
+    
+    // Save all grades in parallel
+    if (savePromises.length > 0) {
+      try {
+        await Promise.all(savePromises);
+        console.log(`Auto-saved ${savePromises.length} pending grades before lesson switch`);
+      } catch (error) {
+        console.error('Error auto-saving grades:', error);
+        toast.error('Failed to save some grades before switching lessons');
+      }
+    }
+  };
+
+  // Helper function to get display value from a grade (for comparison)
+  const getGradeDisplayValue = (grade: any): string => {
+    if (!grade) return '';
+    
+    const isSkipped = grade.percentage === 0 && grade.errors === (grade.maxPoints || grade.points);
+    if (isSkipped) return 'S';
+    
+    if (entryMode === 'percentage') {
+      return grade.percentage > 0 ? grade.percentage.toString() : '';
+    } else {
+      return grade.errors > 0 ? grade.errors.toString() : '';
+    }
+  };
+
 const saveGrade = async (studentId: string) => {
   const currentValue = gradeValues[studentId];
 
@@ -1461,7 +1521,7 @@ const saveGrade = async (studentId: string) => {
     setEditingCell(null);
   };
 
-  const navigateToCell = (direction: 'up' | 'down' | 'left' | 'right', currentStudentId: string, currentLessonId: string) => {
+  const navigateToCell = async (direction: 'up' | 'down' | 'left' | 'right', currentStudentId: string, currentLessonId: string) => {
     const currentLessons = (subjectLessons[selectedSubjectId] || [])
       .sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0));
     const currentStudents = enrolledStudents;
@@ -1490,6 +1550,14 @@ const saveGrade = async (studentId: string) => {
     }
 
     if (newStudentIndex !== currentStudentIndex || newLessonIndex !== currentLessonIndex) {
+      // Check if we're switching lessons and save pending grades if so
+      const lessonChanged = newLessonIndex !== currentLessonIndex;
+      
+      if (lessonChanged) {
+        // Save all pending grades before switching lessons
+        await saveAllPendingGrades();
+      }
+      
       const newStudent = currentStudents[newStudentIndex];
       const newLesson = currentLessons[newLessonIndex];
       if (newStudent && newLesson) {
