@@ -62,10 +62,11 @@ jobs:
       - uses: tauri-apps/tauri-action@v0.5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # The following are only used on macOS
+          # The following are only used on macOS for notarization
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_SIGNING_IDENTITY: "Developer ID Application: James Bergen (RP866R85MM)"
         with:
           projectPath: GradeFlowApp
           tagName: app-v__VERSION__
