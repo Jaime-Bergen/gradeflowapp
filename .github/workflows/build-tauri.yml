@@ -17,10 +17,11 @@ jobs:
         include:
           - platform: 'macos-latest' # Universal macOS build
             args: ''
-          - platform: 'ubuntu-22.04'
-            args: ''
-          - platform: 'windows-latest'
-            args: ''
+          # Temporarily disabled for macOS-only testing
+          # - platform: 'ubuntu-22.04'
+          #   args: ''
+          # - platform: 'windows-latest'
+          #   args: ''
 
     runs-on: ${{ matrix.platform }}
     steps:
