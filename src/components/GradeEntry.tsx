@@ -233,6 +233,12 @@ export default function GradeEntry() {
   useEffect(() => {
     const handleGlobalKeyDown = (e: Event) => {
       const keyboardEvent = e as unknown as KeyboardEvent;
+      
+      // Disable all shortcuts when lesson editing modal is open
+      if (editLessonDialog.open) {
+        return; // Let modal handle all keys normally
+      }
+      
       // Only handle shortcuts if we're not in an input field (except for specific cases)
       const target = keyboardEvent.target as HTMLElement;
       const isInputField = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.contentEditable === 'true';
@@ -473,7 +479,8 @@ export default function GradeEntry() {
     switchViewMode,
     focusedCell,
     editingCell,
-    grades
+    grades,
+    editLessonDialog
   ]);
 
   // Debugging fetchSubjectLessons to ensure lessons are fetched correctly
