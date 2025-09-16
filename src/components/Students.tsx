@@ -144,6 +144,13 @@ export default function Students() {
       if (!proceed) {
         return; // User cancelled, don't remove the group
       }
+      
+      // Remove affected subjects from student's enrollment
+      const affectedSubjectIds = affectedSubjects.map(s => s?.id).filter(Boolean);
+      setNewStudent(prev => ({
+        ...prev,
+        subjects: prev.subjects.filter(subjectId => !affectedSubjectIds.includes(subjectId))
+      }));
     }
     
     // Proceed with removal
