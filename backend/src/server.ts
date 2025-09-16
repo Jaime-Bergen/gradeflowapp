@@ -44,11 +44,22 @@ const corsOrigins = process.env.CORS_ORIGIN?.split(',') || ['http://localhost:51
 const corsConfig = {
   origin: process.env.CORS_ORIGIN === '*' ? true : corsOrigins,
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+  exposedHeaders: ['Content-Type', 'Authorization'],
+  preflightContinue: false,
+  optionsSuccessStatus: 204
 };
 
 app.use(cors(corsConfig));
+
+// Debug middleware for development
+if (process.env.NODE_ENV !== 'production') {
+  app.use((req, res, next) => {
+    console.log(`${req.method} ${req.path} - Origin: ${req.get('Origin')} - Referer: ${req.get('Referer')}`);
+    next();
+  });
+}
 
 // Trust proxy for Heroku (more specific configuration)
 app.set('trust proxy', 1); // Trust first proxy (Heroku)
