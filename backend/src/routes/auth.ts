@@ -95,6 +95,9 @@ router.post('/login', validateRequest(schemas.login), async (req, res, next): Pr
       return;
     }
 
+    // Update last login timestamp
+    await db.query('UPDATE users SET last_login_at = NOW() WHERE id = $1', [user.id]);
+
     // Generate JWT token
     const signOptions: SignOptions = { expiresIn: '7d' };
     const token = jwt.sign(

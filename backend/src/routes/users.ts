@@ -159,9 +159,16 @@ router.get('/', async (req: AuthRequest, res, next) => {
         u.email,
         u.created_at,
         u.last_login_at,
-        0 AS grades_record_count,
-        0 AS grades_estimated_bytes
+        COALESCE(g.grades_count, 0) AS grades_record_count,
+        COALESCE(g.grades_count * 100, 0) AS grades_estimated_bytes
       FROM users u
+      LEFT JOIN (
+        SELECT 
+          user_id,
+          COUNT(*) AS grades_count
+        FROM grades
+        GROUP BY user_id
+      ) g ON u.id = g.user_id
       ORDER BY u.created_at ASC
     `);
 
