@@ -164,10 +164,11 @@ router.get('/', async (req: AuthRequest, res, next) => {
       FROM users u
       LEFT JOIN (
         SELECT 
-          user_id,
-          COUNT(*) AS grades_count
-        FROM grades
-        GROUP BY user_id
+          s.user_id,
+          COUNT(g.id) AS grades_count
+        FROM students s
+        INNER JOIN grades g ON s.id = g.student_id
+        GROUP BY s.user_id
       ) g ON u.id = g.user_id
       ORDER BY u.created_at ASC
     `);
