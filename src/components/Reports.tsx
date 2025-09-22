@@ -8,7 +8,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
 import { Eye, Users, FilePdf, Gear } from "@phosphor-icons/react"
 import { Student, Subject, Grade, ReportCard } from '@/lib/types'
-import { getLetterGrade, generateReportCard } from '@/lib/reportUtils'
+import { getLetterGrade, generateReportCard, getSubjectCalculationBreakdown } from '@/lib/reportUtils'
 import { toast } from 'sonner'
 import { pdf } from '@react-pdf/renderer'
 import ReportCardPDF from './ReportCardPDF'
@@ -25,6 +25,7 @@ export default function Reports() {
   const [showPercentage, setShowPercentage] = useState(true) // Default to percentage instead of GPA
   const [comments, setComments] = useState<Record<string, string>>({})
   const [previewStudent, setPreviewStudent] = useState<string>("")
+  const [showCalculationDetails, setShowCalculationDetails] = useState(false)
   const [schoolSettings, setSchoolSettings] = useState({
     schoolName: '',
     firstDayOfSchool: '',
@@ -726,20 +727,64 @@ export default function Reports() {
                     </div>
 
                     <div className="space-y-2">
-                      <h4 className="font-medium text-sm">Subjects</h4>
-                      {previewReport.subjects.map(subject => (
-                        <div key={subject.subjectId} className="flex justify-between items-center text-sm">
-                          <span>{subject.subjectName}</span>
-                          <div className="flex items-center gap-2">
-                            <Badge variant={(subject.average ?? 0) >= 90 ? "default" : (subject.average ?? 0) >= 70 ? "secondary" : "destructive"}>
-                              {subject.letterGrade}
-                            </Badge>
-                            <span className="text-muted-foreground">
-                              {(subject.average ?? 0).toFixed(1)}%
-                            </span>
+                      <div className="flex items-center justify-between">
+                        <h4 className="font-medium text-sm">Subjects</h4>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setShowCalculationDetails(!showCalculationDetails)}
+                          className="text-xs h-6 px-2"
+                        >
+                          {showCalculationDetails ? 'Hide Details' : 'Show Calculation'}
+                        </Button>
+                      </div>
+                      
+                      {previewReport.subjects.map(subject => {
+                        const breakdown = getSubjectCalculationBreakdown(previewStudent, subject.subjectId, subjects, grades)
+                        
+                        return (
+                          <div key={subject.subjectId} className="space-y-2">
+                            <div className="flex justify-between items-center text-sm">
+                              <span>{subject.subjectName}</span>
+                              <div className="flex items-center gap-2">
+                                <Badge variant={(subject.average ?? 0) >= 90 ? "default" : (subject.average ?? 0) >= 70 ? "secondary" : "destructive"}>
+                                  {subject.letterGrade}
+                                </Badge>
+                                <span className="text-muted-foreground">
+                                  {(subject.average ?? 0).toFixed(1)}%
+                                </span>
+                              </div>
+                            </div>
+                            
+                            {showCalculationDetails && breakdown && (
+                              <div className="ml-4 p-3 bg-muted/50 rounded-md space-y-2 text-xs">
+                                <div className="font-medium">Grade Calculation:</div>
+                                {breakdown.categories.map((category, idx) => (
+                                  <div key={idx} className="space-y-1">
+                                    <div className="flex justify-between items-center">
+                                      <span className="font-medium">{category.categoryName}:</span>
+                                      <span>{category.average.toFixed(1)}% (Weight: {(category.weight * 100).toFixed(0)}%)</span>
+                                    </div>
+                                    <div className="text-muted-foreground ml-2">
+                                      Grades: {category.grades.map(g => g.toFixed(0)).join(', ')}
+                                      {category.grades.length > 1 && ` → Avg: ${category.average.toFixed(1)}%`}
+                                    </div>
+                                    <div className="text-muted-foreground ml-2">
+                                      Weighted: {category.average.toFixed(1)}% × {(category.weight * 100).toFixed(0)}% = {category.weightedValue.toFixed(1)}
+                                    </div>
+                                  </div>
+                                ))}
+                                <div className="pt-2 border-t border-border">
+                                  <div className="font-medium">
+                                    Final: {breakdown.categories.map(c => c.weightedValue.toFixed(1)).join(' + ')} 
+                                    ÷ {(breakdown.categories.reduce((sum, c) => sum + c.weight, 0) * 100).toFixed(0)}% = {breakdown.finalAverage.toFixed(1)}%
+                                  </div>
+                                </div>
+                              </div>
+                            )}
                           </div>
-                        </div>
-                      ))}
+                        )
+                      })}
                     </div>
 
                     {includeComments && comments[previewStudent] && (

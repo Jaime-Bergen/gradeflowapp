@@ -237,6 +237,97 @@ export const generateReportCard = (
   }
 }
 
+export interface CalculationBreakdown {
+  subjectId: string
+  subjectName: string
+  categories: {
+    categoryName: string
+    grades: number[]
+    average: number
+    weight: number
+    weightedValue: number
+  }[]
+  finalAverage: number
+  letterGrade: string
+}
+
+export const getSubjectCalculationBreakdown = (
+  studentId: string,
+  subjectId: string,
+  subjects: Subject[],
+  grades: Grade[]
+): CalculationBreakdown | null => {
+  const subject = subjects.find(s => s.id === subjectId)
+  if (!subject) return null
+
+  const studentGrades = grades.filter(g => g.studentId === studentId)
+  if (studentGrades.length === 0) return null
+
+  const gradesByType = studentGrades.reduce((acc, grade) => {
+    const lesson = subject.lessons.find(l => l.id === grade.lessonId)
+    if (lesson) {
+      if (!acc[lesson.type]) acc[lesson.type] = []
+      let percentage = 0
+      if (typeof grade.percentage === 'number' && !isNaN(grade.percentage)) {
+        percentage = grade.percentage
+      } else if (typeof grade.percentage === 'string') {
+        const parsed = parseFloat(grade.percentage)
+        percentage = !isNaN(parsed) ? parsed : 0
+      }
+      acc[lesson.type].push(percentage)
+    }
+    return acc
+  }, {} as Record<string, number[]>)
+
+  const subjectWeights = subject.weights || {}
+  const weightMapping: Record<string, number> = {}
+  
+  // Create weight mapping (same logic as calculateSubjectGrade)
+  Object.keys(gradesByType).forEach(lessonType => {
+    const weightValues = Object.values(subjectWeights).filter(w => w > 0)
+    const lessonTypes = Object.keys(gradesByType)
+    const typeIndex = lessonTypes.indexOf(lessonType)
+    
+    if (typeIndex !== -1 && typeIndex < weightValues.length) {
+      weightMapping[lessonType] = weightValues[typeIndex]
+    } else if (weightValues.length > 0) {
+      const avgWeight = weightValues.reduce((sum, w) => sum + w, 0) / lessonTypes.length
+      weightMapping[lessonType] = avgWeight
+    } else {
+      weightMapping[lessonType] = 1 / lessonTypes.length
+    }
+  })
+
+  const categories = Object.keys(gradesByType).map(lessonType => {
+    const typeGrades = gradesByType[lessonType]
+    const typeAverage = typeGrades.reduce((sum, grade) => sum + grade, 0) / typeGrades.length
+    const weight = weightMapping[lessonType] || 0
+    const weightedValue = typeAverage * weight
+
+    return {
+      categoryName: lessonType,
+      grades: typeGrades,
+      average: typeAverage,
+      weight: weight,
+      weightedValue: weightedValue
+    }
+  })
+
+  const totalWeight = categories.reduce((sum, cat) => sum + cat.weight, 0)
+  const weightedTotal = categories.reduce((sum, cat) => sum + cat.weightedValue, 0)
+  const finalAverage = totalWeight > 0 ? weightedTotal / totalWeight : 0
+
+  return {
+    subjectId,
+    subjectName: subject.report_card_name && subject.report_card_name.trim() !== '' 
+      ? subject.report_card_name 
+      : subject.name,
+    categories,
+    finalAverage,
+    letterGrade: getLetterGrade(finalAverage)
+  }
+}
+
 export const formatReportPeriod = (period: string): string => {
   // Handle six weeks periods (sw1, sw2, etc.) -> "1 of 6", "2 of 6", etc.
   if (period.startsWith('sw')) {
