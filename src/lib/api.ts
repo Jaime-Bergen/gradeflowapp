@@ -9,11 +9,19 @@ interface ApiResponse<T> {
 }
 
 class ApiClient {
+  async createLesson(subjectId: string, name: string, categoryId: string, maxPoints: number, orderIndex: number) {
+    return this.request(`/lessons/subject/${subjectId}`, {
+      method: 'POST',
+      body: JSON.stringify({ name, categoryId, maxPoints, orderIndex }),
+    });
+  }
+  
   async deleteLesson(lessonId: string) {
     return this.request(`/lessons/${lessonId}`, {
       method: 'DELETE',
     });
   }
+  
   async updateLesson(lessonId: string, data: Partial<{ name: string; categoryId: string; points: number; orderIndex: number }>) {
     return this.request(`/lessons/${lessonId}`, {
       method: 'PUT',
@@ -301,9 +309,9 @@ class ApiClient {
     points?: number,
     categoryId?: string
   ) {
-    return this.request(`/subjects/${subjectId}/lessons/bulk`, {
+    return this.request(`/lessons/bulk`, {
       method: 'POST',
-      body: JSON.stringify({ count, namePrefix, type, points, categoryId }),
+      body: JSON.stringify({ subjectId, count, namePrefix, type, points, categoryId }),
     });
   }
 
@@ -311,6 +319,32 @@ class ApiClient {
     return this.request(`/lessons/subject/${subjectId}`);
   }
 
+  // Grading Period Markers
+  async getGradingPeriodMarkersForSubject(subjectId: string) {
+    return this.request(`/grading-period-markers/subject/${subjectId}`);
+  }
+
+  async createGradingPeriodMarker(subjectId: string, name: string | undefined, orderIndex: number) {
+    const body: any = { subjectId, orderIndex };
+    if (name) body.name = name;
+    return this.request('/grading-period-markers', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  }
+
+  async updateGradingPeriodMarker(markerId: string, name: string, orderIndex: number) {
+    return this.request(`/grading-period-markers/${markerId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ name, orderIndex }),
+    });
+  }
+
+  async deleteGradingPeriodMarker(markerId: string) {
+    return this.request(`/grading-period-markers/${markerId}`, {
+      method: 'DELETE',
+    });
+  }
 
   // Grades
   async getGradesForSubject(subjectId: string) {

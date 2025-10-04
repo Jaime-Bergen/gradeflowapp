@@ -538,6 +538,32 @@ export default function GradeEntry() {
     window?.dispatchEvent(new CustomEvent('gradeflow-goto-tab', { detail: { tab } }))
   }
 
+  // Navigate to Students tab and highlight Add Student button
+  const goToStudentsAndAddStudent = () => {
+    window?.dispatchEvent(new CustomEvent('gradeflow-goto-tab', { detail: { tab: 'students' } }))
+    setTimeout(() => {
+      window?.dispatchEvent(new CustomEvent('gradeflow-students-highlight-action', { detail: { action: 'add-student' } }))
+    }, 100)
+  }
+
+  // Navigate to Subjects tab and highlight Add Subject button
+  const goToSubjectsAndAddSubject = () => {
+    window?.dispatchEvent(new CustomEvent('gradeflow-goto-tab', { detail: { tab: 'subjects' } }))
+    setTimeout(() => {
+      window?.dispatchEvent(new CustomEvent('gradeflow-subjects-highlight-action', { detail: { action: 'add-subject' } }))
+    }, 100)
+  }
+
+  // Navigate to Subjects tab and highlight action for specific subject
+  const goToSubjectsAndHighlight = (subjectId: string, action: string) => {
+    window?.dispatchEvent(new CustomEvent('gradeflow-goto-tab', { detail: { tab: 'subjects' } }))
+    setTimeout(() => {
+      window?.dispatchEvent(new CustomEvent('gradeflow-subjects-expand-and-highlight', { 
+        detail: { subjectId, action } 
+      }))
+    }, 100)
+  }
+
   // Lesson editing functions
   function editLesson(lesson: Lesson, subjectId: string) {
     setEditLessonDialog({ open: true, lesson, subjectId })
@@ -2099,9 +2125,9 @@ const saveGrade = async (studentId: string) => {
                     <button
                       className="underline text-blue-700 hover:text-blue-900 font-medium mt-2"
                       type="button"
-                      onClick={() => goToTab('students')}
+                      onClick={goToStudentsAndAddStudent}
                     >
-                      Take me there
+                      Add Student →
                     </button>
                   </div>
                 ) : subjects.length === 0 ? (
@@ -2110,9 +2136,9 @@ const saveGrade = async (studentId: string) => {
                     <button
                       className="underline text-blue-700 hover:text-blue-900 font-medium mt-2"
                       type="button"
-                      onClick={() => goToTab('subjects')}
+                      onClick={goToSubjectsAndAddSubject}
                     >
-                      Take me there
+                      Add Subject →
                     </button>
                   </div>
                 ) : availableSubjects.length === 0 ? (
@@ -2120,11 +2146,11 @@ const saveGrade = async (studentId: string) => {
                     No subjects available for grade entry.<br />
                     Please activate subjects for students on the <b>Students</b> tab by clicking the appropriate subject buttons for each student.
                     <button
-                      className="underline text-blue-700 hover:text-blue-900 font-medium mt-2"
+                      className="underline text-blue-700 hover:text-blue-900 font-medium mt-2 block"
                       type="button"
                       onClick={() => goToTab('students')}
                     >
-                      Take me there
+                      Go to Students →
                     </button>
                   </div>
                 ) : selectedSubject && (!subjectLessons[selectedSubjectId] || subjectLessons[selectedSubjectId].length === 0) && !loadingLessons[selectedSubjectId] && (
@@ -2134,9 +2160,9 @@ const saveGrade = async (studentId: string) => {
                     <button
                       className="underline text-blue-700 hover:text-blue-900 font-medium mt-2"
                       type="button"
-                      onClick={() => goToTab('subjects')}
+                      onClick={() => goToSubjectsAndHighlight(selectedSubjectId, 'add-lesson')}
                     >
-                      Take me there
+                      Add Lessons →
                     </button>
                   </div>
                 )}

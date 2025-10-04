@@ -80,6 +80,30 @@ export default function Students() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
+  // Listen for highlight action from other components
+  useEffect(() => {
+    const handleHighlightAction = (event: CustomEvent) => {
+      const { action } = event.detail;
+      
+      if (action === 'add-student') {
+        // Find and highlight the Add Student button
+        setTimeout(() => {
+          const addStudentButton = document.querySelector('[data-action="add-student"]');
+          if (addStudentButton) {
+            addStudentButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            addStudentButton.classList.add('animate-pulse', 'ring-2', 'ring-blue-500', 'ring-offset-2');
+            setTimeout(() => {
+              addStudentButton.classList.remove('animate-pulse', 'ring-2', 'ring-blue-500', 'ring-offset-2');
+            }, 3000);
+          }
+        }, 200);
+      }
+    };
+
+    window.addEventListener('gradeflow-students-highlight-action', handleHighlightAction as EventListener);
+    return () => window.removeEventListener('gradeflow-students-highlight-action', handleHighlightAction as EventListener);
+  }, []);
+
   const createNewGroup = async () => {
     if (!newGroupName.trim()) return
 
@@ -340,7 +364,7 @@ export default function Students() {
           />
           <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
             <DialogTrigger asChild>
-              <Button className="flex items-center gap-2">
+              <Button className="flex items-center gap-2" data-action="add-student">
                 <Plus size={16} />
                 Add Student
               </Button>

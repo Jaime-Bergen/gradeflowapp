@@ -14,6 +14,7 @@ export const runMigrations = async (): Promise<void> => {
     await addReportCardNameToSubjects(db);
     await addSchoolSettingsToUsers(db);
     await createLessonsTable(db);
+    await createGradingPeriodMarkersTable(db);
     await createGradesTable(db);
     await createStudentSubjectsTable(db);
     await createSubjectWeightsTable(db);
@@ -28,6 +29,9 @@ export const runMigrations = async (): Promise<void> => {
     await updateGradesErrorsColumnType(db);
     await addColorToGradeCategoryTypes(db);
     await seedDefaultGradeCategoryTypes(db);
+    await addUniqueConstraintToStudentGroups(db);
+    await seedDefaultStudentGroups(db);
+    await addCategoryIdToLessons(db);
     await populateUserMetadata(db);
     await dropLessonTypeColumn(db);
     
@@ -68,7 +72,8 @@ const createStudentGroupsTable = async (db: any) => {
       name VARCHAR(255) NOT NULL,
       description TEXT,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(user_id, name)
     );
     
     CREATE INDEX IF NOT EXISTS idx_student_groups_user_id ON student_groups(user_id);
@@ -171,7 +176,6 @@ const createLessonsTable = async (db: any) => {
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       subject_id UUID NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
       name VARCHAR(255) NOT NULL,
-      type VARCHAR(50) DEFAULT 'lesson',
       points INTEGER DEFAULT 100,
       order_index INTEGER NOT NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -182,6 +186,23 @@ const createLessonsTable = async (db: any) => {
     CREATE INDEX IF NOT EXISTS idx_lessons_order ON lessons(subject_id, order_index);
   `);
   console.log('✅ Lessons table created/verified');
+};
+
+const createGradingPeriodMarkersTable = async (db: any) => {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS grading_period_markers (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      subject_id UUID NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+      name VARCHAR(255) NOT NULL DEFAULT 'Grading Period End',
+      order_index INTEGER NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    
+    CREATE INDEX IF NOT EXISTS idx_grading_period_markers_subject_id ON grading_period_markers(subject_id);
+    CREATE INDEX IF NOT EXISTS idx_grading_period_markers_order ON grading_period_markers(subject_id, order_index);
+  `);
+  console.log('✅ Grading period markers table created/verified');
 };
 
 const removeLessonTypeConstraint = async (db: any) => {
@@ -592,6 +613,120 @@ const seedDefaultGradeCategoryTypes = async (db: any) => {
   }
 };
 
+const seedDefaultStudentGroups = async (db: any) => {
+  try {
+    // Get all users to seed default student groups for each
+    const usersResult = await db.query('SELECT id FROM users');
+    
+    const defaultGroups = [
+      { name: 'Grade 1', description: 'First grade students' },
+      { name: 'Grade 2', description: 'Second grade students' },
+      { name: 'Grade 3', description: 'Third grade students' },
+      { name: 'Grade 4', description: 'Fourth grade students' },
+      { name: 'Grade 5', description: 'Fifth grade students' },
+      { name: 'Grade 6', description: 'Sixth grade students' },
+      { name: 'Grade 7', description: 'Seventh grade students' },
+      { name: 'Grade 8', description: 'Eighth grade students' },
+      { name: 'Grade 9', description: 'Ninth grade students' },
+      { name: 'Grade 10', description: 'Tenth grade students' }
+    ];
+    
+    for (const user of usersResult.rows) {
+      // Check if user already has groups
+      const existingResult = await db.query(
+        'SELECT COUNT(*) as count FROM student_groups WHERE user_id = $1',
+        [user.id]
+      );
+      
+      if (existingResult.rows[0].count === '0') {
+        // Insert default groups for this user
+        for (const group of defaultGroups) {
+          await db.query(`
+            INSERT INTO student_groups (user_id, name, description)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (user_id, name) DO NOTHING
+          `, [user.id, group.name, group.description]);
+        }
+      }
+    }
+    
+    console.log('✅ Seeded default student groups for all users');
+  } catch (error) {
+    console.error('Error seeding default student groups:', error);
+    // Don't throw - this is not critical
+  }
+};
+
+const addUniqueConstraintToStudentGroups = async (db: any) => {
+  try {
+    // Check if the unique constraint already exists
+    const constraintCheck = await db.query(`
+      SELECT constraint_name 
+      FROM information_schema.table_constraints 
+      WHERE table_name = 'student_groups' 
+      AND constraint_type = 'UNIQUE' 
+      AND constraint_name LIKE '%user_id%name%'
+    `);
+    
+    if (constraintCheck.rows.length === 0) {
+      // Add unique constraint on (user_id, name)
+      await db.query(`
+        ALTER TABLE student_groups 
+        ADD CONSTRAINT student_groups_user_id_name_unique UNIQUE (user_id, name)
+      `);
+      console.log('✅ Added unique constraint to student_groups table');
+    } else {
+      console.log('✅ Unique constraint on student_groups already exists');
+    }
+  } catch (error) {
+    console.error('Error adding unique constraint to student_groups:', error);
+    // Don't throw - this might fail if constraint already exists
+  }
+};
+
+const addCategoryIdToLessons = async (db: any) => {
+  try {
+    // Add category_id column if it doesn't exist
+    await db.query(`
+      ALTER TABLE lessons 
+      ADD COLUMN IF NOT EXISTS category_id UUID REFERENCES grade_category_types(id) ON DELETE SET NULL
+    `);
+    
+    // For any lessons without a category_id, assign them to the default category for their user
+    const lessonsWithoutCategory = await db.query(`
+      SELECT l.id, s.user_id 
+      FROM lessons l 
+      JOIN subjects s ON l.subject_id = s.id 
+      WHERE l.category_id IS NULL
+    `);
+    
+    for (const lesson of lessonsWithoutCategory.rows) {
+      // Get the default category for this user
+      const defaultCategoryResult = await db.query(
+        'SELECT id FROM grade_category_types WHERE user_id = $1 AND is_default = true ORDER BY created_at LIMIT 1',
+        [lesson.user_id]
+      );
+      
+      if (defaultCategoryResult.rows.length > 0) {
+        await db.query(
+          'UPDATE lessons SET category_id = $1 WHERE id = $2',
+          [defaultCategoryResult.rows[0].id, lesson.id]
+        );
+      }
+    }
+    
+    // Create index for the new foreign key
+    await db.query(`
+      CREATE INDEX IF NOT EXISTS idx_lessons_category_id ON lessons(category_id)
+    `);
+    
+    console.log('✅ Added category_id column to lessons table');
+  } catch (error) {
+    console.error('Error adding category_id to lessons:', error);
+    // Don't throw - this might fail if column already exists
+  }
+};
+
 const addSchoolSettingsToUsers = async (db: any) => {
   try {
     await db.query(`
@@ -681,81 +816,6 @@ const populateUserMetadata = async (db: any) => {
     console.log('✅ Populated user metadata for existing users');
   } catch (error) {
     console.error('Error populating user metadata:', error);
-    throw error;
-  }
-};
-
-const addCategoryIdToLessons = async (db: any) => {
-  try {
-    // Add category_id column as foreign key to grade_category_types
-    await db.query(`
-      ALTER TABLE lessons 
-      ADD COLUMN IF NOT EXISTS category_id UUID REFERENCES grade_category_types(id) ON DELETE SET NULL
-    `);
-    
-    // Migrate existing lesson types to category_id foreign keys
-    // For each user, find or create matching category types and update lessons
-    const usersResult = await db.query(`
-      SELECT DISTINCT u.id as user_id 
-      FROM users u 
-      JOIN subjects s ON s.user_id = u.id 
-      JOIN lessons l ON l.subject_id = s.id
-    `);
-    
-    for (const user of usersResult.rows) {
-      // Get all unique lesson types for this user's lessons
-      const lessonTypesResult = await db.query(`
-        SELECT DISTINCT l.type 
-        FROM lessons l 
-        JOIN subjects s ON l.subject_id = s.id 
-        WHERE s.user_id = $1 AND l.type IS NOT NULL
-      `, [user.user_id]);
-      
-      for (const typeRow of lessonTypesResult.rows) {
-        const typeName = typeRow.type;
-        
-        // Find or create matching category type
-        let categoryResult = await db.query(`
-          SELECT id FROM grade_category_types 
-          WHERE user_id = $1 AND name = $2
-        `, [user.user_id, typeName]);
-        
-        if (categoryResult.rows.length === 0) {
-          // Create new category type for this lesson type
-          categoryResult = await db.query(`
-            INSERT INTO grade_category_types (user_id, name, description, is_default, color) 
-            VALUES ($1, $2, $3, $4, $5) 
-            RETURNING id
-          `, [
-            user.user_id, 
-            typeName, 
-            `Auto-migrated from lesson type: ${typeName}`,
-            typeName.toLowerCase() === 'lesson',
-            '#6366f1' // Default color
-          ]);
-        }
-        
-        const categoryId = categoryResult.rows[0].id;
-        
-        // Update all lessons of this type for this user
-        await db.query(`
-          UPDATE lessons 
-          SET category_id = $1 
-          WHERE subject_id IN (
-            SELECT id FROM subjects WHERE user_id = $2
-          ) AND type = $3 AND category_id IS NULL
-        `, [categoryId, user.user_id, typeName]);
-      }
-    }
-    
-    // Create index for the new foreign key
-    await db.query(`
-      CREATE INDEX IF NOT EXISTS idx_lessons_category_id ON lessons(category_id)
-    `);
-    
-    console.log('✅ Added category_id foreign key to lessons and migrated existing data');
-  } catch (error) {
-    console.error('Error adding category_id to lessons:', error);
     throw error;
   }
 };

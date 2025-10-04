@@ -320,84 +320,6 @@ router.delete('/:id', async (req: AuthRequest, res, next) => {
   }
 });
 
-// Add multiple lessons to a subject
-router.post('/:id/lessons/bulk', async (req: AuthRequest, res, next) => {
-  try {
-    const { id } = req.params;
-    const { count, namePrefix = 'Lesson', categoryId, points = 100 } = req.body;
-    const db = getDB();
-
-    if (!count || count < 1 || count > 200) {
-      return res.status(400).json({ error: 'Count must be between 1 and 200' });
-    }
-
-    // Verify subject belongs to user
-    const subjectCheck = await db.query(
-      'SELECT id FROM subjects WHERE id = $1 AND user_id = $2',
-      [id, req.userId]
-    );
-
-    if (subjectCheck.rows.length === 0) {
-      return res.status(404).json({ error: 'Subject not found' });
-    }
-
-    let finalCategoryId = categoryId;
-    
-    // If no category provided, use the first default category
-    if (!finalCategoryId) {
-      const defaultCategoryResult = await db.query(
-        'SELECT id FROM grade_category_types WHERE user_id = $1 AND is_default = true ORDER BY created_at LIMIT 1',
-        [req.userId]
-      );
-      if (defaultCategoryResult.rows.length > 0) {
-        finalCategoryId = defaultCategoryResult.rows[0].id;
-      } else {
-        return res.status(400).json({ error: 'No grade categories found. Please create grade categories first.' });
-      }
-    }
-
-    // Get current max order index
-    const maxOrderResult = await db.query(
-      'SELECT COALESCE(MAX(order_index), 0) as max_order FROM lessons WHERE subject_id = $1',
-      [id]
-    );
-
-    let startOrder = maxOrderResult.rows[0].max_order + 1;
-
-    // Create lessons in a transaction
-    await db.query('BEGIN');
-
-    try {
-      const lessons = [];
-      for (let i = 0; i < count; i++) {
-        // First insert the lesson
-        const insertResult = await db.query(
-          'INSERT INTO lessons (subject_id, name, category_id, points, order_index) VALUES ($1, $2, $3, $4, $5) RETURNING id',
-          [id, `${namePrefix} ${startOrder + i}`, finalCategoryId, points, startOrder + i]
-        );
-        
-        const lessonId = insertResult.rows[0].id;
-        
-        // Then fetch the lesson with joined category data
-        const lessonResult = await db.query(
-          'SELECT l.*, gct.name as type, gct.color as type_color FROM lessons l LEFT JOIN grade_category_types gct ON l.category_id = gct.id AND gct.user_id = $2 WHERE l.id = $1',
-          [lessonId, req.userId]
-        );
-        
-        lessons.push(lessonResult.rows[0]);
-      }
-
-      await db.query('COMMIT');
-      res.status(201).json(lessons);
-    } catch (error) {
-      await db.query('ROLLBACK');
-      throw error;
-    }
-  } catch (error) {
-    next(error);
-  }
-});
-
 // Get lessons for a subject
 router.get('/:id/lessons', async (req: AuthRequest, res, next) => {
   try {
@@ -514,28 +436,6 @@ router.put('/:subjectId/lessons/:lessonId', validateRequest(schemas.lesson), asy
   }
 });
 
-// Delete a lesson
-router.delete('/:subjectId/lessons/:lessonId', async (req: AuthRequest, res, next) => {
-  try {
-    const { subjectId, lessonId } = req.params;
-    const db = getDB();
-    
-    const result = await db.query(
-      `DELETE FROM lessons 
-       WHERE id = $1 AND subject_id = $2 
-       AND EXISTS (SELECT 1 FROM subjects WHERE id = $2 AND user_id = $3)
-       RETURNING id`,
-      [lessonId, subjectId, req.userId]
-    );
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Lesson not found' });
-    }
-    
-    res.json({ message: 'Lesson deleted successfully' });
-  } catch (error) {
-    next(error);
-  }
-});
+// Get all lessons for a subject
 
 export default router;

@@ -17,6 +17,7 @@ import reportRoutes from './routes/reports';
 import restoreRoutes from './routes/restore';
 import metadataRoutes from './routes/metadata';
 import backupRoutes from './routes/backups';
+import gradingPeriodMarkersRoutes from './routes/gradingPeriodMarkers';
 import { errorHandler } from './middleware/errorHandler';
 import { authenticateToken } from './middleware/auth';
 
@@ -38,11 +39,11 @@ app.use((req, res, next) => {
 });
 
 // CORS configuration
-const corsOrigins = process.env.CORS_ORIGIN?.split(',') || ['http://localhost:5173'];
-
-// Handle wildcard CORS or specific origins
 const corsConfig = {
-  origin: process.env.CORS_ORIGIN === '*' ? true : corsOrigins,
+  origin: function (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) {
+    // Allow requests with no origin (mobile apps, etc.) and all origins
+    callback(null, true);
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
@@ -94,6 +95,7 @@ app.use('/api/grades', authenticateToken, gradeRoutes);
 app.use('/api/grade-category-types', authenticateToken, gradeCategoryTypesRoutes);
 app.use('/api/reports', authenticateToken, reportRoutes);
 app.use('/api/lessons', authenticateToken, lessonsRoutes);
+app.use('/api/grading-period-markers', authenticateToken, gradingPeriodMarkersRoutes);
 app.use('/api/metadata', metadataRoutes);
 app.use('/api/backups', backupRoutes);
 app.use('/api', restoreRoutes); // Restore routes (includes authentication)

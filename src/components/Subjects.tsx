@@ -8,8 +8,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Plus, Trash, X, CaretDown, PencilSimple } from "@phosphor-icons/react"
-import { Lesson } from '@/lib/types'
+import { Plus, Trash, X, CaretDown, CaretUp, PencilSimple } from "@phosphor-icons/react"
+import { Lesson, GradingPeriodMarker, User } from '@/lib/types'
 import { apiClient } from '@/lib/api'
 
 function Subjects() {
@@ -77,6 +77,7 @@ function Subjects() {
   // Store lessons per subjectId
   const [subjectLessons, setSubjectLessons] = useState<{ [subjectId: string]: Lesson[] }>({});
   const [loadingLessons, setLoadingLessons] = useState<{ [subjectId: string]: boolean }>({});
+  const [subjectMarkers, setSubjectMarkers] = useState<{ [subjectId: string]: GradingPeriodMarker[] }>({});
   const toggleLessons = async (subjectId: string) => {
     setExpandedSubjects(prev => {
       const next = { ...prev, [subjectId]: !prev[subjectId] };
@@ -85,8 +86,12 @@ function Subjects() {
     // If opening and lessons not loaded, fetch them
     if (!showLessons(subjectId) && !subjectLessons[subjectId]) {
       setLoadingLessons(prev => ({ ...prev, [subjectId]: true }));
-      const res = await apiClient.getLessonsForSubject(subjectId);
-      setSubjectLessons(prev => ({ ...prev, [subjectId]: Array.isArray(res.data) ? res.data : [] }));
+      const [lessonsRes, markersRes] = await Promise.all([
+        apiClient.getLessonsForSubject(subjectId),
+        apiClient.getGradingPeriodMarkersForSubject(subjectId)
+      ]);
+      setSubjectLessons(prev => ({ ...prev, [subjectId]: Array.isArray(lessonsRes.data) ? lessonsRes.data : [] }));
+      setSubjectMarkers(prev => ({ ...prev, [subjectId]: Array.isArray(markersRes.data) ? markersRes.data : [] }));
       setLoadingLessons(prev => ({ ...prev, [subjectId]: false }));
     }
   };
@@ -190,89 +195,116 @@ function Subjects() {
     if (!editLessonDialog.lesson || !editLessonDialog.subjectId) return;
     try {
       await apiClient.updateLesson(editLessonDialog.lesson.id, updated);
+      
+      // Close dialog immediately to prevent stale data display
+      setEditLessonDialog({ open: false, lesson: null, subjectId: null });
+      
       // Refresh lessons for this subject
       const subjectId = String(editLessonDialog.subjectId);
       const res = await apiClient.getLessonsForSubject(subjectId);
+      
       setSubjectLessons(prev => ({ ...prev, [subjectId]: Array.isArray(res.data) ? res.data : [] }));
-      setEditLessonDialog({ open: false, lesson: null, subjectId: null });
       toast.success('Lesson updated');
     } catch (err) {
+      console.error('Error in handleEditLessonSave:', err);
       toast.error('Failed to update lesson');
     }
   }
   function closeEditLessonDialog() {
     setEditLessonDialog({ open: false, lesson: null, subjectId: null });
   }
-  function handleDeleteLesson(subjectId: string, lessonId: string) {
+  async function handleDeleteLesson(subjectId: string, lessonId: string) {
     if (!window.confirm('Are you sure you want to delete this lesson? This will also delete all grades associated with this lesson. This action cannot be undone.')) return;
-    apiClient.deleteLesson(lessonId)
-      .then(() => {
-        setSubjectLessons(prev => {
-          const updated = { ...prev };
-          if (updated[subjectId]) {
-            updated[subjectId] = updated[subjectId].filter(l => l.id !== lessonId);
-          }
-          return updated;
-        });
-        
-        // Update the lesson count in the subjects array
-        setSubjects(prevSubjects =>
-          prevSubjects.map(subject =>
-            subject.id === subjectId
-              ? { ...subject, lesson_count: (subject.lesson_count || 0) - 1 }
-              : subject
-          )
-        );
-        
-        toast.success('Lesson deleted');
-      })
-      .catch(() => {
-        toast.error('Failed to delete lesson');
-      });
+    
+    try {
+      await apiClient.deleteLesson(lessonId);
+      
+      // Refresh BOTH lessons and markers (order indices were shifted by backend)
+      const [lessonsRes, markersRes] = await Promise.all([
+        apiClient.getLessonsForSubject(subjectId),
+        apiClient.getGradingPeriodMarkersForSubject(subjectId)
+      ]);
+      
+      const lessons = Array.isArray(lessonsRes.data) ? lessonsRes.data : [];
+      const markers = Array.isArray(markersRes.data) ? markersRes.data : [];
+      
+      console.log('📚 Lessons after delete:', lessons.map((l: any) => ({ id: l.id, name: l.name, order_index: l.order_index })));
+      console.log('📍 Markers after delete:', markers.map((m: any) => ({ id: m.id, name: m.name, order_index: m.order_index })));
+      
+      setSubjectLessons(prev => ({ ...prev, [subjectId]: lessons }));
+      setSubjectMarkers(prev => ({ ...prev, [subjectId]: markers }));
+      
+      // Update the lesson count in the subjects array
+      setSubjects(prevSubjects =>
+        prevSubjects.map(subject =>
+          subject.id === subjectId
+            ? { ...subject, lesson_count: (subject.lesson_count || 0) - 1 }
+            : subject
+        )
+      );
+      
+      toast.success('Lesson deleted');
+    } catch (err) {
+      toast.error('Failed to delete lesson');
+    }
   }
   // Insert a lesson directly below the clicked one
-  async function insertLessonAt(subjectId: string, idx: number) {
+  async function insertLessonAt(subjectId: string, afterOrderIndex: number) {
     try {
       const lessons = subjectLessons[subjectId] || [];
+      const categoryTypes = await apiClient.getGradeCategoryTypes();
+      const defaultCategory = Array.isArray(categoryTypes.data) 
+        ? categoryTypes.data.find(c => c.is_default) || categoryTypes.data[0]
+        : null;
       
-      // For empty subjects or adding at the end, use a simpler approach
-      if (lessons.length === 0 || idx >= lessons.length - 1) {
-        // Add the new lesson at the end - let the API handle numbering
-        await apiClient.addLessonsToSubject(subjectId, 1, lessonPrefix, 'lesson', 100);
-      } else {
-        // Insert in the middle - need to shift order indices
-        const afterLesson = lessons[idx];
-        const newOrderIndex = (afterLesson?.orderIndex ?? idx) + 1;
-        
-        // Shift orderIndex of all lessons after idx
-        const updatedLessons = lessons.map((l, i) =>
-          i > idx ? { ...l, orderIndex: (l.orderIndex ?? i) + 1 } : l
-        );
-        
-        // Update all shifted lessons in backend
-        await Promise.all(
-          updatedLessons.slice(idx + 1).map(l =>
-            apiClient.updateLesson(l.id, { orderIndex: l.orderIndex })
-          )
-        );
-        
-        // Add the new lesson - let the API handle numbering
-        await apiClient.addLessonsToSubject(subjectId, 1, lessonPrefix, 'lesson', 100);
-        
-        // Get the newly added lesson and set its correct order index
-        const tempRes = await apiClient.getLessonsForSubject(subjectId);
-        const tempLessons = Array.isArray(tempRes.data) ? tempRes.data : [];
-        const addedLesson = tempLessons.find(l => !lessons.some(old => old.id === l.id));
-        
-        if (addedLesson) {
-          await apiClient.updateLesson(addedLesson.id, { orderIndex: newOrderIndex });
+      if (!defaultCategory) {
+        toast.error('No grade categories found. Please create categories first.');
+        return;
+      }
+      
+      // Find the lesson with this order_index (cast to any for snake_case property access)
+      const lessonAtPosition = lessons.find(l => (l as any).order_index === afterOrderIndex);
+      
+      if (!lessonAtPosition) {
+        toast.error('Cannot find lesson to insert after');
+        return;
+      }
+      
+      // The new lesson should go at the position right after this lesson
+      const orderIndex = afterOrderIndex + 1;
+      
+      // Extract the number and points from the lesson at this position
+      let lessonNumber = orderIndex;
+      let lessonPoints = 100; // Default
+      
+      // Copy points from the lesson we're inserting after
+      lessonPoints = lessonAtPosition.points || 100;
+      
+      // Try to extract number from the lesson name (e.g., "Lesson 15" -> 15)
+      if (lessonAtPosition.name) {
+        const match = lessonAtPosition.name.match(/(\d+)$/);
+        if (match) {
+          lessonNumber = parseInt(match[1], 10) + 1;
         }
       }
       
-      // Refresh lessons
-      const finalRes = await apiClient.getLessonsForSubject(subjectId);
+      // Create the lesson using the backend endpoint that handles shifting automatically
+      await apiClient.createLesson(
+        subjectId,
+        `${lessonPrefix} ${lessonNumber}`,
+        defaultCategory.id,
+        lessonPoints,
+        orderIndex
+      );
+      
+      // Refresh BOTH lessons and markers (order indices were shifted by backend)
+      const [finalRes, markersRes] = await Promise.all([
+        apiClient.getLessonsForSubject(subjectId),
+        apiClient.getGradingPeriodMarkersForSubject(subjectId)
+      ]);
       const finalLessons = Array.isArray(finalRes.data) ? finalRes.data : [];
       setSubjectLessons(prev => ({ ...prev, [subjectId]: finalLessons }));
+      setSubjectMarkers(prev => ({ ...prev, [subjectId]: Array.isArray(markersRes.data) ? markersRes.data : [] }));
       
       // Update the lesson count in the subjects array
       setSubjects(prevSubjects =>
@@ -283,15 +315,162 @@ function Subjects() {
         )
       );
       
-      toast.success('Lesson added');
+      toast.success('Lesson inserted');
     } catch (err) {
-      console.error('Failed to add lesson:', err);
-      toast.error('Failed to add lesson');
+      console.error('Failed to insert lesson:', err);
+      toast.error('Failed to insert lesson');
     }
   }
   function handleAutoGenDialog(subjectId: string) {
     openAddLessonDialog(subjectId);
   }
+
+  // Insert a grading period marker at the specified position
+  async function insertGradingPeriodMarker(subjectId: string, orderIndex: number) {
+    try {
+      const gradingPeriods = userProfile?.grading_periods || 6;
+      const maxMarkers = gradingPeriods - 1; // For N periods, you need N-1 markers
+      const currentMarkers = subjectMarkers[subjectId] || [];
+
+      if (currentMarkers.length >= maxMarkers) {
+        toast.error(`Cannot add more grading period markers. Your grading periods setting (${gradingPeriods}) allows a maximum of ${maxMarkers} markers per subject.`);
+        return;
+      }
+
+      await apiClient.createGradingPeriodMarker(subjectId, undefined, orderIndex);
+
+      // Refresh BOTH markers and lessons (lessons were shifted by backend)
+      const [markersRes, lessonsRes] = await Promise.all([
+        apiClient.getGradingPeriodMarkersForSubject(subjectId),
+        apiClient.getLessonsForSubject(subjectId)
+      ]);
+      
+      let markers = Array.isArray(markersRes.data) ? markersRes.data : [];
+      
+      // Renumber markers
+      for (let i = 0; i < markers.length; i++) {
+        const newName = `End of Grading Period ${i + 1}`;
+        if (markers[i].name !== newName) {
+          await apiClient.updateGradingPeriodMarker(markers[i].id, newName, markers[i].order_index);
+          markers[i].name = newName;
+        }
+      }
+      
+      setSubjectMarkers(prev => ({ ...prev, [subjectId]: markers }));
+      setSubjectLessons(prev => ({ ...prev, [subjectId]: Array.isArray(lessonsRes.data) ? lessonsRes.data : [] }));
+
+      toast.success('Grading period marker added');
+    } catch (err) {
+      console.error('Failed to add grading period marker:', err);
+      toast.error('Failed to add grading period marker');
+    }
+  }
+
+  // Delete a grading period marker
+  async function deleteGradingPeriodMarker(subjectId: string, markerId: string) {
+    if (!window.confirm('Are you sure you want to delete this grading period marker?')) return;
+
+    try {
+      await apiClient.deleteGradingPeriodMarker(markerId);
+
+      // Refresh BOTH markers and lessons (lessons were shifted by backend)
+      const [markersRes, lessonsRes] = await Promise.all([
+        apiClient.getGradingPeriodMarkersForSubject(subjectId),
+        apiClient.getLessonsForSubject(subjectId)
+      ]);
+      
+      let markers = Array.isArray(markersRes.data) ? markersRes.data : [];
+      
+      // Renumber markers
+      for (let i = 0; i < markers.length; i++) {
+        const newName = `End of Grading Period ${i + 1}`;
+        if (markers[i].name !== newName) {
+          await apiClient.updateGradingPeriodMarker(markers[i].id, newName, markers[i].order_index);
+          markers[i].name = newName;
+        }
+      }
+      
+      setSubjectMarkers(prev => ({ ...prev, [subjectId]: markers }));
+      setSubjectLessons(prev => ({ ...prev, [subjectId]: Array.isArray(lessonsRes.data) ? lessonsRes.data : [] }));
+
+      toast.success('Grading period marker deleted');
+    } catch (err) {
+      console.error('Failed to delete grading period marker:', err);
+      toast.error('Failed to delete grading period marker');
+    }
+  }
+
+  // Shift a marker up or down by swapping order_index with adjacent lesson
+  async function shiftMarker(subjectId: string, marker: any, direction: 'up' | 'down') {
+    try {
+      const lessons = subjectLessons[subjectId] || [];
+      const markers = subjectMarkers[subjectId] || [];
+      
+      // Get combined and sorted items
+      // Use 'itemType' to distinguish between lessons and markers, not 'type' (which is the category name)
+      const combinedItems = [
+        ...lessons.map((l: any) => ({ ...l, itemType: 'lesson' })),
+        ...markers.map((m: any) => ({ ...m, itemType: 'marker' }))
+      ].sort((a, b) => ((a as any).order_index ?? 0) - ((b as any).order_index ?? 0));
+      
+      // Find the current marker's position in combined array
+      const currentIndex = combinedItems.findIndex((item: any) => 
+        item.itemType === 'marker' && item.id === marker.id
+      );
+      
+      if (currentIndex === -1) {
+        toast.error('Marker not found');
+        return;
+      }
+      
+      // Find the adjacent lesson to swap with
+      const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+      
+      if (targetIndex < 0 || targetIndex >= combinedItems.length) {
+        toast.error(`Cannot move marker ${direction}`);
+        return;
+      }
+      
+      const targetItem = combinedItems[targetIndex];
+      
+      // Only swap with lessons, not other markers
+      if (targetItem.itemType !== 'lesson') {
+        toast.error(`Can only swap with lessons`);
+        return;
+      }
+      
+      // Swap the order_index values
+      const markerOrderIndex = (marker as any).order_index;
+      const lessonOrderIndex = (targetItem as any).order_index;
+      
+      // Update both items
+      await Promise.all([
+        apiClient.updateGradingPeriodMarker(marker.id, marker.name, lessonOrderIndex),
+        apiClient.updateLesson(targetItem.id, { orderIndex: markerOrderIndex })
+      ]);
+      
+      // Refresh both datasets
+      const [markersRes, lessonsRes] = await Promise.all([
+        apiClient.getGradingPeriodMarkersForSubject(subjectId),
+        apiClient.getLessonsForSubject(subjectId)
+      ]);
+      
+      setSubjectMarkers(prev => ({ 
+        ...prev, 
+        [subjectId]: Array.isArray(markersRes.data) ? markersRes.data : [] 
+      }));
+      setSubjectLessons(prev => ({ 
+        ...prev, 
+        [subjectId]: Array.isArray(lessonsRes.data) ? lessonsRes.data : [] 
+      }));
+      
+      toast.success(`Marker moved ${direction}`);
+    } catch (err) {
+      console.error('Failed to shift marker:', err);
+      toast.error('Failed to shift marker');
+    }
+  }
+
   const [subjects, setSubjects] = useState<any[]>([]);
   const [studentGroups, setStudentGroups] = useState<any[]>([]);
   const [gradeCategoryTypes, setGradeCategoryTypes] = useState<any[]>([]);
@@ -320,10 +499,13 @@ function Subjects() {
   };
   const [expandedSubjects, setExpandedSubjects] = useState<{ [id: string]: boolean }>({});
   const [addLessonDialog, setAddLessonDialog] = useState<{ open: boolean, subjectId: string | null }>({ open: false, subjectId: null });
+  const [lessonReplacementDialog, setLessonReplacementDialog] = useState<{ open: boolean, subjectId: string | null, existingCount: number }>({ open: false, subjectId: null, existingCount: 0 });
   const [lessonCount, setLessonCount] = useState(1);
   const [lessonPrefix, setLessonPrefix] = useState('Lesson');
   const [lessonType, setLessonType] = useState('lesson');
   const [lessonPoints, setLessonPoints] = useState(100);
+  const [addMarkerDialog, setAddMarkerDialog] = useState<{ open: boolean, subjectId: string | null, desiredOrderIndex: number | null, selectedOptionIdx: number | null }>({ open: false, subjectId: null, desiredOrderIndex: null, selectedOptionIdx: null });
+  const [userProfile, setUserProfile] = useState<User | null>(null);
 
   // Update lesson type when categories are loaded
   useEffect(() => {
@@ -341,10 +523,11 @@ function Subjects() {
   useEffect(() => {
     async function fetchData() {
       try {
-        const [subjectsRes, groupsRes, categoriesRes] = await Promise.all([
+        const [subjectsRes, groupsRes, categoriesRes, profileRes] = await Promise.all([
           apiClient.getSubjects(),
           apiClient.getStudentGroups(),
-          apiClient.getGradeCategoryTypes()
+          apiClient.getGradeCategoryTypes(),
+          apiClient.getProfile()
         ]);
         setSubjects(Array.isArray(subjectsRes.data) ? subjectsRes.data : []);
         setStudentGroups(Array.isArray(groupsRes.data) ? groupsRes.data : []);
@@ -353,10 +536,12 @@ function Subjects() {
         const categoriesData = Array.isArray((categoriesRes as any).data?.data) ? (categoriesRes as any).data.data : 
                               Array.isArray((categoriesRes as any).data) ? (categoriesRes as any).data : []
         setGradeCategoryTypes(categoriesData);
+        setUserProfile(profileRes.data || null);
       } catch (e) {
         setSubjects([]);
         setStudentGroups([]);
         setGradeCategoryTypes([]);
+        setUserProfile(null);
       }
     }
     fetchData();
@@ -378,6 +563,80 @@ function Subjects() {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showGroupDropdown]);
+
+  // Listen for expand and highlight requests from other components
+  useEffect(() => {
+    const handleExpandAndHighlight = (event: CustomEvent) => {
+      const { subjectId, action } = event.detail;
+      
+      // Expand the subject if it's not already expanded
+      const isCurrentlyExpanded = expandedSubjects[subjectId];
+      if (!isCurrentlyExpanded) {
+        toggleLessons(subjectId);
+      }
+      
+      // Scroll to subject after a brief delay
+      setTimeout(() => {
+        const subjectElement = document.querySelector(`[data-subject-id="${subjectId}"]`);
+        if (subjectElement) {
+          subjectElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          
+          // Highlight the appropriate button based on action
+          if (action === 'add-marker') {
+            const addMarkerButton = subjectElement.querySelector('[data-action="add-marker"]');
+            if (addMarkerButton) {
+              addMarkerButton.classList.add('animate-pulse', 'ring-2', 'ring-red-500', 'ring-offset-2');
+              setTimeout(() => {
+                addMarkerButton.classList.remove('animate-pulse', 'ring-2', 'ring-red-500', 'ring-offset-2');
+              }, 3000);
+            }
+          } else if (action === 'add-lesson') {
+            // Highlight both "Add Lesson" and "Add Lessons" buttons
+            const addLessonButton = subjectElement.querySelector('[data-action="add-lesson"]');
+            const addLessonsButton = subjectElement.querySelector('[data-action="add-lessons"]');
+            
+            if (addLessonButton) {
+              addLessonButton.classList.add('animate-pulse', 'ring-2', 'ring-blue-500', 'ring-offset-2');
+              setTimeout(() => {
+                addLessonButton.classList.remove('animate-pulse', 'ring-2', 'ring-blue-500', 'ring-offset-2');
+              }, 3000);
+            }
+            
+            if (addLessonsButton) {
+              addLessonsButton.classList.add('animate-pulse', 'ring-2', 'ring-blue-500', 'ring-offset-2');
+              setTimeout(() => {
+                addLessonsButton.classList.remove('animate-pulse', 'ring-2', 'ring-blue-500', 'ring-offset-2');
+              }, 3000);
+            }
+          }
+        }
+      }, 200);
+    };
+
+    window.addEventListener('gradeflow-subjects-expand-and-highlight', handleExpandAndHighlight as EventListener);
+    return () => window.removeEventListener('gradeflow-subjects-expand-and-highlight', handleExpandAndHighlight as EventListener);
+  }, [expandedSubjects, toggleLessons]);
+
+  // Listen for general highlight action (for top-level buttons like Add Subject)
+  useEffect(() => {
+    const handleHighlightAction = (event: CustomEvent) => {
+      const { action } = event.detail;
+      
+      setTimeout(() => {
+        const button = document.querySelector(`[data-action="${action}"]`);
+        if (button) {
+          button.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          button.classList.add('animate-pulse', 'ring-2', 'ring-blue-500', 'ring-offset-2');
+          setTimeout(() => {
+            button.classList.remove('animate-pulse', 'ring-2', 'ring-blue-500', 'ring-offset-2');
+          }, 3000);
+        }
+      }, 200);
+    };
+
+    window.addEventListener('gradeflow-subjects-highlight-action', handleHighlightAction as EventListener);
+    return () => window.removeEventListener('gradeflow-subjects-highlight-action', handleHighlightAction as EventListener);
+  }, []);
 
   // Group selection handlers
   const toggleGroup = (groupName: string) => {
@@ -418,31 +677,54 @@ function Subjects() {
   function closeAddLessonDialog() {
     setAddLessonDialog({ open: false, subjectId: null });
   }
-  async function handleAddLessonSubmit() {
-    if (!addLessonDialog.subjectId) return;
+  function openAddMarkerDialog(subjectId: string, insertAfterOrderIndex: number | null) {
+    const desiredOrderIndex = insertAfterOrderIndex !== null ? insertAfterOrderIndex + 1 : null;
+    
+    // Find the option index that matches this orderIndex
+    let selectedOptionIdx = null;
+    if (desiredOrderIndex !== null) {
+      const lessons = subjectLessons[subjectId] ?? [];
+      const markers = subjectMarkers[subjectId] ?? [];
+      
+      const combinedItems = [
+        ...lessons.map(item => ({ ...item, itemType: 'lesson' })),
+        ...markers.map(item => ({ ...item, itemType: 'marker' }))
+      ].sort((a, b) => ((a as any).order_index ?? 0) - ((b as any).order_index ?? 0));
+      
+      const options = [
+        { label: 'At the beginning', value: 1 },
+        ...combinedItems.map((item: any) => ({
+          label: `After ${item.itemType === 'marker' ? item.name : item.name}`,
+          value: (item.order_index ?? 0) + 1
+        })),
+        { label: 'At the end', value: Math.max(...combinedItems.map((item: any) => item.order_index ?? 0), 0) + 1 }
+      ];
+      
+      selectedOptionIdx = options.findIndex(opt => opt.value === desiredOrderIndex);
+      if (selectedOptionIdx === -1) selectedOptionIdx = null;
+    }
+    
+    setAddMarkerDialog({ open: true, subjectId, desiredOrderIndex, selectedOptionIdx });
+  }
+  function closeAddMarkerDialog() {
+    setAddMarkerDialog({ open: false, subjectId: null, desiredOrderIndex: null, selectedOptionIdx: null });
+  }
+  function closeLessonReplacementDialog() {
+    setLessonReplacementDialog({ open: false, subjectId: null, existingCount: 0 });
+  }
 
+  async function addLessonsToSubject(subjectId: string, replaceExisting: boolean) {
     try {
-      const subjectId = addLessonDialog.subjectId;
       const existingLessons = subjectLessons[subjectId] || [];
-      const hasExistingLessons = existingLessons.length > 0;
 
-      // If subject already has lessons, ask for confirmation to replace them
-      if (hasExistingLessons) {
-        const confirmed = window.confirm(
-          `This subject already has ${existingLessons.length} lesson(s). Adding new lessons will replace all existing lessons. Do you want to continue?`
-        );
-        if (!confirmed) {
-          closeAddLessonDialog();
-          return;
-        }
-
+      if (replaceExisting) {
         // Delete all existing lessons first
         for (const lesson of existingLessons) {
           await apiClient.deleteLesson(lesson.id);
         }
       }
 
-      // Add new lessons
+      // Add new lessons - backend will automatically continue numbering from existing lessons
       await apiClient.addLessonsToSubject(
         subjectId,
         lessonCount,
@@ -469,9 +751,40 @@ function Subjects() {
       );
 
       closeAddLessonDialog();
-      toast.success(hasExistingLessons ? 'Lessons replaced successfully' : 'Lesson(s) added successfully');
+      closeLessonReplacementDialog();
+      toast.success(replaceExisting ? 'Lessons replaced successfully' : 'Lesson(s) added successfully');
     } catch (err) {
       toast.error('Failed to add/replace lesson(s)');
+    }
+  }
+
+  async function handleReplaceLessons() {
+    if (!lessonReplacementDialog.subjectId) return;
+    await addLessonsToSubject(lessonReplacementDialog.subjectId, true);
+  }
+
+  async function handleContinueLessons() {
+    if (!lessonReplacementDialog.subjectId) return;
+    await addLessonsToSubject(lessonReplacementDialog.subjectId, false);
+  }
+  async function handleAddLessonSubmit() {
+    if (!addLessonDialog.subjectId) return;
+
+    try {
+      const subjectId = addLessonDialog.subjectId;
+      const existingLessons = subjectLessons[subjectId] || [];
+      const hasExistingLessons = existingLessons.length > 0;
+
+      // If subject already has lessons, show replacement options dialog
+      if (hasExistingLessons) {
+        setLessonReplacementDialog({ open: true, subjectId, existingCount: existingLessons.length });
+        return;
+      }
+
+      // No existing lessons, proceed directly
+      await addLessonsToSubject(subjectId, false);
+    } catch (err) {
+      toast.error('Failed to add lessons');
     }
   }
 
@@ -483,7 +796,7 @@ function Subjects() {
             <h2 className="text-3xl font-bold text-foreground">Subjects</h2>
             <p className="text-muted-foreground">Manage subjects and lessons</p>
           </div>
-          <Button variant="default" onClick={openAddSubjectDialog}>
+          <Button variant="default" onClick={openAddSubjectDialog} data-action="add-subject">
             <Plus size={16} className="mr-2" /> Add Subject
           </Button>
         </div>
@@ -733,10 +1046,10 @@ function Subjects() {
           </Card>
         ) : (
           subjects.map((subject) => (
-            <Card key={subject.id} className="relative group">
+            <Card key={subject.id} className="relative group" data-subject-id={subject.id}>
               <CardHeader>
                 <div className="flex items-start justify-between">
-                  <div>
+                  <div className="flex-1">
                     <CardTitle className="text-xl cursor-pointer select-none" onClick={() => toggleLessons(subject.id)}>
                       {subject.name}
                       <span className="ml-2 text-xs text-muted-foreground">({subject.lesson_count ?? 0} lessons)</span>
@@ -754,6 +1067,37 @@ function Subjects() {
                       )}
                     </div>
                   </div>
+                  
+                  {/* Action buttons - shown when lessons are expanded */}
+                  {showLessons(subject.id) && (
+                    <div className="flex gap-2 mx-4">
+                      <Button size="sm" variant="outline" onClick={() => {
+                        const lessons = subjectLessons[subject.id] || [];
+                        if (lessons.length === 0) {
+                          toast.error('No lessons found to insert after');
+                          return;
+                        }
+                        const lastLesson = lessons[lessons.length - 1];
+                        insertLessonAt(subject.id, (lastLesson as any).order_index);
+                      }}
+                      data-action="add-lesson"
+                      >
+                        <Plus size={14} className="mr-1 text-primary" /> Add Lesson
+                      </Button>
+                      <Button 
+                        size="sm" 
+                        variant="outline" 
+                        onClick={() => openAddMarkerDialog(subject.id, null)}
+                        data-action="add-marker"
+                      >
+                        📍 Add Marker
+                      </Button>
+                      <Button size="sm" variant="secondary" onClick={() => handleAutoGenDialog(subject.id)} data-action="add-lessons">
+                        Add Lessons
+                      </Button>
+                    </div>
+                  )}
+                  
                   <div className="flex gap-1">
                     <Button
                       variant="ghost"
@@ -831,37 +1175,79 @@ function Subjects() {
                 </div>
                 {showLessons(subject.id) && (
                   <div className="mt-4 max-h-60 overflow-y-auto border rounded bg-muted/30 p-2">
-                    <div className="flex gap-2 mb-3 pb-2 border-b">
-                      <Button size="sm" variant="outline" onClick={() => insertLessonAt(subject.id, (subjectLessons[subject.id]?.length ?? 0) - 1)}>
-                        <Plus size={14} className="mr-1 text-primary" /> Add Lesson
-                      </Button>
-                      <Button size="sm" variant="secondary" onClick={() => handleAutoGenDialog(subject.id)}>
-                        Add Lessons
-                      </Button>
-                    </div>
                     {loadingLessons[subject.id] ? (
                       <div className="text-center text-muted-foreground py-4">Loading lessons...</div>
-                    ) : (subjectLessons[subject.id]?.length ?? 0) === 0 ? (
+                    ) : (subjectLessons[subject.id]?.length ?? 0) === 0 && (subjectMarkers[subject.id]?.length ?? 0) === 0 ? (
                       <div className="text-center text-muted-foreground py-4">No lessons yet</div>
                     ) : (
                       <ul className="space-y-2">
-                        {(subjectLessons[subject.id] ?? [])
-                          .sort((a: Lesson, b: Lesson) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0))
-                          .map((lesson: Lesson, idx: number) => (
-                            <li key={lesson.id} className="flex items-center gap-2 bg-white rounded p-2 shadow-sm">
-                              <span className="flex-1 font-medium">{lesson.name}</span>
-                              <span 
-                                className="text-xs px-2 py-1 rounded border text-white font-medium"
-                                style={{ backgroundColor: getCategoryColor(lesson) }}
-                              >
-                                {lesson.type}
-                              </span>
-                              <span className="text-xs px-2">{lesson.points ?? lesson.maxPoints} pts</span>
-                              <Button size="icon" variant="ghost" onClick={() => insertLessonAt(subject.id, idx)} title="Add a new lesson below this one"><Plus size={14} className="text-primary" /></Button>
-                              <Button size="icon" variant="ghost" onClick={() => editLesson(lesson, subject.id)} title="Edit"><PencilSimple size={14} /></Button>
-                              <Button size="icon" variant="ghost" onClick={() => handleDeleteLesson(subject.id, lesson.id)} title="Delete"><Trash size={14} /></Button>
-                            </li>
-                          ))}
+                        {(() => {
+                          const lessons = subjectLessons[subject.id] ?? [];
+                          const markers = subjectMarkers[subject.id] ?? [];
+                          
+                          // Combine and sort lessons and markers by order_index
+                          // Use 'itemType' to distinguish between lessons and markers, not 'type' (which is the category name)
+                          const combinedItems = [
+                            ...lessons.map(item => ({ ...item, itemType: 'lesson' })),
+                            ...markers.map(item => ({ ...item, itemType: 'marker' }))
+                          ].sort((a, b) => ((a as any).order_index ?? 0) - ((b as any).order_index ?? 0));
+                          
+                          return combinedItems.map((item: any, idx: number) => {
+                            if (item.itemType === 'marker') {
+                              // Check if there's a lesson above or below to swap with
+                              const prevItem = idx > 0 ? combinedItems[idx - 1] : null;
+                              const nextItem = idx < combinedItems.length - 1 ? combinedItems[idx + 1] : null;
+                              const canMoveUp = prevItem && prevItem.itemType === 'lesson';
+                              const canMoveDown = nextItem && nextItem.itemType === 'lesson';
+                              
+                              // Render marker
+                              return (
+                                <li key={`marker-${item.id}`} className="flex items-center gap-2 bg-red-50 border-2 border-red-200 rounded p-2 shadow-sm">
+                                  <span className="flex-1 font-bold text-red-800">📍 {item.name}</span>
+                                  <span className="text-xs px-2 py-1 bg-red-100 text-red-800 rounded border font-medium">
+                                    Grading Period Marker
+                                  </span>
+                                  <Button 
+                                    size="icon" 
+                                    variant="ghost" 
+                                    onClick={() => shiftMarker(subject.id, item, 'up')} 
+                                    disabled={!canMoveUp}
+                                    title="Move marker up"
+                                  >
+                                    <CaretUp size={14} className={canMoveUp ? "text-red-600" : "text-gray-300"} />
+                                  </Button>
+                                  <Button 
+                                    size="icon" 
+                                    variant="ghost" 
+                                    onClick={() => shiftMarker(subject.id, item, 'down')} 
+                                    disabled={!canMoveDown}
+                                    title="Move marker down"
+                                  >
+                                    <CaretDown size={14} className={canMoveDown ? "text-red-600" : "text-gray-300"} />
+                                  </Button>
+                                  <Button size="icon" variant="ghost" onClick={() => deleteGradingPeriodMarker(subject.id, item.id)} title="Delete"><Trash size={14} /></Button>
+                                </li>
+                              );
+                            } else {
+                              // Render lesson
+                              return (
+                                <li key={item.id} className="flex items-center gap-2 bg-white rounded p-2 shadow-sm">
+                                  <span className="flex-1 font-medium">{item.name}</span>
+                                  <span 
+                                    className="text-xs px-2 py-1 rounded border text-white font-medium"
+                                    style={{ backgroundColor: getCategoryColor(item) }}
+                                  >
+                                    {item.type}
+                                  </span>
+                                  <span className="text-xs px-2">{(item as any).points ?? (item as any).maxPoints} pts</span>
+                                  <Button size="icon" variant="ghost" onClick={() => insertLessonAt(subject.id, (item as any).order_index)} title="Add a new lesson below this one"><Plus size={14} className="text-primary" /></Button>
+                                  <Button size="icon" variant="ghost" onClick={() => editLesson(item as Lesson, subject.id)} title="Edit"><PencilSimple size={14} /></Button>
+                                  <Button size="icon" variant="ghost" onClick={() => handleDeleteLesson(subject.id, item.id)} title="Delete"><Trash size={14} /></Button>
+                                </li>
+                              );
+                            }
+                          });
+                        })()}
       {/* Edit Lesson Dialog */}
       <Dialog open={editLessonDialog.open} onOpenChange={v => { if (!v) closeEditLessonDialog(); }}>
         <DialogContent>
@@ -869,18 +1255,27 @@ function Subjects() {
             <DialogTitle>Edit Lesson</DialogTitle>
           </DialogHeader>
           {editLessonDialog.lesson && (
-            <form onSubmit={e => { 
+            <form key={editLessonDialog.lesson.id} onSubmit={e => { 
               e.preventDefault(); 
               const formData = e.target as any;
               const selectedTypeName = formData.type.value;
-              // Find the category ID from the name
-              const selectedCategory = gradeCategoryTypes.find(cat => cat.name.toLowerCase() === selectedTypeName);
-              handleEditLessonSave({
+              
+              // Find the category ID from the name (case-insensitive comparison)
+              const selectedCategory = gradeCategoryTypes.find(cat => cat.name.toLowerCase() === selectedTypeName.toLowerCase());
+              
+              if (!selectedCategory) {
+                toast.error('Invalid category selected');
+                return;
+              }
+              
+              const updateData = {
                 name: formData.name.value,
-                categoryId: selectedCategory?.id, // Send categoryId instead of type name
+                categoryId: selectedCategory.id,
                 points: Number(formData.points.value),
                 maxPoints: Number(formData.points.value)
-              }); 
+              };
+              
+              handleEditLessonSave(updateData); 
             }} className="space-y-4">
               <div>
                 <Label htmlFor="edit-lesson-name">Name</Label>
@@ -888,10 +1283,15 @@ function Subjects() {
               </div>
               <div>
                 <Label htmlFor="edit-lesson-type">Type</Label>
-                <select id="edit-lesson-type" name="type" defaultValue={editLessonDialog.lesson.type} className="w-full border rounded px-2 py-1">
+                <select id="edit-lesson-type" name="type" defaultValue={editLessonDialog.lesson.type.toLowerCase()} className="w-full border rounded px-2 py-1">
                   {gradeCategoryTypes.map((category) => (
-                    <option key={category.id} value={category.name.toLowerCase()}>
-                      {category.name}
+                    <option 
+                      key={category.id} 
+                      value={category.name.toLowerCase()}
+                      disabled={category.is_active === false}
+                      style={category.is_active === false ? { color: '#9ca3af' } : undefined}
+                    >
+                      {category.name}{category.is_active === false ? ' (disabled)' : ''}
                     </option>
                   ))}
                 </select>
@@ -942,8 +1342,13 @@ function Subjects() {
                 className="w-full border rounded px-2 py-1"
               >
                 {gradeCategoryTypes.map((category) => (
-                  <option key={category.id} value={category.name.toLowerCase()}>
-                    {category.name}
+                  <option 
+                    key={category.id} 
+                    value={category.name.toLowerCase()}
+                    disabled={category.is_active === false}
+                    style={category.is_active === false ? { color: '#9ca3af' } : undefined}
+                  >
+                    {category.name}{category.is_active === false ? ' (disabled)' : ''}
                   </option>
                 ))}
               </select>
@@ -973,6 +1378,107 @@ function Subjects() {
             <div className="flex gap-2 pt-2">
               <Button onClick={handleAddLessonSubmit} className="flex-1">Add</Button>
               <Button variant="outline" onClick={closeAddLessonDialog}>Cancel</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+      {/* Lesson Replacement Options Dialog */}
+      <Dialog open={lessonReplacementDialog.open} onOpenChange={v => { if (!v) closeLessonReplacementDialog(); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add Lessons</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-muted-foreground">
+              This subject already has {lessonReplacementDialog.existingCount} lesson(s). How would you like to proceed?
+            </p>
+            <div className="space-y-3">
+              <div className="p-3 border rounded-lg">
+                <h4 className="font-medium text-sm mb-1">Replace All Lessons</h4>
+                <p className="text-xs text-muted-foreground mb-2">
+                  Delete all existing lessons and add {lessonCount} new lesson{lessonCount !== 1 ? 's' : ''} starting from 1.
+                </p>
+                <Button onClick={handleReplaceLessons} variant="destructive" size="sm" className="w-full">
+                  Replace All Lessons
+                </Button>
+              </div>
+              <div className="p-3 border rounded-lg">
+                <h4 className="font-medium text-sm mb-1">Continue from Highest Number</h4>
+                <p className="text-xs text-muted-foreground mb-2">
+                  Keep existing lessons and add {lessonCount} new lesson{lessonCount !== 1 ? 's' : ''} continuing from the highest current sequence number.
+                </p>
+                <Button onClick={handleContinueLessons} variant="default" size="sm" className="w-full">
+                  Continue Adding Lessons
+                </Button>
+              </div>
+            </div>
+            <div className="flex gap-2 pt-2">
+              <Button variant="outline" onClick={closeLessonReplacementDialog} className="flex-1">
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+      {/* Add Marker Dialog */}
+      <Dialog open={addMarkerDialog.open} onOpenChange={v => { if (!v) closeAddMarkerDialog(); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add Grading Period Marker</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-muted-foreground">
+              Select where to insert the grading period marker:
+            </p>
+            <div className="max-h-60 overflow-y-auto space-y-2">
+              {(() => {
+                const lessons = subjectLessons[addMarkerDialog.subjectId || ''] ?? [];
+                const markers = subjectMarkers[addMarkerDialog.subjectId || ''] ?? [];
+                
+                // Combine and sort lessons and markers by orderIndex
+                const combinedItems = [
+                  ...lessons.map(item => ({ ...item, itemType: 'lesson' })),
+                  ...markers.map(item => ({ ...item, itemType: 'marker' }))
+                ].sort((a, b) => ((a as any).order_index ?? 0) - ((b as any).order_index ?? 0));
+                
+                const options = [
+                  { label: 'At the beginning', value: 1 },
+                  ...combinedItems.map((item: any) => ({
+                    label: `After ${item.itemType === 'marker' ? item.name : item.name}`,
+                    value: (item.order_index ?? 0) + 1
+                  })),
+                  { label: 'At the end', value: Math.max(...combinedItems.map((item: any) => item.order_index ?? 0), 0) + 1 }
+                ];
+                
+                return options.map((option, idx) => (
+                  <div
+                    key={idx}
+                    className={`p-3 border rounded cursor-pointer hover:bg-accent ${
+                      addMarkerDialog.selectedOptionIdx === idx ? 'bg-accent border-primary' : ''
+                    }`}
+                    onClick={() => setAddMarkerDialog(prev => ({ ...prev, desiredOrderIndex: option.value, selectedOptionIdx: idx }))}
+                  >
+                    <div className="font-medium">{option.label}</div>
+                  </div>
+                ));
+              })()}
+            </div>
+            <div className="flex gap-2 pt-2">
+              <Button 
+                onClick={() => {
+                  if (addMarkerDialog.subjectId && addMarkerDialog.desiredOrderIndex !== null) {
+                    insertGradingPeriodMarker(addMarkerDialog.subjectId, addMarkerDialog.desiredOrderIndex);
+                    closeAddMarkerDialog();
+                  }
+                }} 
+                className="flex-1"
+                disabled={addMarkerDialog.desiredOrderIndex === null}
+              >
+                Add Marker
+              </Button>
+              <Button variant="outline" onClick={closeAddMarkerDialog}>
+                Cancel
+              </Button>
             </div>
           </div>
         </DialogContent>

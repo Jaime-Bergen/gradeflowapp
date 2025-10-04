@@ -27,6 +27,7 @@ export interface Subject {
   studentGroupId?: string
   group_name?: string
   lessons: Lesson[]
+  gradingPeriodMarkers?: GradingPeriodMarker[]
   // Dynamic weights structure using category IDs
   weights: { [categoryId: string]: number }
 }
@@ -43,6 +44,13 @@ export interface Lesson {
   orderIndex?: number // Used for ordering lessons in a subject
   dueDate?: string
   description?: string
+}
+
+export interface GradingPeriodMarker {
+  id: string
+  name: string
+  subjectId: string
+  orderIndex: number
 }
 
 export interface GradeCategoryType {

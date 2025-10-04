@@ -18,25 +18,70 @@ export default function Dashboard() {
   const [subjects, setSubjects] = useState<Subject[]>([])
   const [grades, setGrades] = useState<Grade[]>([])
   const [lessons, setLessons] = useState<Record<string, any[]>>({})
+  const [subjectMarkers, setSubjectMarkers] = useState<Record<string, any[]>>({})
   const [loading, setLoading] = useState(true)
   const [currentGradingPeriod, setCurrentGradingPeriod] = useState(1)
 
-  // Helper function to determine grading period based on date
-  const getGradingPeriod = (date: Date): number => {
-    const schoolYearStart = new Date(date.getFullYear(), 7, 15) // August 15th
-    if (date < schoolYearStart) {
-      // If date is before August 15th, it's from previous school year
-      schoolYearStart.setFullYear(date.getFullYear() - 1)
+  // Helper function to get lesson range for a reporting period based on markers
+  const getLessonRangeForPeriod = (subjectId: string, periodIndex: number): { min: number; max: number | null } | null => {
+    const markers = subjectMarkers[subjectId] || []
+    const sortedMarkers = [...markers].sort((a, b) => ((a as any).order_index || 0) - ((b as any).order_index || 0))
+    
+    // Period 1: From start to first marker (if exists)
+    if (periodIndex === 1) {
+      if (sortedMarkers.length === 0) return null // No markers yet
+      return {
+        min: 1,
+        max: (sortedMarkers[0] as any).order_index
+      }
     }
     
-    const daysDiff = Math.floor((date.getTime() - schoolYearStart.getTime()) / (1000 * 60 * 60 * 24))
-    const period = Math.floor(daysDiff / 42) + 1 // 42 days = 6 weeks
-    return Math.min(Math.max(period, 1), 6) // Clamp between 1 and 6
+    // Last period: After last marker to end
+    if (periodIndex > sortedMarkers.length) {
+      if (sortedMarkers.length === 0) return null
+      return {
+        min: (sortedMarkers[sortedMarkers.length - 1] as any).order_index + 1,
+        max: null // No upper limit
+      }
+    }
+    
+    // Middle periods: Between two markers
+    if (periodIndex > 1 && periodIndex <= sortedMarkers.length) {
+      const startMarkerIndex = periodIndex - 2 // Previous marker
+      const endMarkerIndex = periodIndex - 1   // Current marker
+      
+      return {
+        min: (sortedMarkers[startMarkerIndex] as any).order_index + 1,
+        max: (sortedMarkers[endMarkerIndex] as any).order_index
+      }
+    }
+    
+    return null
   }
 
-  // Get current grading period based on today's date
-  const getCurrentGradingPeriod = (): number => {
-    return getGradingPeriod(new Date())
+  // Helper function to filter grades based on markers for the selected reporting period
+  const getFilteredGradesForPeriod = (periodIndex: number): Grade[] => {
+    return grades.filter(grade => {
+      if (!grade.subjectId) return false
+      
+      const range = getLessonRangeForPeriod(grade.subjectId, periodIndex)
+      if (!range) return false // Skip if no valid range
+      
+      // Get the lesson to check its order_index
+      const subjectLessons = lessons[grade.subjectId]
+      if (!subjectLessons) return false
+      
+      const lesson = subjectLessons.find(l => l.id === grade.lessonId)
+      if (!lesson) return false
+      
+      const lessonOrderIndex = (lesson as any).order_index || (lesson as any).orderIndex || 0
+      
+      // Check if lesson is within range
+      if (lessonOrderIndex < range.min) return false
+      if (range.max !== null && lessonOrderIndex > range.max) return false
+      
+      return true
+    })
   }
 
   useEffect(() => {
@@ -58,24 +103,36 @@ export default function Dashboard() {
         setGrades(Array.isArray(gradesRes.data) ? gradesRes.data : [])
       }
 
-      // Fetch lessons for subjects that have grades
+      // Fetch lessons and markers for subjects that have grades
       const subjectsWithGrades = subjectsList.filter(subject => 
         Array.isArray(gradesRes.data) && gradesRes.data.some((grade: any) => grade.subjectId === subject.id)
       )
       
       const lessonsMap: Record<string, any[]> = {}
+      const markersMap: Record<string, any[]> = {}
+      
       await Promise.all(
         subjectsWithGrades.map(async (subject) => {
-          const lessonsRes = await apiClient.getLessonsForSubject(subject.id)
+          const [lessonsRes, markersRes] = await Promise.all([
+            apiClient.getLessonsForSubject(subject.id),
+            apiClient.getGradingPeriodMarkersForSubject(subject.id)
+          ])
+          
           if (Array.isArray(lessonsRes.data)) {
             lessonsMap[subject.id] = lessonsRes.data
           }
+          
+          if (Array.isArray(markersRes.data)) {
+            markersMap[subject.id] = markersRes.data
+          }
         })
       )
+      
       setLessons(lessonsMap)
+      setSubjectMarkers(markersMap)
 
-      // Set current grading period
-      setCurrentGradingPeriod(getCurrentGradingPeriod())
+      // Set current grading period to 1 by default
+      setCurrentGradingPeriod(1)
 
       setLoading(false)
     }
@@ -93,11 +150,8 @@ export default function Dashboard() {
   const totalStudents = students.length
   const totalSubjects = subjects.length
 
-  // Filter grades for current grading period
-  const currentPeriodGrades = grades.filter(grade => {
-    const gradeDate = new Date(grade.date)
-    return getGradingPeriod(gradeDate) === currentGradingPeriod
-  })
+  // Filter grades for current grading period using marker-based filtering
+  const currentPeriodGrades = getFilteredGradesForPeriod(currentGradingPeriod)
 
   // Calculate class average for current grading period
   const averageGrade = currentPeriodGrades.length > 0 

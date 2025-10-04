@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
@@ -18,6 +18,7 @@ export default function Reports() {
   const [students, setStudents] = useState<Student[]>([])
   const [subjects, setSubjects] = useState<Subject[]>([])
   const [grades, setGrades] = useState<Grade[]>([])
+  const [subjectMarkers, setSubjectMarkers] = useState<Record<string, any[]>>({})
   
   const [selectedStudents, setSelectedStudents] = useState<string[]>([])
   const [reportPeriod, setReportPeriod] = useState("")
@@ -33,6 +34,35 @@ export default function Reports() {
   })
   const [isGenerating, setIsGenerating] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
+
+  // Compute marker validation errors using useMemo to avoid infinite loops
+  const markerErrors = useMemo(() => {
+    if (!reportPeriod || subjects.length === 0) return []
+    
+    const periodMatch = reportPeriod.match(/(\d+)$/)
+    const periodIndex = periodMatch ? parseInt(periodMatch[1], 10) : 1
+    
+    const errors: Array<{ subjectId: string; subjectName: string; message: string }> = []
+    const subjectsWithGrades = new Set(grades.map(g => g.subjectId).filter((id): id is string => Boolean(id)))
+    
+    subjectsWithGrades.forEach(subjectId => {
+      const subject = subjects.find(s => s.id === subjectId)
+      if (!subject) return
+      
+      const markers = subjectMarkers[subjectId] || []
+      const requiredMarkers = periodIndex === 1 ? 1 : periodIndex - 1
+      
+      if (markers.length < requiredMarkers) {
+        errors.push({
+          subjectId: subject.id,
+          subjectName: subject.name,
+          message: `${subject.name} needs at least ${requiredMarkers} marker(s) for this reporting period`
+        })
+      }
+    })
+    
+    return errors
+  }, [reportPeriod, subjects.length, grades.length, Object.keys(subjectMarkers).length])
 
   // Load all data from API
   useEffect(() => {
@@ -56,15 +86,23 @@ export default function Reports() {
       setStudents(studentsData)
       setGrades(gradesData)
 
-      // Load lessons for each subject
+      // Load lessons and markers for each subject
       const subjectsWithLessons = await Promise.all(
         subjectsData.map(async (subject) => {
           try {
-            const lessonsRes = await apiClient.getLessonsForSubject(subject.id)
+            const [lessonsRes, markersRes] = await Promise.all([
+              apiClient.getLessonsForSubject(subject.id),
+              apiClient.getGradingPeriodMarkersForSubject(subject.id)
+            ])
             const lessons = Array.isArray(lessonsRes.data) ? lessonsRes.data : []
+            const markers = Array.isArray(markersRes.data) ? markersRes.data : []
+            
+            // Store markers separately
+            setSubjectMarkers(prev => ({ ...prev, [subject.id]: markers }))
+            
             return { ...subject, lessons }
           } catch (error) {
-            console.warn(`Failed to load lessons for subject ${subject.name}:`, error)
+            console.warn(`Failed to load lessons/markers for subject ${subject.name}:`, error)
             return { ...subject, lessons: [] }
           }
         })
@@ -182,6 +220,95 @@ export default function Reports() {
     }, 100)
   }
 
+  const goToSubjectAndAddMarker = (subjectId: string) => {
+    // Navigate to Subjects tab
+    window?.dispatchEvent(new CustomEvent('gradeflow-goto-tab', { detail: { tab: 'subjects' } }))
+    // After a brief delay, expand the subject and highlight the add marker button
+    setTimeout(() => {
+      window?.dispatchEvent(new CustomEvent('gradeflow-subjects-expand-and-highlight', { 
+        detail: { subjectId, action: 'add-marker' } 
+      }))
+    }, 100)
+  }
+
+  // Get lesson order_index range based on report period and markers
+  const getLessonRangeForPeriod = (subjectId: string, periodIndex: number): { min: number; max: number | null } | null => {
+    const markers = subjectMarkers[subjectId] || []
+    
+    // Sort markers by order_index
+    const sortedMarkers = [...markers].sort((a, b) => 
+      ((a as any).order_index ?? 0) - ((b as any).order_index ?? 0)
+    )
+    
+    // Period 1: From start (1) to first marker
+    if (periodIndex === 1) {
+      if (sortedMarkers.length === 0) {
+        return null // No markers defined
+      }
+      return { 
+        min: 1, 
+        max: (sortedMarkers[0] as any).order_index 
+      }
+    }
+    
+    // Last period: From last marker onwards
+    if (periodIndex > sortedMarkers.length) {
+      if (sortedMarkers.length === 0) {
+        return null // No markers defined
+      }
+      return { 
+        min: (sortedMarkers[sortedMarkers.length - 1] as any).order_index + 1, 
+        max: null // No upper limit
+      }
+    }
+    
+    // Middle periods: Between two markers
+    if (periodIndex > 1 && periodIndex <= sortedMarkers.length) {
+      const startMarkerIndex = periodIndex - 2 // Previous marker
+      const endMarkerIndex = periodIndex - 1   // Current marker
+      
+      return {
+        min: (sortedMarkers[startMarkerIndex] as any).order_index + 1,
+        max: (sortedMarkers[endMarkerIndex] as any).order_index
+      }
+    }
+    
+    return null
+  }
+
+  // Helper function to filter grades based on markers for the selected reporting period
+  const getFilteredGradesForPeriod = (): Grade[] => {
+    if (markerErrors.length > 0) return []
+    
+    // Get period index from reportPeriod (e.g., 'sw1' -> 1, 'q2' -> 2, etc.)
+    const periodMatch = reportPeriod.match(/(\d+)$/)
+    const periodIndex = periodMatch ? parseInt(periodMatch[1], 10) : 1
+    
+    // Filter grades based on markers for each subject
+    return grades.filter(grade => {
+      if (!grade.subjectId) return false
+      
+      const range = getLessonRangeForPeriod(grade.subjectId, periodIndex)
+      if (!range) return false // Skip if no valid range
+      
+      // Get the lesson to check its order_index
+      const subject = subjects.find(s => s.id === grade.subjectId)
+      if (!subject || !subject.lessons) return false
+      
+      const lesson = subject.lessons.find(l => l.id === grade.lessonId)
+      if (!lesson) return false
+      
+      const orderIndex = (lesson as any).order_index ?? lesson.orderIndex ?? 0
+      
+      // Check if lesson is in range
+      if (range.max === null) {
+        return orderIndex >= range.min
+      } else {
+        return orderIndex >= range.min && orderIndex <= range.max
+      }
+    })
+  }
+
   const generateReportCardForStudent = (studentId: string): ReportCard | null => {
     try {
       // Safety check to ensure all data is loaded
@@ -193,7 +320,17 @@ export default function Reports() {
         })
         return null
       }
-      return generateReportCard(studentId, reportPeriod, comments, students, subjects, grades)
+      
+      // Check if there are marker validation errors
+      if (markerErrors.length > 0) {
+        console.warn('Marker validation errors:', markerErrors)
+        return null
+      }
+      
+      // Get filtered grades for the selected period
+      const filteredGrades = getFilteredGradesForPeriod()
+      
+      return generateReportCard(studentId, reportPeriod, comments, students, subjects, filteredGrades)
     } catch (error) {
       console.error('Error generating report card for student:', studentId, error)
       return null
@@ -472,7 +609,19 @@ export default function Reports() {
     }
   }
 
-  const previewReport = previewStudent ? generateReportCardForStudent(previewStudent) : null
+  const previewReport = useMemo(() => {
+    return previewStudent ? generateReportCardForStudent(previewStudent) : null
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    previewStudent, 
+    reportPeriod, 
+    subjects.length, 
+    grades.length, 
+    Object.keys(subjectMarkers).length,
+    // Create a stable key from subjects with lessons
+    subjects.map(s => `${s.id}:${s.lessons?.length || 0}`).join(',')
+  ])
+  
   const previewStudentData = students.find(s => s.id === previewStudent)
 
   if (isLoading) {
@@ -649,6 +798,30 @@ export default function Reports() {
                     ))}
                   </SelectContent>
                 </Select>
+                
+                {/* Display marker validation errors */}
+                {markerErrors.length > 0 && (
+                  <div className="mt-2 p-3 bg-red-50 border border-red-200 rounded-md">
+                    <p className="text-sm font-medium text-red-800 mb-1">⚠️ Missing Grading Period Markers:</p>
+                    <ul className="text-sm text-red-700 space-y-1">
+                      {markerErrors.map((error, idx) => (
+                        <li key={idx} className="flex items-center gap-2">
+                          <span>•</span>
+                          <span>{error.message}</span>
+                          <button
+                            onClick={() => goToSubjectAndAddMarker(error.subjectId)}
+                            className="text-red-800 underline hover:text-red-900 font-medium text-xs"
+                          >
+                            Add Marker →
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="text-xs text-red-600 mt-2">
+                      Click "Add Marker →" to go to the Subjects tab and add the required markers.
+                    </p>
+                  </div>
+                )}
               </div>
 
               <div className="flex items-center space-x-2">
@@ -740,7 +913,9 @@ export default function Reports() {
                       </div>
                       
                       {previewReport.subjects.map(subject => {
-                        const breakdown = getSubjectCalculationBreakdown(previewStudent, subject.subjectId, subjects, grades)
+                        // Use filtered grades for the breakdown calculation
+                        const filteredGrades = getFilteredGradesForPeriod()
+                        const breakdown = getSubjectCalculationBreakdown(previewStudent, subject.subjectId, subjects, filteredGrades)
                         
                         return (
                           <div key={subject.subjectId} className="space-y-2">
