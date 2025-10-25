@@ -146,13 +146,13 @@ router.get('/:id', async (req: AuthRequest, res, next) => {
 // Create a new student
 router.post('/', validateRequest(schemas.student), async (req: AuthRequest, res, next) => {
   try {
-    const { name, groupName, groupIds } = req.body;
+    const { name, birthday, groupName, groupIds } = req.body;
     const db = getDB();
     
     // Create the student first
     const result = await db.query(
-      'INSERT INTO students (user_id, name) VALUES ($1, $2) RETURNING *',
-      [req.userId, name]
+      'INSERT INTO students (user_id, name, birthday) VALUES ($1, $2, $3) RETURNING *',
+      [req.userId, name, birthday || null]
     );
     
     const studentId = result.rows[0].id;
@@ -195,17 +195,92 @@ router.post('/', validateRequest(schemas.student), async (req: AuthRequest, res,
   }
 });
 
+// Bulk import students from CSV data
+router.post('/bulk-import', async (req: AuthRequest, res, next) => {
+  try {
+    const { students } = req.body;
+    
+    if (!Array.isArray(students)) {
+      return res.status(400).json({ error: 'Students must be an array' });
+    }
+
+    const db = getDB();
+    const results = [];
+    const createdGroups = new Set<string>();
+
+    for (const studentData of students) {
+      // Validate that all required fields are provided
+      if (!studentData.name || studentData.name.trim() === '') {
+        return res.status(400).json({ error: 'Student name is required for all entries' });
+      }
+      
+      if (!studentData.group || studentData.group.trim() === '') {
+        return res.status(400).json({ error: 'Student group is required for all entries' });
+      }
+      
+      if (!studentData.birthday || studentData.birthday.trim() === '') {
+        return res.status(400).json({ error: 'Student birthday is required for all entries' });
+      }
+
+      // Create the student
+      const studentResult = await db.query(
+        'INSERT INTO students (user_id, name, birthday) VALUES ($1, $2, $3) RETURNING *',
+        [req.userId, studentData.name.trim(), studentData.birthday]
+      );
+      
+      const student = studentResult.rows[0];
+      results.push(student);
+
+      // Handle group assignment (now always provided)
+      const groupName = studentData.group.trim();
+      
+      // Check if group exists, create if not
+      let groupResult = await db.query(
+        'SELECT id FROM student_groups WHERE user_id = $1 AND name = $2',
+        [req.userId, groupName]
+      );
+      
+      if (groupResult.rows.length === 0) {
+        groupResult = await db.query(
+          'INSERT INTO student_groups (user_id, name) VALUES ($1, $2) RETURNING id, name',
+          [req.userId, groupName]
+        );
+        createdGroups.add(groupName);
+      }
+      
+      // Link student to group
+      await db.query(
+        'INSERT INTO student_group_links (student_id, student_group_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+        [student.id, groupResult.rows[0].id]
+      );
+    }
+
+    const message = `Successfully imported ${results.length} students`;
+    const groupMessage = createdGroups.size > 0 
+      ? ` and created ${createdGroups.size} new groups: ${Array.from(createdGroups).join(', ')}`
+      : '';
+
+    res.status(201).json({
+      message: message + groupMessage,
+      students: results,
+      createdGroups: Array.from(createdGroups)
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // Update a student
 router.put('/:id', validateRequest(schemas.student), async (req: AuthRequest, res, next) => {
   try {
     const { id } = req.params;
-    const { name, groupName, groupIds } = req.body;
+    const { name, birthday, groupName, groupIds } = req.body;
     const db = getDB();
     
     // Update the student record
     const result = await db.query(
-      'UPDATE students SET name = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND user_id = $3 RETURNING *',
-      [name, id, req.userId]
+      'UPDATE students SET name = $1, birthday = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3 AND user_id = $4 RETURNING *',
+      [name, birthday || null, id, req.userId]
     );
     
     if (result.rows.length === 0) {

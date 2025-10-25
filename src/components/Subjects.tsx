@@ -17,12 +17,54 @@ function Subjects() {
   const getDefaultWeights = () => {
     const defaultWeights: { [categoryId: string]: number } = {};
     const activeCategories = gradeCategoryTypes.filter(category => category.is_active !== false);
-    activeCategories.forEach((category, index) => {
-      // Set default weights: first two categories get more weight
-      if (index === 0) defaultWeights[category.id] = 34;
-      else if (index === activeCategories.length - 1 && activeCategories.length > 1) defaultWeights[category.id] = 66;
-      else defaultWeights[category.id] = 0;
+    
+    // Initialize all active categories to 0
+    activeCategories.forEach(category => {
+      defaultWeights[category.id] = 0;
     });
+    
+    // Helper function to normalize names for comparison
+    const normalizeName = (name: string) => name.toLowerCase().replace(/[\s\-_]/g, '');
+    
+    // Find homework-like category for 34% weight
+    let homeworkCategory = activeCategories.find(cat => 
+      normalizeName(cat.name) === 'homework'
+    );
+    
+    if (!homeworkCategory) {
+      homeworkCategory = activeCategories.find(cat => 
+        ['lesson', 'normal'].includes(normalizeName(cat.name))
+      );
+    }
+    
+    if (!homeworkCategory) {
+      // Find first category that's not test/quiz/project/participation
+      const excludeNames = ['test', 'tests', 'quiz', 'quizzes', 'project', 'projects', 'participation'];
+      homeworkCategory = activeCategories.find(cat => 
+        !excludeNames.includes(normalizeName(cat.name))
+      );
+    }
+    
+    // Find test-like category for 66% weight
+    let testCategory = activeCategories.find(cat => 
+      ['test', 'tests'].includes(normalizeName(cat.name))
+    );
+    
+    // Assign weights
+    if (homeworkCategory) {
+      defaultWeights[homeworkCategory.id] = 34;
+    }
+    
+    if (testCategory && testCategory.id !== homeworkCategory?.id) {
+      defaultWeights[testCategory.id] = 66;
+    } else if (!testCategory && activeCategories.length > 1) {
+      // If no test category found, give 66% to the last active category (if different from homework)
+      const lastCategory = activeCategories[activeCategories.length - 1];
+      if (lastCategory.id !== homeworkCategory?.id) {
+        defaultWeights[lastCategory.id] = 66;
+      }
+    }
+    
     return defaultWeights;
   };
 
@@ -262,29 +304,36 @@ function Subjects() {
         return;
       }
       
-      // Find the lesson with this order_index (cast to any for snake_case property access)
-      const lessonAtPosition = lessons.find(l => (l as any).order_index === afterOrderIndex);
-      
-      if (!lessonAtPosition) {
-        toast.error('Cannot find lesson to insert after');
-        return;
-      }
-      
-      // The new lesson should go at the position right after this lesson
-      const orderIndex = afterOrderIndex + 1;
-      
-      // Extract the number and points from the lesson at this position
-      let lessonNumber = orderIndex;
+      let orderIndex: number;
+      let lessonNumber: number;
       let lessonPoints = 100; // Default
       
-      // Copy points from the lesson we're inserting after
-      lessonPoints = lessonAtPosition.points || 100;
-      
-      // Try to extract number from the lesson name (e.g., "Lesson 15" -> 15)
-      if (lessonAtPosition.name) {
-        const match = lessonAtPosition.name.match(/(\d+)$/);
-        if (match) {
-          lessonNumber = parseInt(match[1], 10) + 1;
+      if (afterOrderIndex === 0) {
+        // Creating the first lesson
+        orderIndex = 1;
+        lessonNumber = 1;
+      } else {
+        // Find the lesson with this order_index (cast to any for snake_case property access)
+        const lessonAtPosition = lessons.find(l => (l as any).order_index === afterOrderIndex);
+        
+        if (!lessonAtPosition) {
+          toast.error('Cannot find lesson to insert after');
+          return;
+        }
+        
+        // The new lesson should go at the position right after this lesson
+        orderIndex = afterOrderIndex + 1;
+        lessonNumber = orderIndex;
+        
+        // Copy points from the lesson we're inserting after
+        lessonPoints = lessonAtPosition.points || 100;
+        
+        // Try to extract number from the lesson name (e.g., "Lesson 15" -> 15)
+        if (lessonAtPosition.name) {
+          const match = lessonAtPosition.name.match(/(\d+)$/);
+          if (match) {
+            lessonNumber = parseInt(match[1], 10) + 1;
+          }
         }
       }
       
@@ -1074,7 +1123,8 @@ function Subjects() {
                       <Button size="sm" variant="outline" onClick={() => {
                         const lessons = subjectLessons[subject.id] || [];
                         if (lessons.length === 0) {
-                          toast.error('No lessons found to insert after');
+                          // If no lessons exist, create the first lesson at position 1
+                          insertLessonAt(subject.id, 0); // This will create lesson at order_index 1
                           return;
                         }
                         const lastLesson = lessons[lessons.length - 1];

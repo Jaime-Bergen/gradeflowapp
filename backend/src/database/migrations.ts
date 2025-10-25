@@ -33,6 +33,7 @@ export const runMigrations = async (): Promise<void> => {
     await seedDefaultStudentGroups(db);
     await addCategoryIdToLessons(db);
     await populateUserMetadata(db);
+    await addBirthdayToStudents(db);
     await dropLessonTypeColumn(db);
     
     console.log('All migrations completed successfully');
@@ -816,6 +817,23 @@ const populateUserMetadata = async (db: any) => {
     console.log('✅ Populated user metadata for existing users');
   } catch (error) {
     console.error('Error populating user metadata:', error);
+    throw error;
+  }
+};
+
+const addBirthdayToStudents = async (db: any) => {
+  try {
+    console.log('🔧 Adding birthday column to students table...');
+    
+    // Add birthday column to students table
+    await db.query(`
+      ALTER TABLE students 
+      ADD COLUMN IF NOT EXISTS birthday DATE
+    `);
+    
+    console.log('✅ Successfully added birthday column to students table');
+  } catch (error) {
+    console.error('❌ Error adding birthday column to students:', error);
     throw error;
   }
 };

@@ -18,6 +18,8 @@ import restoreRoutes from './routes/restore';
 import metadataRoutes from './routes/metadata';
 import backupRoutes from './routes/backups';
 import gradingPeriodMarkersRoutes from './routes/gradingPeriodMarkers';
+import feedbackRoutes from './routes/feedback';
+import utilsRoutes from './routes/utils';
 import { errorHandler } from './middleware/errorHandler';
 import { authenticateToken } from './middleware/auth';
 
@@ -96,6 +98,8 @@ app.use('/api/grade-category-types', authenticateToken, gradeCategoryTypesRoutes
 app.use('/api/reports', authenticateToken, reportRoutes);
 app.use('/api/lessons', authenticateToken, lessonsRoutes);
 app.use('/api/grading-period-markers', authenticateToken, gradingPeriodMarkersRoutes);
+app.use('/api/feedback', authenticateToken, feedbackRoutes);
+app.use('/api/utils', utilsRoutes);
 app.use('/api/metadata', metadataRoutes);
 app.use('/api/backups', backupRoutes);
 app.use('/api', restoreRoutes); // Restore routes (includes authentication)

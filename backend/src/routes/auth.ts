@@ -6,6 +6,7 @@ import nodemailer from 'nodemailer';
 import { getDB } from '../database/connection';
 import { validateRequest, schemas } from '../middleware/validation';
 import { AuthRequest } from '../middleware/auth';
+import { createDefaultStudentGroups, createDefaultGradeCategoryTypes } from '../database/seedDefaults';
 
 const router = express.Router();
 
@@ -33,6 +34,15 @@ router.post('/register', validateRequest(schemas.register), async (req, res, nex
     );
 
     const user = result.rows[0];
+
+    // Create default student groups and grade categories for new user
+    try {
+      await createDefaultStudentGroups(user.id);
+      await createDefaultGradeCategoryTypes(user.id);
+    } catch (error) {
+      // Log but don't fail registration if default data creation fails
+      console.error(`Failed to create default data for user ${user.id}:`, error);
+    }
 
     // Generate JWT token
     const signOptions: SignOptions = { expiresIn: '7d' };

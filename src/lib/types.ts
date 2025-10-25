@@ -12,6 +12,7 @@ export interface User {
 export interface Student {
   id: string
   name: string
+  birthday?: string
   grade?: string
   studentGroupId?: string
   group_name?: string

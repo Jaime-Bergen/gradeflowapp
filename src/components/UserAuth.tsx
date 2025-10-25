@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { User, SignIn, SignOut, UserPlus, Trash, Eye, EyeSlash, Database, Download } from "@phosphor-icons/react"
+import { User, SignIn, SignOut, UserPlus, Eye, EyeSlash, Database, Download } from "@phosphor-icons/react"
 import { toast } from 'sonner'
 import { migrateLegacyData, hasLegacyData, getLegacyDataStats } from '@/lib/dataMigration'
 import { apiClient } from '@/lib/api'
@@ -280,36 +280,7 @@ export default function UserAuth({ onUserChange }: UserAuthProps) {
     setShowPassword(false)
   }
 
-  const clearAllData = async () => {
-    if (!currentUser) return
 
-    if (!confirm('Are you sure you want to DELETE your account? This cannot be undone.')) {
-      return
-    }
-
-  if (!confirm('This is your final warning. ALL YOUR DATA WILL BE LOST AND YOUR ACCOUNT WILL BE DELETED. You will need to enter your password to confirm.')) {
-      return
-    }
-
-    const password = prompt('Enter your password to confirm account deletion:')
-    if (!password || password.length < 1) {
-      toast.error('Operation cancelled - password required')
-      return
-    }
-
-    try {
-      const response = await apiClient.deleteMyAccount(password);
-      if (response.error) {
-        toast.error(response.error);
-        return;
-      }
-      await signOut();
-      toast.success('Your account and all data have been deleted.');
-    } catch (error) {
-      console.error('Error clearing data:', error);
-      toast.error('Error clearing data');
-    }
-  }
 
   if (isLoading) {
     return (
@@ -665,15 +636,6 @@ export default function UserAuth({ onUserChange }: UserAuthProps) {
         <p className="font-medium text-sm truncate">{currentUser.name}</p>
         <p className="text-xs text-muted-foreground truncate">{currentUser.email}</p>
       </div>
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={clearAllData}
-        className="text-destructive hover:text-destructive"
-        title="Clear All My Data"
-      >
-        <Trash size={16} />
-      </Button>
       <Button
         variant="ghost"
         size="sm"

@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from "@/components/ui/dialog"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Plus, Trash, UserPlus, Upload, PencilSimple, CaretDown } from "@phosphor-icons/react"
 import { Student, Subject } from '@/lib/types'
@@ -30,6 +31,7 @@ export default function Students() {
 
   const [newStudent, setNewStudent] = useState({
     name: '',
+    birthday: '',
     subjects: [] as string[]
   })
 
@@ -208,12 +210,13 @@ export default function Students() {
     
     const student: any = {
       name: newStudent.name.trim(),
+      birthday: newStudent.birthday || null,
       groupIds: selectedGroupIds // Send as groupIds for proper junction table handling
     };
     
     await apiClient.createStudent(student)
     await fetchData() // Refresh data
-    setNewStudent({ name: '', subjects: [] })
+    setNewStudent({ name: '', birthday: '', subjects: [] })
     setSelectedGroupIds([])
     setIsAddDialogOpen(false)
     toast.success("Student added successfully")
@@ -223,6 +226,7 @@ export default function Students() {
     setEditingStudent(student)
     setNewStudent({
       name: student.name,
+      birthday: student.birthday || '',
       subjects: [...student.subjects]
     })
     // Set selected groups for editing
@@ -249,6 +253,7 @@ export default function Students() {
     
     const updatedStudent: any = {
       name: newStudent.name.trim(),
+      birthday: newStudent.birthday || null,
       groupIds: editSelectedGroupIds // Send as groupIds for proper junction table handling
     };
     
@@ -258,7 +263,7 @@ export default function Students() {
     await apiClient.updateStudentSubjects(editingStudent.id, { subjects: newStudent.subjects })
     
     await fetchData() // Refresh data
-    setNewStudent({ name: '', subjects: [] })
+    setNewStudent({ name: '', birthday: '', subjects: [] })
     setEditSelectedGroupIds([])
     setEditingStudent(null)
     setIsEditDialogOpen(false)
@@ -306,33 +311,97 @@ export default function Students() {
     }
   };
 
-  const bulkImport = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const bulkImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (!file) return
 
     const reader = new FileReader()
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       try {
         const csv = e.target?.result as string
         const lines = csv.split('\n').filter(line => line.trim())
-  // const headers = lines[0].split(',').map(h => h.trim())
         
-        const newStudents: Student[] = []
+        if (lines.length === 0) {
+          toast.error("CSV file is empty")
+          return
+        }
+
+        // Skip header row and parse data
+        const studentsData = []
+        const errors = []
+        
         for (let i = 1; i < lines.length; i++) {
           const values = lines[i].split(',').map(v => v.trim())
-          if (values.length >= 1 && values[0]) {
-            newStudents.push({
-              id: Date.now().toString() + i,
-              name: values[0],
-              subjects: []
-            })
+          
+          // Validate that all three fields are provided
+          if (values.length < 3) {
+            errors.push(`Row ${i + 1}: Missing required columns. Expected Name, Group, Birthday`)
+            continue
           }
+          
+          const name = values[0]
+          const group = values[1]
+          const birthdayStr = values[2]
+          
+          // Check for empty required fields
+          if (!name) {
+            errors.push(`Row ${i + 1}: Name is required`)
+            continue
+          }
+          
+          if (!group) {
+            errors.push(`Row ${i + 1}: Group is required`)
+            continue
+          }
+          
+          if (!birthdayStr) {
+            errors.push(`Row ${i + 1}: Birthday is required`)
+            continue
+          }
+          
+          // Parse and validate birthday
+          let birthday = undefined
+          if (!birthdayStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
+            // Try to convert common formats to YYYY-MM-DD
+            const dateAttempt = new Date(birthdayStr)
+            if (!isNaN(dateAttempt.getTime())) {
+              birthday = dateAttempt.toISOString().split('T')[0] // Convert to YYYY-MM-DD
+            } else {
+              errors.push(`Row ${i + 1}: Invalid birthday format "${birthdayStr}". Expected YYYY-MM-DD`)
+              continue
+            }
+          } else {
+            birthday = birthdayStr
+          }
+          
+          studentsData.push({
+            name: name,
+            birthday: birthday,
+            group: group
+          })
         }
         
-        setStudents(current => [...current, ...newStudents])
-        toast.success(`Imported ${newStudents.length} students`)
-      } catch (error) {
-        toast.error("Failed to import CSV file")
+        // Show errors if any
+        if (errors.length > 0) {
+          toast.error(`CSV validation failed:\n${errors.slice(0, 5).join('\n')}${errors.length > 5 ? `\n... and ${errors.length - 5} more errors` : ''}`)
+          return
+        }
+
+        if (studentsData.length === 0) {
+          toast.error("No valid student data found in CSV")
+          return
+        }
+
+        // Send to backend
+        const result = await apiClient.bulkImportStudents({ students: studentsData })
+        
+        // Refresh the students list
+        await fetchData()
+        
+        toast.success((result.data as any)?.message || `Imported ${studentsData.length} students`)
+      } catch (error: any) {
+        console.error('Import error:', error)
+        toast.error(error.response?.data?.error || "Failed to import CSV file")
       }
     }
     reader.readAsText(file)
@@ -347,14 +416,33 @@ export default function Students() {
           <p className="text-muted-foreground">Manage your student roster</p>
         </div>
         <div className="flex gap-2">
-          <Label htmlFor="csv-upload" className="cursor-pointer">
-            <Button variant="outline" asChild>
-              <span className="flex items-center gap-2">
-                <Upload size={16} />
-                Import CSV
-              </span>
-            </Button>
-          </Label>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Label htmlFor="csv-upload" className="cursor-pointer">
+                  <Button variant="outline" asChild>
+                    <span className="flex items-center gap-2">
+                      <Upload size={16} />
+                      Import CSV
+                    </span>
+                  </Button>
+                </Label>
+              </TooltipTrigger>
+              <TooltipContent>
+                <div className="text-sm">
+                  <div className="font-medium mb-1">CSV Format (All Required):</div>
+                  <div className="text-xs text-muted-foreground">
+                    <div>Column 1: Name (required)</div>
+                    <div>Column 2: Group (required)</div>
+                    <div>Column 3: Birthday (required, YYYY-MM-DD)</div>
+                  </div>
+                  <div className="mt-2 text-xs text-blue-600">
+                    Groups will be created automatically if they don't exist
+                  </div>
+                </div>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
           <input
             id="csv-upload"
             type="file"
@@ -384,6 +472,15 @@ export default function Students() {
                     value={newStudent.name}
                     onChange={(e) => setNewStudent(prev => ({ ...prev, name: e.target.value }))}
                     placeholder="Student full name"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="student-birthday">Birthday</Label>
+                  <Input
+                    id="student-birthday"
+                    type="date"
+                    value={newStudent.birthday}
+                    onChange={(e) => setNewStudent(prev => ({ ...prev, birthday: e.target.value }))}
                   />
                 </div>
                 {/* Removed email input */}
@@ -473,7 +570,7 @@ export default function Students() {
                   <Button variant="outline" onClick={() => {
                     setIsAddDialogOpen(false)
                     setSelectedGroupIds([])
-                    setNewStudent({ name: '', subjects: [] })
+                    setNewStudent({ name: '', birthday: '', subjects: [] })
                   }}>
                     Cancel
                   </Button>
@@ -499,6 +596,15 @@ export default function Students() {
                     value={newStudent.name}
                     onChange={(e) => setNewStudent(prev => ({ ...prev, name: e.target.value }))}
                     placeholder="Student full name"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="edit-student-birthday">Birthday</Label>
+                  <Input
+                    id="edit-student-birthday"
+                    type="date"
+                    value={newStudent.birthday}
+                    onChange={(e) => setNewStudent(prev => ({ ...prev, birthday: e.target.value }))}
                   />
                 </div>
                 {/* Removed email input from edit dialog */}
@@ -589,7 +695,7 @@ export default function Students() {
                     setIsEditDialogOpen(false)
                     setEditingStudent(null)
                     setEditSelectedGroupIds([])
-                    setNewStudent({ name: '', subjects: [] })
+                    setNewStudent({ name: '', birthday: '', subjects: [] })
                   }}>
                     Cancel
                   </Button>
@@ -629,6 +735,11 @@ export default function Students() {
                         </div>
                       )}
                     </CardTitle>
+                    {student.birthday && (
+                      <p className="text-sm text-muted-foreground mt-1">
+                        Birthday: {new Date(student.birthday).toLocaleDateString()}
+                      </p>
+                    )}
                   </div>
                   <div className="flex gap-1">
                     <Button

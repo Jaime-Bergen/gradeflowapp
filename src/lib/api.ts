@@ -169,6 +169,19 @@ class ApiClient {
     });
   }
 
+  // Submit feedback (bug reports and feature requests)
+  async submitFeedback(feedbackData: {
+    to: string;
+    subject: string;
+    type: 'bug' | 'feature';
+    data: any;
+  }) {
+    return this.request<{ message: string }>('/feedback', {
+      method: 'POST',
+      body: JSON.stringify(feedbackData),
+    });
+  }
+
   isAuthenticated(): boolean {
     return !!this.token;
   }
@@ -196,6 +209,13 @@ class ApiClient {
   async deleteStudent(id: string) {
     return this.request(`/students/${id}`, {
       method: 'DELETE',
+    });
+  }
+
+  async bulkImportStudents(data: { students: Array<{ name: string; birthday?: string; group?: string }> }) {
+    return this.request('/students/bulk-import', {
+      method: 'POST',
+      body: JSON.stringify(data),
     });
   }
 

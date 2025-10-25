@@ -370,7 +370,7 @@ router.post('/:id/lessons', validateRequest(schemas.lesson), async (req: AuthReq
 
     let finalCategoryId = categoryId;
     
-    // If no category provided, use the first default category
+    // If no category provided, use the first available category (prefer default, then active, then any)
     if (!finalCategoryId) {
       const defaultCategoryResult = await db.query(
         'SELECT id FROM grade_category_types WHERE user_id = $1 AND is_default = true ORDER BY created_at LIMIT 1',
@@ -379,7 +379,25 @@ router.post('/:id/lessons', validateRequest(schemas.lesson), async (req: AuthReq
       if (defaultCategoryResult.rows.length > 0) {
         finalCategoryId = defaultCategoryResult.rows[0].id;
       } else {
-        return res.status(400).json({ error: 'No grade categories found. Please create grade categories first.' });
+        // No default found, try active categories
+        const activeCategoryResult = await db.query(
+          'SELECT id FROM grade_category_types WHERE user_id = $1 AND is_active = true ORDER BY created_at LIMIT 1',
+          [req.userId]
+        );
+        if (activeCategoryResult.rows.length > 0) {
+          finalCategoryId = activeCategoryResult.rows[0].id;
+        } else {
+          // No active found, use any category
+          const anyCategoryResult = await db.query(
+            'SELECT id FROM grade_category_types WHERE user_id = $1 ORDER BY created_at LIMIT 1',
+            [req.userId]
+          );
+          if (anyCategoryResult.rows.length > 0) {
+            finalCategoryId = anyCategoryResult.rows[0].id;
+          } else {
+            return res.status(400).json({ error: 'No grade categories found. Please create grade categories first.' });
+          }
+        }
       }
     }
     

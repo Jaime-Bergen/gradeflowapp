@@ -8,7 +8,8 @@ import {
   Users, 
   BookOpen, 
   Gear,
-  Database
+  Database,
+  Question
 } from "@phosphor-icons/react"
 
 import Dashboard from './components/Dashboard'
@@ -17,6 +18,7 @@ import Subjects from './components/Subjects'
 import GradeEntry from './components/GradeEntry'
 import Reports from './components/Reports'
 import SystemAdmin from './components/SystemAdmin'
+import Help from './components/Help'
 import UserAuth, { UserData } from './components/UserAuth'
 import AdminDanger from '@/components/AdminDanger'
 import { Toaster } from 'sonner'
@@ -79,7 +81,7 @@ function App() {
               </header>
               <div className="container mx-auto px-6 py-6">
                 <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-                  <TabsList className="grid w-full grid-cols-6 lg:w-auto lg:grid-cols-6">
+                  <TabsList className="grid w-full grid-cols-7 lg:w-auto lg:grid-cols-7">
                     <TabsTrigger value="dashboard" className="flex items-center gap-2">
                       <ChartBar size={18} />
                       <span className="hidden sm:inline">Dashboard</span>
@@ -103,6 +105,10 @@ function App() {
                     <TabsTrigger value="admin" className="flex items-center gap-2">
                       <Database size={18} />
                       <span className="hidden sm:inline">Admin</span>
+                    </TabsTrigger>
+                    <TabsTrigger value="help" className="flex items-center gap-2">
+                      <Question size={18} />
+                      <span className="hidden sm:inline">Help</span>
                     </TabsTrigger>
                   </TabsList>
 
@@ -128,6 +134,10 @@ function App() {
                   
                   <TabsContent value="admin" className="space-y-6">
                     <SystemAdmin />
+                  </TabsContent>
+                  
+                  <TabsContent value="help" className="space-y-6">
+                    <Help />
                   </TabsContent>
                 </Tabs>
               </div>

@@ -77,7 +77,10 @@ export const calculateSubjectGrade = (
         lessonType: lesson.type
       })
       
-      acc[lesson.type].push(percentage)
+      // Skip grades with percentage < 1 (these represent skipped/not attempted grades)
+      if (percentage >= 1) {
+        acc[lesson.type].push(percentage)
+      }
     } else {
       console.warn('calculateSubjectGrade: Lesson not found for grade', { 
         gradeId: grade.id, 
@@ -274,7 +277,10 @@ export const getSubjectCalculationBreakdown = (
         const parsed = parseFloat(grade.percentage)
         percentage = !isNaN(parsed) ? parsed : 0
       }
-      acc[lesson.type].push(percentage)
+      // Skip grades with percentage < 1 (these represent skipped/not attempted grades)
+      if (percentage >= 1) {
+        acc[lesson.type].push(percentage)
+      }
     }
     return acc
   }, {} as Record<string, number[]>)

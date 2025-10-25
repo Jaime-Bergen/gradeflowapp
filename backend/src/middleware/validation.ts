@@ -40,6 +40,7 @@ export const schemas = {
 
   student: Joi.object({
     name: Joi.string().min(2).max(100).required(),
+    birthday: Joi.date().iso().optional().allow(null),
     groupIds: Joi.array().items(Joi.string().uuid()).optional() // Many-to-many format
   }),
 
