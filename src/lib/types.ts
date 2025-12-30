@@ -7,6 +7,8 @@ export interface User {
   school_name?: string
   first_day_of_school?: string
   grading_periods?: number
+  grading_mode?: 'dates' | 'markers'
+  auto_enroll_subjects?: boolean
 }
 
 export interface Student {
@@ -43,6 +45,7 @@ export interface Lesson {
   points?: number // For compatibility with backend bulk add
   maxPoints?: number // For compatibility with other endpoints
   orderIndex?: number // Used for ordering lessons in a subject
+  date?: string // YYYY-MM-DD
   dueDate?: string
   description?: string
 }
@@ -51,6 +54,14 @@ export interface GradingPeriodMarker {
   id: string
   name: string
   subjectId: string
+  orderIndex: number
+}
+
+export interface GradingPeriod {
+  id: string
+  name: string
+  startDate: string
+  endDate: string
   orderIndex: number
 }
 
@@ -87,6 +98,7 @@ export interface ReportCard {
   subjects: SubjectGrade[]
   overallGPA: number
   comments?: string
+  attendanceSummary?: AttendanceSummary
 }
 
 export interface SubjectGrade {
@@ -95,4 +107,27 @@ export interface SubjectGrade {
   grades: Grade[]
   average: number
   letterGrade: string
+}
+
+export type AttendanceStatus = 'present' | 'absent' | 'tardy' | 'excused'
+
+export interface AttendanceRecord {
+  id?: string
+  studentId: string
+  date: string
+  status: AttendanceStatus
+  notes?: string | null
+  student_name?: string
+  created_at?: string
+  updated_at?: string
+}
+
+export interface AttendanceSummary {
+  startDate?: string
+  endDate?: string
+  present: number
+  absent: number
+  tardy: number
+  excused: number
+  total: number
 }

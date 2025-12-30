@@ -9,8 +9,12 @@ const router = express.Router();
 router.get('/profile', async (req: AuthRequest, res, next) => {
   try {
     const db = getDB();
+    console.log('Profile API - userId:', req.userId);
     const result = await db.query(
-      'SELECT id, email, name, created_at, email_verified, school_name, first_day_of_school, grading_periods FROM users WHERE id = $1',
+      `SELECT 
+        id, email, name, created_at, email_verified, 
+        school_name, first_day_of_school, grading_periods, auto_enroll_subjects, grading_mode 
+       FROM users WHERE id = $1`,
       [req.userId]
     );
 
@@ -27,7 +31,7 @@ router.get('/profile', async (req: AuthRequest, res, next) => {
 // Update user profile
 router.put('/profile', async (req: AuthRequest, res, next) => {
   try {
-    const { name, school_name, first_day_of_school, grading_periods } = req.body;
+    const { name, school_name, first_day_of_school, grading_periods, auto_enroll_subjects, grading_mode } = req.body;
     const db = getDB();
     
     if (name && name.trim().length < 2) {
@@ -38,20 +42,30 @@ router.put('/profile', async (req: AuthRequest, res, next) => {
       return res.status(400).json({ error: 'Grading periods must be between 1 and 12' });
     }
     
+    // Validate grading mode if provided
+    const normalizedMode = grading_mode ? String(grading_mode).toLowerCase() : null;
+    if (normalizedMode && normalizedMode !== 'dates' && normalizedMode !== 'markers') {
+      return res.status(400).json({ error: 'grading_mode must be "dates" or "markers"' });
+    }
+
     const result = await db.query(
       `UPDATE users SET 
         name = COALESCE($1, name),
         school_name = $2,
         first_day_of_school = $3,
         grading_periods = COALESCE($4, grading_periods),
+        auto_enroll_subjects = COALESCE($5, auto_enroll_subjects),
+        grading_mode = COALESCE($6, grading_mode),
         updated_at = CURRENT_TIMESTAMP 
-      WHERE id = $5 
-      RETURNING id, email, name, created_at, email_verified, school_name, first_day_of_school, grading_periods`,
+      WHERE id = $7 
+      RETURNING id, email, name, created_at, email_verified, school_name, first_day_of_school, grading_periods, auto_enroll_subjects, grading_mode`,
       [
         name ? name.trim() : null, 
         school_name || null, 
         first_day_of_school || null, 
         grading_periods || null, 
+        auto_enroll_subjects !== undefined ? auto_enroll_subjects : null,
+        normalizedMode || null,
         req.userId
       ]
     );

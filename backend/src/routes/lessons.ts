@@ -8,7 +8,7 @@ const router = express.Router();
 // MUST come before any parameterized routes to avoid matching issues
 router.post('/bulk', async (req: AuthRequest, res, next) => {
   try {
-    const { subjectId, count, namePrefix = 'Lesson', categoryId, points = 100 } = req.body;
+    const { subjectId, count, namePrefix = 'Lesson', categoryId, points = 100, date } = req.body;
     const db = getDB();
 
     if (!subjectId) {
@@ -108,8 +108,8 @@ router.post('/bulk', async (req: AuthRequest, res, next) => {
       for (let i = 0; i < count; i++) {
         // First insert the lesson
         const insertResult = await db.query(
-          'INSERT INTO lessons (subject_id, name, category_id, points, order_index) VALUES ($1, $2, $3, $4, $5) RETURNING id',
-          [subjectId, `${namePrefix} ${startNumber + i}`, finalCategoryId, lessonPoints, startOrder + i]
+          'INSERT INTO lessons (subject_id, name, category_id, points, order_index, date) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
+          [subjectId, `${namePrefix} ${startNumber + i}`, finalCategoryId, lessonPoints, startOrder + i, date || null]
         );
         
         const lessonId = insertResult.rows[0].id;
@@ -185,7 +185,7 @@ router.get('/:lessonId', async (req: AuthRequest, res) => {
 // Add a lesson to a subject
 router.post('/subject/:subjectId', async (req: AuthRequest, res) => {
   const { subjectId } = req.params;
-  const { name, categoryId, maxPoints, orderIndex } = req.body;
+  const { name, categoryId, maxPoints, orderIndex, date } = req.body;
   const userId = req.userId;
   const db = getDB();
   try {
@@ -219,8 +219,8 @@ router.post('/subject/:subjectId', async (req: AuthRequest, res) => {
     console.log('📈 Shifted markers:', markersShifted.rows);
 
     const { rows } = await db.query(
-      'INSERT INTO lessons (subject_id, name, category_id, points, order_index) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-      [subjectId, name, categoryId, maxPoints, orderIndex ?? 1]
+      'INSERT INTO lessons (subject_id, name, category_id, points, order_index, date) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+      [subjectId, name, categoryId, maxPoints, orderIndex ?? 1, date || null]
     );
     
     console.log('✅ Inserted lesson:', { id: rows[0].id, name: rows[0].name, order_index: rows[0].order_index });
@@ -241,7 +241,7 @@ router.post('/subject/:subjectId', async (req: AuthRequest, res) => {
 // Update a lesson
 router.put('/:lessonId', async (req: AuthRequest, res) => {
   const { lessonId } = req.params;
-  const { name, categoryId, maxPoints, points, orderIndex } = req.body;
+  const { name, categoryId, maxPoints, points, orderIndex, date } = req.body;
   const userId = req.userId;
   const db = getDB();
   
@@ -270,8 +270,8 @@ router.put('/:lessonId', async (req: AuthRequest, res) => {
     const updatedOrderIndex = orderIndex !== undefined ? orderIndex : currentLesson.order_index;
     
     const { rows } = await db.query(
-      'UPDATE lessons SET name = $1, category_id = $2, points = $3, order_index = $4 WHERE id = $5 RETURNING *',
-      [updatedName, updatedCategoryId, updatedMaxPoints, updatedOrderIndex, lessonId]
+      'UPDATE lessons SET name = $1, category_id = $2, points = $3, order_index = $4, date = $5 WHERE id = $6 RETURNING *',
+      [updatedName, updatedCategoryId, updatedMaxPoints, updatedOrderIndex, date ?? currentLesson.date ?? null, lessonId]
     );
     
     // Fetch the updated lesson with category name for response

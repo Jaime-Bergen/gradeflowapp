@@ -5,6 +5,82 @@ import { validateRequest, schemas } from '../middleware/validation';
 
 const router = express.Router();
 
+// Normalize birthday outputs to plain YYYY-MM-DD strings across all endpoints
+const formatStudentRow = (row: any) => {
+  if (!row) return row;
+  const birthdayVal = row.birthday;
+  let formattedBirthday = birthdayVal;
+
+  if (birthdayVal) {
+    if (typeof birthdayVal === 'string') {
+      const match = birthdayVal.match(/^\d{4}-\d{2}-\d{2}/);
+      formattedBirthday = match ? match[0] : birthdayVal;
+    } else if (birthdayVal instanceof Date) {
+      formattedBirthday = birthdayVal.toISOString().split('T')[0];
+    }
+  }
+
+  return {
+    ...row,
+    birthday: formattedBirthday ?? null,
+  };
+};
+
+// Helper function to auto-enroll student in subjects based on their groups
+const autoEnrollStudentInSubjects = async (studentId: string, userId: string) => {
+  try {
+    const db = getDB();
+    
+    // Check if user has auto-enrollment enabled
+    const userResult = await db.query(
+      'SELECT auto_enroll_subjects FROM users WHERE id = $1',
+      [userId]
+    );
+    
+    if (!userResult.rows[0]?.auto_enroll_subjects) {
+      return; // Auto-enrollment is disabled
+    }
+    
+    // Get all group IDs for this student
+    const studentGroupsResult = await db.query(`
+      SELECT sgl.student_group_id 
+      FROM student_group_links sgl 
+      WHERE sgl.student_id = $1
+    `, [studentId]);
+    
+    const studentGroupIds = studentGroupsResult.rows.map(row => row.student_group_id);
+    
+    if (studentGroupIds.length === 0) {
+      return; // Student has no groups
+    }
+    
+    // Find all subjects available to these groups (including subjects with no group restrictions)
+    const subjectsResult = await db.query(`
+      SELECT DISTINCT s.id 
+      FROM subjects s 
+      LEFT JOIN subject_groups sg ON s.id = sg.subject_id 
+      WHERE s.user_id = $1 
+        AND (
+          sg.student_group_id = ANY($2::uuid[]) 
+          OR sg.student_group_id IS NULL
+        )
+    `, [userId, studentGroupIds]);
+    
+    // Auto-enroll student in all available subjects
+    for (const subject of subjectsResult.rows) {
+      await db.query(
+        'INSERT INTO student_subjects (student_id, subject_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+        [studentId, subject.id]
+      );
+    }
+    
+    console.log(`Auto-enrolled student ${studentId} in ${subjectsResult.rows.length} subjects`);
+  } catch (error) {
+    console.error('Error in auto-enrollment:', error);
+    // Don't throw error to avoid breaking student creation
+  }
+};
+
 // Get all student groups for the authenticated user
 router.get('/groups', async (req: AuthRequest, res, next) => {
   try {
@@ -86,9 +162,16 @@ router.get('/', async (req: AuthRequest, res, next) => {
     const db = getDB();
     
     let query = `
-      SELECT s.*, 
-             groups.group_names as group_name,
-             COALESCE(json_agg(ss.subject_id) FILTER (WHERE ss.subject_id IS NOT NULL), '[]') AS subjects
+      SELECT 
+        s.id,
+        s.user_id,
+        s.name,
+        s.grade,
+        s.created_at,
+        s.updated_at,
+        TO_CHAR(s.birthday::date, 'YYYY-MM-DD') AS birthday,
+        groups.group_names as group_name,
+        COALESCE(json_agg(ss.subject_id) FILTER (WHERE ss.subject_id IS NOT NULL), '[]') AS subjects
       FROM students s 
       LEFT JOIN (
         SELECT sgl.student_id,
@@ -110,7 +193,7 @@ router.get('/', async (req: AuthRequest, res, next) => {
     query += ' GROUP BY s.id, groups.group_names ORDER BY s.name';
     
     const result = await db.query(query, params);
-    res.json(result.rows);
+    res.json(result.rows.map(formatStudentRow));
   } catch (error) {
     next(error);
   }
@@ -123,8 +206,15 @@ router.get('/:id', async (req: AuthRequest, res, next) => {
     const db = getDB();
     
     const result = await db.query(
-      `SELECT s.*, 
-              STRING_AGG(DISTINCT sg.name, ', ' ORDER BY sg.name) as group_name
+      `SELECT 
+          s.id,
+          s.user_id,
+          s.name,
+          s.grade,
+          s.created_at,
+          s.updated_at,
+          TO_CHAR(s.birthday::date, 'YYYY-MM-DD') AS birthday,
+          STRING_AGG(DISTINCT sg.name, ', ' ORDER BY sg.name) as group_name
        FROM students s 
        LEFT JOIN student_group_links sgl ON s.id = sgl.student_id
        LEFT JOIN student_groups sg ON sgl.student_group_id = sg.id
@@ -137,7 +227,7 @@ router.get('/:id', async (req: AuthRequest, res, next) => {
       return res.status(404).json({ error: 'Student not found' });
     }
     
-    res.json(result.rows[0]);
+    res.json(formatStudentRow(result.rows[0]));
   } catch (error) {
     next(error);
   }
@@ -151,7 +241,9 @@ router.post('/', validateRequest(schemas.student), async (req: AuthRequest, res,
     
     // Create the student first
     const result = await db.query(
-      'INSERT INTO students (user_id, name, birthday) VALUES ($1, $2, $3) RETURNING *',
+      `INSERT INTO students (user_id, name, birthday)
+       VALUES ($1, $2, $3::date)
+       RETURNING id, user_id, name, grade, created_at, updated_at, TO_CHAR(birthday::date, 'YYYY-MM-DD') AS birthday`,
       [req.userId, name, birthday || null]
     );
     
@@ -189,7 +281,10 @@ router.post('/', validateRequest(schemas.student), async (req: AuthRequest, res,
       }
     }
     
-    res.status(201).json(result.rows[0]);
+    // Auto-enroll student in subjects based on their groups (if setting is enabled)
+    await autoEnrollStudentInSubjects(studentId, req.userId);
+    
+    res.status(201).json(formatStudentRow(result.rows[0]));
   } catch (error) {
     next(error);
   }
@@ -224,11 +319,13 @@ router.post('/bulk-import', async (req: AuthRequest, res, next) => {
 
       // Create the student
       const studentResult = await db.query(
-        'INSERT INTO students (user_id, name, birthday) VALUES ($1, $2, $3) RETURNING *',
+        `INSERT INTO students (user_id, name, birthday)
+         VALUES ($1, $2, $3::date)
+         RETURNING id, user_id, name, grade, created_at, updated_at, TO_CHAR(birthday::date, 'YYYY-MM-DD') AS birthday`,
         [req.userId, studentData.name.trim(), studentData.birthday]
       );
       
-      const student = studentResult.rows[0];
+      const student = formatStudentRow(studentResult.rows[0]);
       results.push(student);
 
       // Handle group assignment (now always provided)
@@ -253,6 +350,9 @@ router.post('/bulk-import', async (req: AuthRequest, res, next) => {
         'INSERT INTO student_group_links (student_id, student_group_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
         [student.id, groupResult.rows[0].id]
       );
+      
+      // Auto-enroll student in subjects based on their groups (if setting is enabled)
+      await autoEnrollStudentInSubjects(student.id, req.userId);
     }
 
     const message = `Successfully imported ${results.length} students`;
@@ -279,7 +379,12 @@ router.put('/:id', validateRequest(schemas.student), async (req: AuthRequest, re
     
     // Update the student record
     const result = await db.query(
-      'UPDATE students SET name = $1, birthday = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3 AND user_id = $4 RETURNING *',
+      `UPDATE students
+         SET name = $1,
+             birthday = $2::date,
+             updated_at = CURRENT_TIMESTAMP
+       WHERE id = $3 AND user_id = $4
+       RETURNING id, user_id, name, grade, created_at, updated_at, TO_CHAR(birthday::date, 'YYYY-MM-DD') AS birthday`,
       [name, birthday || null, id, req.userId]
     );
     
@@ -325,7 +430,7 @@ router.put('/:id', validateRequest(schemas.student), async (req: AuthRequest, re
       }
     }
     
-    res.json(result.rows[0]);
+    res.json(formatStudentRow(result.rows[0]));
   } catch (error) {
     next(error);
   }

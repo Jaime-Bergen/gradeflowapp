@@ -5,6 +5,69 @@ import { validateRequest, schemas } from '../middleware/validation';
 
 const router = express.Router();
 
+// Helper function to auto-enroll students in a new subject based on their groups
+const autoEnrollStudentsInSubject = async (subjectId: string, userId: string) => {
+  try {
+    const db = getDB();
+    
+    // Check if user has auto-enrollment enabled
+    const userResult = await db.query(
+      'SELECT auto_enroll_subjects FROM users WHERE id = $1',
+      [userId]
+    );
+    
+    if (!userResult.rows[0]?.auto_enroll_subjects) {
+      return; // Auto-enrollment is disabled
+    }
+    
+    // Get all group IDs for this subject
+    const subjectGroupsResult = await db.query(`
+      SELECT sg.student_group_id 
+      FROM subject_groups sg 
+      WHERE sg.subject_id = $1
+    `, [subjectId]);
+    
+    const subjectGroupIds = subjectGroupsResult.rows.map(row => row.student_group_id);
+    
+    // If subject has no group restrictions, enroll ALL students
+    if (subjectGroupIds.length === 0) {
+      const allStudentsResult = await db.query(`
+        SELECT id FROM students WHERE user_id = $1
+      `, [userId]);
+      
+      for (const student of allStudentsResult.rows) {
+        await db.query(
+          'INSERT INTO student_subjects (student_id, subject_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+          [student.id, subjectId]
+        );
+      }
+      
+      console.log(`Auto-enrolled ${allStudentsResult.rows.length} students in unrestricted subject ${subjectId}`);
+      return;
+    }
+    
+    // Find all students in these groups
+    const studentsResult = await db.query(`
+      SELECT DISTINCT sgl.student_id 
+      FROM student_group_links sgl 
+      WHERE sgl.student_group_id = ANY($1::uuid[])
+    `, [subjectGroupIds]);
+    
+    // Auto-enroll students in this subject
+    for (const student of studentsResult.rows) {
+      await db.query(
+        'INSERT INTO student_subjects (student_id, subject_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+        [student.student_id, subjectId]
+      );
+    }
+    
+    console.log(`Auto-enrolled ${studentsResult.rows.length} students in subject ${subjectId}`);
+  } catch (error) {
+    console.error('Error in subject auto-enrollment:', error);
+    // Don't throw error to avoid breaking subject creation
+  }
+};
+
 // Get all subjects for the authenticated user
 router.get('/', async (req: AuthRequest, res, next) => {
   try {
@@ -176,6 +239,9 @@ router.post('/', validateRequest(schemas.subject), async (req: AuthRequest, res,
       }
 
       await db.query('COMMIT');
+      
+      // Auto-enroll students in this subject based on groups (if setting is enabled)
+      await autoEnrollStudentsInSubject(subject.id, req.userId);
       
       // Return subject with group names
       const finalResult = await db.query(
@@ -449,6 +515,137 @@ router.put('/:subjectId/lessons/:lessonId', validateRequest(schemas.lesson), asy
     }
     
     res.json(result.rows[0]);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Bulk import subjects from CSV data
+router.post('/bulk-import', async (req: AuthRequest, res, next) => {
+  try {
+    const { subjects } = req.body;
+    
+    if (!Array.isArray(subjects)) {
+      return res.status(400).json({ error: 'Subjects must be an array' });
+    }
+
+    const db = getDB();
+    const results = [];
+    const createdGroups = new Set<string>();
+
+    // Get grade category types for default weights (same logic as frontend)
+    const categoriesResult = await db.query(
+      'SELECT id, name, is_active FROM grade_category_types WHERE user_id = $1',
+      [req.userId]
+    );
+    const categories = categoriesResult.rows;
+    const activeCategories = categories.filter(cat => cat.is_active !== false);
+
+    // Helper function to normalize names for comparison
+    const normalizeName = (name: string) => name.toLowerCase().replace(/[\s\-_]/g, '');
+
+    // Find homework-like category for 34% weight
+    let homeworkCategory = activeCategories.find(cat => 
+      normalizeName(cat.name) === 'homework'
+    );
+
+    if (!homeworkCategory) {
+      homeworkCategory = activeCategories.find(cat => 
+        ['lesson', 'normal'].includes(normalizeName(cat.name))
+      );
+    }
+
+    if (!homeworkCategory) {
+      // Find first category that's not test/quiz/project/participation
+      const excludeNames = ['test', 'tests', 'quiz', 'quizzes', 'project', 'projects', 'participation'];
+      homeworkCategory = activeCategories.find(cat => 
+        !excludeNames.includes(normalizeName(cat.name))
+      );
+    }
+
+    // Find test-like category for 66% weight
+    let testCategory = activeCategories.find(cat => 
+      ['test', 'tests'].includes(normalizeName(cat.name))
+    );
+
+    for (const subjectData of subjects) {
+      // Validate that required fields are provided
+      if (!subjectData.name || subjectData.name.trim() === '') {
+        return res.status(400).json({ error: 'Subject name is required for all entries' });
+      }
+
+      // Create the subject
+      const subjectResult = await db.query(
+        'INSERT INTO subjects (user_id, name, report_card_name) VALUES ($1, $2, $3) RETURNING *',
+        [req.userId, subjectData.name.trim(), subjectData.reportCardName || subjectData.name.trim()]
+      );
+      
+      const subject = subjectResult.rows[0];
+      results.push(subject);
+
+      // Set default weights (34% homework-like, 66% test-like)
+      if (homeworkCategory) {
+        await db.query(
+          'INSERT INTO subject_weights (subject_id, category_id, weight) VALUES ($1, $2, $3)',
+          [subject.id, homeworkCategory.id, 0.34]
+        );
+      }
+
+      if (testCategory && testCategory.id !== homeworkCategory?.id) {
+        await db.query(
+          'INSERT INTO subject_weights (subject_id, category_id, weight) VALUES ($1, $2, $3)',
+          [subject.id, testCategory.id, 0.66]
+        );
+      } else if (!testCategory && activeCategories.length > 1) {
+        // If no test category found, give 66% to the last active category (if different from homework)
+        const lastCategory = activeCategories[activeCategories.length - 1];
+        if (lastCategory.id !== homeworkCategory?.id) {
+          await db.query(
+            'INSERT INTO subject_weights (subject_id, category_id, weight) VALUES ($1, $2, $3)',
+            [subject.id, lastCategory.id, 0.66]
+          );
+        }
+      }
+
+      // Handle group assignment if provided
+      if (subjectData.group && subjectData.group.trim()) {
+        const groupName = subjectData.group.trim();
+        
+        // Check if group exists, create if not
+        let groupResult = await db.query(
+          'SELECT id FROM student_groups WHERE user_id = $1 AND name = $2',
+          [req.userId, groupName]
+        );
+        
+        if (groupResult.rows.length === 0) {
+          groupResult = await db.query(
+            'INSERT INTO student_groups (user_id, name) VALUES ($1, $2) RETURNING id, name',
+            [req.userId, groupName]
+          );
+          createdGroups.add(groupName);
+        }
+        
+        // Link subject to group
+        await db.query(
+          'INSERT INTO subject_groups (subject_id, student_group_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+          [subject.id, groupResult.rows[0].id]
+        );
+      }
+
+      // Auto-enroll students if user has auto-enrollment enabled
+      await autoEnrollStudentsInSubject(subject.id, req.userId);
+    }
+
+    const message = `Successfully imported ${results.length} subjects`;
+    const groupMessage = createdGroups.size > 0 
+      ? ` and created ${createdGroups.size} new groups: ${Array.from(createdGroups).join(', ')}`
+      : '';
+
+    res.status(201).json({
+      message: message + groupMessage,
+      subjects: results,
+      createdGroups: Array.from(createdGroups)
+    });
   } catch (error) {
     next(error);
   }

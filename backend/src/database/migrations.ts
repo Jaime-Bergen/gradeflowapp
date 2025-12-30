@@ -1,4 +1,4 @@
-import { getDB } from './connection';
+import { getDB, connectDB } from './connection';
 
 export const runMigrations = async (): Promise<void> => {
   const db = getDB();
@@ -8,18 +8,25 @@ export const runMigrations = async (): Promise<void> => {
     await createUsersTable(db);
     await createStudentGroupsTable(db);
     await createStudentsTable(db);
+    await createAttendanceRecordsTable(db);
     await createGradeCategoryTypesTable(db);
     await addIsActiveToGradeCategoryTypes(db);
     await createSubjectsTable(db);
     await addReportCardNameToSubjects(db);
     await addSchoolSettingsToUsers(db);
+    await addGradingModeToUsers(db);
     await createLessonsTable(db);
+    await addDateToLessons(db);
     await createGradingPeriodMarkersTable(db);
     await createGradesTable(db);
+    await addDateToGrades(db);
+    await createGradingPeriodsTable(db);
     await createStudentSubjectsTable(db);
     await createSubjectWeightsTable(db);
     await createUserMetadataTable(db);
     await createUserBackupsTable(db);
+    await createTeachersTable(db);
+    await createTeacherGroupLinksTable(db);
     
     // Run essential data migrations only
     await createSubjectGroupsJunctionTable(db);
@@ -34,7 +41,9 @@ export const runMigrations = async (): Promise<void> => {
     await addCategoryIdToLessons(db);
     await populateUserMetadata(db);
     await addBirthdayToStudents(db);
+    await coerceBirthdayToDate(db);
     await dropLessonTypeColumn(db);
+    await addAutoEnrollmentSetting(db);
     
     console.log('All migrations completed successfully');
   } catch (error) {
@@ -107,6 +116,28 @@ const createStudentsTable = async (db: any) => {
   }
   
   console.log('✅ Students table created/verified');
+};
+
+const createAttendanceRecordsTable = async (db: any) => {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS attendance_records (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      student_id UUID NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+      date DATE NOT NULL,
+      status VARCHAR(20) NOT NULL,
+      notes TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(user_id, student_id, date),
+      CONSTRAINT attendance_status_check CHECK (status IN ('present', 'absent', 'tardy', 'excused'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_attendance_user_date ON attendance_records(user_id, date);
+    CREATE INDEX IF NOT EXISTS idx_attendance_student_id ON attendance_records(student_id);
+  `);
+
+  console.log('✅ Attendance records table created/verified');
 };
 
 const createGradeCategoryTypesTable = async (db: any) => {
@@ -189,6 +220,24 @@ const createLessonsTable = async (db: any) => {
   console.log('✅ Lessons table created/verified');
 };
 
+const addDateToLessons = async (db: any) => {
+  try {
+    await db.query(`
+      ALTER TABLE lessons
+      ADD COLUMN IF NOT EXISTS date DATE;
+
+      UPDATE lessons
+      SET date = COALESCE(date, created_at::date, updated_at::date)
+      WHERE date IS NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_lessons_date ON lessons(date);
+    `);
+    console.log('✅ Added date column to lessons (with backfill)');
+  } catch (error) {
+    console.error('Error adding date column to lessons:', error);
+  }
+};
+
 const createGradingPeriodMarkersTable = async (db: any) => {
   await db.query(`
     CREATE TABLE IF NOT EXISTS grading_period_markers (
@@ -259,6 +308,48 @@ const createGradesTable = async (db: any) => {
     CREATE INDEX IF NOT EXISTS idx_grades_student_lesson ON grades(student_id, lesson_id);
   `);
   console.log('✅ Grades table created/verified');
+};
+
+const addDateToGrades = async (db: any) => {
+  try {
+    await db.query(`
+      ALTER TABLE grades
+      ADD COLUMN IF NOT EXISTS date DATE;
+
+      UPDATE grades
+      SET date = COALESCE(date, created_at::date, updated_at::date)
+      WHERE date IS NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_grades_date ON grades(date);
+    `);
+    console.log('✅ Added date column to grades (with backfill)');
+  } catch (error) {
+    console.error('Error adding date column to grades:', error);
+  }
+};
+
+const createGradingPeriodsTable = async (db: any) => {
+  try {
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS grading_periods (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name VARCHAR(255) NOT NULL,
+        start_date DATE NOT NULL,
+        end_date DATE NOT NULL,
+        order_index INTEGER NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, order_index),
+        UNIQUE(user_id, name)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_grading_periods_user ON grading_periods(user_id, order_index);
+    `);
+    console.log('✅ Grading periods table created/verified');
+  } catch (error) {
+    console.error('Error creating grading periods table:', error);
+  }
 };
 
 const createStudentSubjectsTable = async (db: any) => {
@@ -743,6 +834,26 @@ const addSchoolSettingsToUsers = async (db: any) => {
   }
 };
 
+const addGradingModeToUsers = async (db: any) => {
+  try {
+    await db.query(`
+      ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS grading_mode VARCHAR(20) DEFAULT 'dates'
+    `);
+
+    await db.query(`
+      UPDATE users
+      SET grading_mode = 'dates'
+      WHERE grading_mode IS NULL
+    `);
+
+    console.log('✅ Added grading_mode column to users table');
+  } catch (error) {
+    console.error('Error adding grading_mode to users table:', error);
+    throw error;
+  }
+};
+
 const updateGradesErrorsColumnType = async (db: any) => {
   try {
     await db.query(`
@@ -838,6 +949,41 @@ const addBirthdayToStudents = async (db: any) => {
   }
 };
 
+// Ensure birthday column is stored as DATE and strip any lingering timezones/times
+const coerceBirthdayToDate = async (db: any) => {
+  try {
+    console.log('🔧 Coercing students.birthday to DATE...');
+
+    // Check current data type
+    const typeCheck = await db.query(`
+      SELECT data_type
+      FROM information_schema.columns
+      WHERE table_name = 'students' AND column_name = 'birthday'
+    `);
+
+    const currentType = typeCheck.rows[0]?.data_type;
+
+    if (currentType && currentType.toLowerCase() !== 'date') {
+      await db.query(`
+        ALTER TABLE students
+        ALTER COLUMN birthday TYPE DATE USING (birthday::date)
+      `);
+      console.log(`✅ Converted students.birthday from ${currentType} to DATE`);
+    } else {
+      // Even if already DATE, normalize any rows that might carry time parts
+      await db.query(`
+        UPDATE students
+        SET birthday = birthday::date
+        WHERE birthday IS NOT NULL
+      `);
+      console.log('ℹ️  students.birthday already DATE; normalized existing values');
+    }
+  } catch (error) {
+    console.error('❌ Error coercing students.birthday to DATE:', error);
+    throw error;
+  }
+};
+
 const dropLessonTypeColumn = async (db: any) => {
   try {
     console.log('🔧 Dropping type column from lessons table...');
@@ -855,9 +1001,87 @@ const dropLessonTypeColumn = async (db: any) => {
   }
 };
 
+const createTeachersTable = async (db: any) => {
+  try {
+    console.log('🔧 Creating teachers table...');
+    
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS teachers (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name VARCHAR(255) NOT NULL,
+        email VARCHAR(255) NOT NULL,
+        password_hash VARCHAR(255) NOT NULL,
+        is_active BOOLEAN DEFAULT true,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_by UUID REFERENCES users(id),
+        UNIQUE(user_id, email)
+      );
+      
+      CREATE INDEX IF NOT EXISTS idx_teachers_user_id ON teachers(user_id);
+      CREATE INDEX IF NOT EXISTS idx_teachers_email ON teachers(email);
+      CREATE INDEX IF NOT EXISTS idx_teachers_created_by ON teachers(created_by);
+    `);
+    
+    console.log('✅ Teachers table created/verified');
+  } catch (error) {
+    console.error('❌ Error creating teachers table:', error);
+    throw error;
+  }
+};
+
+const createTeacherGroupLinksTable = async (db: any) => {
+  try {
+    console.log('🔧 Creating teacher_group_links junction table...');
+    
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS teacher_group_links (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        teacher_id UUID NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
+        student_group_id UUID NOT NULL REFERENCES student_groups(id) ON DELETE CASCADE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(teacher_id, student_group_id)
+      );
+      
+      CREATE INDEX IF NOT EXISTS idx_teacher_group_links_teacher_id ON teacher_group_links(teacher_id);
+      CREATE INDEX IF NOT EXISTS idx_teacher_group_links_group_id ON teacher_group_links(student_group_id);
+    `);
+    
+    console.log('✅ Teacher group links table created/verified');
+  } catch (error) {
+    console.error('❌ Error creating teacher group links table:', error);
+    throw error;
+  }
+};
+
+const addAutoEnrollmentSetting = async (db: any) => {
+  try {
+    // Add auto_enroll_subjects column to users table (default to true)
+    await db.query(`
+      ALTER TABLE users 
+      ADD COLUMN IF NOT EXISTS auto_enroll_subjects BOOLEAN DEFAULT true
+    `);
+    
+    // Update any existing users who might have null values to use the new default
+    await db.query(`
+      UPDATE users 
+      SET auto_enroll_subjects = true 
+      WHERE auto_enroll_subjects IS NULL
+    `);
+    
+    console.log('🔧 Added auto enrollment setting to users table');
+    console.log('✅ Successfully added auto enrollment setting to users table');
+  } catch (error) {
+    console.error('❌ Error adding auto enrollment setting to users table:', error);
+    throw error;
+  }
+};
+
 // Run migrations if this file is executed directly
 if (require.main === module) {
-  runMigrations()
+  connectDB()
+    .then(() => runMigrations())
     .then(() => {
       console.log('All migrations completed successfully');
       process.exit(0);

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, KeyboardEvent } from 'react'
+import React, { useState, useRef, useEffect, useCallback, useMemo, KeyboardEvent } from 'react'
 import { apiClient } from '@/lib/api'
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -29,43 +29,15 @@ const formatPercentage = (percentage: number): string => {
 
 export default function GradeEntry() {
   const [students, setStudents] = useState<Student[]>([])
+  const [filteredStudents, setFilteredStudents] = useState<Student[]>([])
   const [subjects, setSubjects] = useState<Subject[]>([])
+  const [filteredSubjects, setFilteredSubjects] = useState<Subject[]>([])
+  const [studentGroups, setStudentGroups] = useState<any[]>([])
   const [grades, setGrades] = useState<Grade[]>([])
   const [gradeCategoryTypes, setGradeCategoryTypes] = useState<any[]>([])
   const [loadingInitialData, setLoadingInitialData] = useState<boolean>(true)
 
   // Refactor to use normalized table system
-  useEffect(() => {
-    async function fetchData() {
-      try {
-        setLoadingInitialData(true)
-        const studentsRes = await apiClient.getStudents();
-        setStudents(Array.isArray(studentsRes.data) ? studentsRes.data : []);
-
-        const subjectsRes = await apiClient.getSubjects();
-        setSubjects(Array.isArray(subjectsRes.data) ? subjectsRes.data : []);
-
-        const gradesRes = await apiClient.getGrades();
-        if (gradesRes.error) {
-          toast.error(`Failed to fetch grades: ${gradesRes.error}`);
-        } else {
-          setGrades(Array.isArray(gradesRes.data) ? gradesRes.data : []);
-        }
-
-        // Load grade category types for styling
-        const categoryTypesRes = await apiClient.getGradeCategoryTypes();
-        if (categoryTypesRes.data) {
-          setGradeCategoryTypes(Array.isArray(categoryTypesRes.data) ? categoryTypesRes.data : []);
-        }
-      } catch (error) {
-        toast.error('An unexpected error occurred while fetching data.');
-        console.error(error);
-      } finally {
-        setLoadingInitialData(false)
-      }
-    }
-    fetchData()
-  }, [])
 
   const [selectedSubjectId, setSelectedSubjectId] = useState<string>(() => {
     return localStorage.getItem('gradeflow-selectedSubjectId') || ""
@@ -78,6 +50,58 @@ export default function GradeEntry() {
   const [entryMode, setEntryMode] = useState<'percentage' | 'errors'>('percentage')
   const [activeView, setActiveView] = useState<'entry' | 'table'>('entry')
   const [lessonPoints, setLessonPoints] = useState<string>("")
+  const [lessonDate, setLessonDate] = useState<string>("")
+  const [lessonDatePrefilled, setLessonDatePrefilled] = useState<boolean>(false)
+
+  // Helper to get local-date ISO (avoids UTC off-by-one)
+  const getLocalISODate = (daysFromToday = 0) => {
+    const now = new Date()
+    // Shift to local midnight by removing tz offset before slicing ISO date
+    const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+    local.setDate(local.getDate() + daysFromToday)
+    return local.toISOString().slice(0, 10)
+  }
+
+  // Initial data load
+  useEffect(() => {
+    async function fetchData() {
+      try {
+        setLoadingInitialData(true)
+
+        const studentsRes = await apiClient.getStudents()
+        const studentsData = Array.isArray(studentsRes.data) ? studentsRes.data : []
+        setStudents(studentsData)
+        setFilteredStudents(studentsData)
+
+        const subjectsRes = await apiClient.getSubjects()
+        const subjectsData = Array.isArray(subjectsRes.data) ? subjectsRes.data : []
+        setSubjects(subjectsData)
+        setFilteredSubjects(subjectsData)
+
+        const studentGroupsRes = await apiClient.getStudentGroups()
+        setStudentGroups(Array.isArray(studentGroupsRes.data) ? studentGroupsRes.data : [])
+
+        const gradesRes = await apiClient.getGrades()
+        if (gradesRes.error) {
+          toast.error(`Failed to fetch grades: ${gradesRes.error}`)
+        } else {
+          setGrades(Array.isArray(gradesRes.data) ? gradesRes.data : [])
+        }
+
+        const categoryTypesRes = await apiClient.getGradeCategoryTypes()
+        if (categoryTypesRes.data) {
+          setGradeCategoryTypes(Array.isArray(categoryTypesRes.data) ? categoryTypesRes.data : [])
+        }
+      } catch (error) {
+        console.error('Failed to load initial data', error)
+        toast.error('An unexpected error occurred while fetching data.')
+      } finally {
+        setLoadingInitialData(false)
+      }
+    }
+
+    fetchData()
+  }, [])
 
   // Helper function to check if a lesson type is default (doesn't need special styling)
   const isDefaultLessonType = (lessonType: string): boolean => {
@@ -104,6 +128,7 @@ export default function GradeEntry() {
   const gridRef = useRef<HTMLDivElement>(null)
   const inputRefs = useRef<Record<string, HTMLInputElement>>({})
   const lessonPointsRef = useRef<HTMLInputElement>(null)
+  const lessonDateRef = useRef<HTMLInputElement>(null)
 
   // Inline editing state
   const [editingCell, setEditingCell] = useState<{ studentId: string; lessonId: string } | null>(null)
@@ -113,6 +138,7 @@ export default function GradeEntry() {
   const [tempLessonData, setTempLessonData] = useState<{ type?: string; points?: string }>({})
   const [subjectLessons, setSubjectLessons] = useState<Record<string, Lesson[]>>({});
   const [loadingLessons, setLoadingLessons] = useState<{ [subjectId: string]: boolean }>({});
+  const [subjectSelectOpen, setSubjectSelectOpen] = useState(false);
   const [shouldFocusFirstStudent, setShouldFocusFirstStudent] = useState<boolean>(false);
 
   // Lesson editing state
@@ -122,14 +148,143 @@ export default function GradeEntry() {
     subjectId: string | null 
   }>({ open: false, lesson: null, subjectId: null })
 
+  // Filter subjects by teacher groups
+  const filterSubjectsByTeacherGroups = useCallback(() => {
+    const selectedGroupIds = window.SELECTED_TEACHER_GROUPS
+    
+    // Don't filter if we don't have student groups data yet
+    if (studentGroups.length === 0) {
+      return
+    }
+    
+    if (!selectedGroupIds || selectedGroupIds.length === 0) {
+      // If no teacher selected or no groups, show all subjects
+      setFilteredSubjects(subjects)
+      return
+    }
+
+    // Filter subjects by their group membership
+    const filtered = subjects.filter(subject => {
+      if (!subject.group_name) return true // If no group restriction, show to all teachers
+      
+      // Parse subject's group names and check if any match selected teacher's groups  
+      const subjectGroupNames = subject.group_name.split(',').map((g: string) => g.trim())
+      const teacherGroupNames = studentGroups
+        .filter(group => selectedGroupIds.includes(group.id))
+        .map(group => group.name)
+      
+      return subjectGroupNames.some((subjectGroup: string) => 
+        teacherGroupNames.includes(subjectGroup)
+      )
+    })
+
+    setFilteredSubjects(filtered)
+  }, [subjects, studentGroups])
+
+  // Helper function to extract grade number from group name for sorting
+  const extractGradeNumber = (groupName: string): number => {
+    const match = groupName.match(/Grade\s+(\d+)/i)
+    return match ? parseInt(match[1], 10) : 999 // Put non-grade groups at the end
+  }
+
+  // Helper function to get the first group from a student's group_name
+  const getFirstGroup = (groupName: string | null | undefined): string => {
+    if (!groupName) return 'No Group'
+    return groupName.split(',')[0].trim()
+  }
+
+  // Helper function to group and sort students by their first group
+  const groupAndSortStudents = (students: Student[]) => {
+    // Group students by their first group
+    const grouped = students.reduce((acc, student) => {
+      const firstGroup = getFirstGroup(student.group_name)
+      if (!acc[firstGroup]) {
+        acc[firstGroup] = []
+      }
+      acc[firstGroup].push(student)
+      return acc
+    }, {} as Record<string, Student[]>)
+
+    // Sort groups by grade number, then alphabetically
+    const sortedGroupNames = Object.keys(grouped).sort((a, b) => {
+      const gradeA = extractGradeNumber(a)
+      const gradeB = extractGradeNumber(b)
+      
+      // If both are grades, sort numerically
+      if (gradeA !== 999 && gradeB !== 999) {
+        return gradeA - gradeB
+      }
+      
+      // If one is a grade and one isn't, put grade first
+      if (gradeA !== 999 && gradeB === 999) return -1
+      if (gradeA === 999 && gradeB !== 999) return 1
+      
+      // If neither are grades, sort alphabetically
+      return a.localeCompare(b)
+    })
+
+    // Return sorted groups with their students (also sorted by name)
+    return sortedGroupNames.map(groupName => ({
+      groupName,
+      students: grouped[groupName].sort((a, b) => a.name.localeCompare(b.name))
+    }))
+  }
+
+  const filterStudentsByTeacherGroups = useCallback(() => {
+    const selectedGroupIds = window.SELECTED_TEACHER_GROUPS
+    
+    // Don't filter if we don't have student groups data yet
+    if (studentGroups.length === 0) {
+      setFilteredStudents(students)
+      return
+    }
+    
+    if (!selectedGroupIds || selectedGroupIds.length === 0) {
+      // If no teacher selected or no groups, show all data
+      setFilteredStudents(students)
+      return
+    }
+
+    // Filter students by their group membership
+    const filtered = students.filter(student => {
+      if (!student.group_name) return false
+      
+      // Parse student's group names and check if any match selected teacher's groups
+      const studentGroupNames = student.group_name.split(',').map(g => g.trim())
+      const teacherGroupNames = studentGroups
+        .filter(group => selectedGroupIds.includes(group.id))
+        .map(group => group.name)
+      
+      return studentGroupNames.some(studentGroup => 
+        teacherGroupNames.includes(studentGroup)
+      )
+    })
+
+    setFilteredStudents(filtered)
+  }, [students, studentGroups])
+
   // Navigation helpers for keyboard shortcuts (moved before useEffect to fix scope issues)
-  const enrolledStudents = students.filter(s => s.subjects && s.subjects.includes(selectedSubjectId))
+  const enrolledStudents = filteredStudents.filter(s => s.subjects && s.subjects.includes(selectedSubjectId))
+
+  // Students in display order (grouped, then sorted within groups) for consistent navigation
+  const groupedEnrolledStudents = useMemo(() => groupAndSortStudents(enrolledStudents), [enrolledStudents])
+  const displayedStudents = useMemo(() => groupedEnrolledStudents.flatMap(group => group.students), [groupedEnrolledStudents])
+  const displayedStudentIndex = useMemo(() => {
+    const map = new Map<string, number>()
+    displayedStudents.forEach((student, index) => map.set(student.id, index))
+    return map
+  }, [displayedStudents])
   const filteredSubjectLessons = subjectLessons[selectedSubjectId] || []
   const currentLessonIndex = filteredSubjectLessons.findIndex(l => l.id === selectedLessonId)
-  const availableSubjects = subjects.filter(s => 
-    students.some(student => student.subjects?.includes(s.id))
-  )
-  const currentSubjectIndex = availableSubjects.findIndex(s => s.id === selectedSubjectId)
+  const availableSubjects = useMemo(() => {
+    return filteredSubjects.filter(s => 
+      students.some(student => student.subjects?.includes(s.id))
+    );
+  }, [filteredSubjects, students]);
+
+  const currentSubjectIndex = useMemo(() => {
+    return availableSubjects.findIndex(s => s.id === selectedSubjectId);
+  }, [availableSubjects, selectedSubjectId]);
 
   // Helper function to check lesson grading status
   const getLessonGradingStatus = (lessonId: string): 'none' | 'partial' | 'complete' => {
@@ -244,7 +399,7 @@ export default function GradeEntry() {
       const isInputField = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.contentEditable === 'true';
       
       // Allow certain shortcuts to work even in input fields
-      const allowedInInput = ['F1', 'F2', 'Escape', 'PageUp', 'PageDown', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'];
+      const allowedInInput = ['F1', 'F2', 'Escape', 'PageUp', 'PageDown', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 't', 'y', 'T', 'Y'];
       
       // Check if the key combination should be allowed in input fields
       const shouldAllowInInput = allowedInInput.includes(keyboardEvent.key) || 
@@ -257,7 +412,18 @@ export default function GradeEntry() {
       }
 
       switch (keyboardEvent.key) {
-        case ' ':
+        case ' ': {
+          if (keyboardEvent.shiftKey) {
+            // Shift+Space: focus lesson date input
+            if (lessonDateRef.current && selectedLesson) {
+              keyboardEvent.preventDefault();
+              lessonDateRef.current.focus();
+              lessonDateRef.current.showPicker?.();
+              toast.success('Lesson date selected');
+            }
+            break;
+          }
+
           // Space key: focus lesson points input
           if (lessonPointsRef.current && selectedLesson) {
             keyboardEvent.preventDefault();
@@ -266,6 +432,26 @@ export default function GradeEntry() {
             toast.success('Lesson points selected');
           }
           break;
+        }
+        case 't':
+        case 'T':
+        case 'y':
+        case 'Y': {
+          if (keyboardEvent.ctrlKey || keyboardEvent.metaKey || keyboardEvent.altKey) break;
+          if (!selectedLesson) break;
+          keyboardEvent.preventDefault();
+          const iso = keyboardEvent.key.toLowerCase() === 'y'
+            ? getLocalISODate(-1)
+            : getLocalISODate();
+          setLessonDate(iso);
+          setLessonDatePrefilled(false);
+          const normalizedCurrent = normalizeDateInput(selectedLesson.date);
+          if (iso !== normalizedCurrent) {
+            updateLessonDate(iso, { silent: true });
+          }
+          toast.success(keyboardEvent.key.toLowerCase() === 'y' ? 'Set to yesterday' : 'Set to today');
+          break;
+        }
         case 'F1':
           keyboardEvent.preventDefault();
           setEntryMode(entryMode === 'percentage' ? 'errors' : 'percentage');
@@ -565,6 +751,12 @@ export default function GradeEntry() {
   }
 
   // Lesson editing functions
+  const normalizeDateInput = (value?: string | null) => {
+    if (!value) return ''
+    // Keep date-only portion to avoid timezone shifts
+    return value.includes('T') ? value.split('T')[0] : value
+  }
+
   function editLesson(lesson: Lesson, subjectId: string) {
     setEditLessonDialog({ open: true, lesson, subjectId })
   }
@@ -582,6 +774,10 @@ export default function GradeEntry() {
           // Remove type since we're sending categoryId
           delete updateData.type;
         }
+      }
+
+      if (updated.date !== undefined) {
+        updateData.date = updated.date || null;
       }
       
       await apiClient.updateLesson(editLessonDialog.lesson.id, updateData)
@@ -826,18 +1022,30 @@ export default function GradeEntry() {
     }
   }, [selectedLessonId, grades, entryMode, subjectLessons])
 
-  // Initialize lesson points when lesson changes
+  // Initialize lesson points/date when lesson changes
   useEffect(() => {
     if (selectedLesson) {
-      // Use points field from database (which is maxPoints in frontend terms)
       const lessonMaxPoints = selectedLesson.points || selectedLesson.maxPoints;
       if (lessonMaxPoints) {
         setLessonPoints(lessonMaxPoints.toString())
       } else {
         setLessonPoints("")
       }
+
+      const normalizedDate = normalizeDateInput(selectedLesson.date)
+      if (normalizedDate) {
+        setLessonDate(normalizedDate)
+        setLessonDatePrefilled(false)
+      } else {
+        // Prefill with today for UX, but don't persist until a save-worthy action happens
+        const today = getLocalISODate()
+        setLessonDate(today)
+        setLessonDatePrefilled(true)
+      }
     } else {
       setLessonPoints("")
+      setLessonDate("")
+      setLessonDatePrefilled(false)
     }
   }, [selectedLesson])
 
@@ -847,6 +1055,7 @@ export default function GradeEntry() {
       const lesson = subjectLessons[selectedSubjectId].find(l => l.id === selectedLessonId);
       if (lesson) {
         setLessonPoints((lesson.points || lesson.maxPoints)?.toString() || "");
+        setLessonDate(normalizeDateInput(lesson.date));
       }
     }
   }, [selectedLessonId, selectedSubjectId, subjectLessons]);
@@ -954,17 +1163,18 @@ export default function GradeEntry() {
   }
 
   const handleKeyNavigation = (e: KeyboardEvent, studentId: string, studentIndex: number) => {
-    const totalStudents = enrolledStudents.length
+    const totalStudents = displayedStudents.length
+    const index = displayedStudentIndex.get(studentId) ?? studentIndex
     
     switch (e.key) {
       case 'ArrowUp':
         if (!e.shiftKey) {
           e.preventDefault()
-          if (studentIndex > 0) {
-            const prevStudentId = enrolledStudents[studentIndex - 1].id
+          if (index > 0) {
+            const prevStudentId = displayedStudents[index - 1].id
             const prevInput = inputRefs.current[prevStudentId]
             prevInput?.focus()
-            setFocusedCell({ row: studentIndex - 1, col: 0 })
+            setFocusedCell({ row: index - 1, col: 0 })
           }
         }
         // Shift+ArrowUp is handled globally
@@ -974,11 +1184,11 @@ export default function GradeEntry() {
         if (!e.shiftKey) {
           e.preventDefault()
           // Navigate to next student (normal down arrow)
-          if (studentIndex < totalStudents - 1) {
-            const nextStudentId = enrolledStudents[studentIndex + 1].id
+          if (index < totalStudents - 1) {
+            const nextStudentId = displayedStudents[index + 1].id
             const nextInput = inputRefs.current[nextStudentId]
             nextInput?.focus()
-            setFocusedCell({ row: studentIndex + 1, col: 0 })
+            setFocusedCell({ row: index + 1, col: 0 })
           }
         }
         // Shift+ArrowDown is handled globally
@@ -986,14 +1196,14 @@ export default function GradeEntry() {
 
       case 'Enter':
         e.preventDefault()
-        if (studentIndex < totalStudents - 1) {
-          const nextStudentId = enrolledStudents[studentIndex + 1].id
+        if (index < totalStudents - 1) {
+          const nextStudentId = displayedStudents[index + 1].id
           const nextInput = inputRefs.current[nextStudentId]
           nextInput?.focus()
-          setFocusedCell({ row: studentIndex + 1, col: 0 })
+          setFocusedCell({ row: index + 1, col: 0 })
         } else {
           // If last student, save current grade first, then jump to next lesson
-          const currentStudentId = enrolledStudents[studentIndex].id
+          const currentStudentId = displayedStudents[index]?.id || studentId
           const currentValue = gradeValues[currentStudentId]
           
           // Save the current grade if there's a value
@@ -1005,7 +1215,7 @@ export default function GradeEntry() {
                 setSelectedLessonId(nextLesson.id)
                 // Wait for lesson change, then focus first student
                 setTimeout(() => {
-                  const firstStudentId = enrolledStudents[0]?.id
+                  const firstStudentId = displayedStudents[0]?.id
                   if (firstStudentId) {
                     const firstInput = inputRefs.current[firstStudentId]
                     firstInput?.focus()
@@ -1027,7 +1237,7 @@ export default function GradeEntry() {
               setSelectedLessonId(nextLesson.id)
               // Wait for lesson change, then focus first student
               setTimeout(() => {
-                const firstStudentId = enrolledStudents[0]?.id
+                const firstStudentId = displayedStudents[0]?.id
                 if (firstStudentId) {
                   const firstInput = inputRefs.current[firstStudentId]
                   firstInput?.focus()
@@ -1096,6 +1306,56 @@ export default function GradeEntry() {
       console.error('Failed to update lesson points:', error);
       toast.error('Failed to update lesson points');
     }
+  }
+
+  const updateLessonDate = async (newDate: string, opts?: { silent?: boolean }) => {
+    if (!selectedLesson || !selectedSubjectId) return
+
+    try {
+      await apiClient.updateLesson(selectedLessonId, { date: newDate || null })
+
+      setSubjectLessons(current => ({
+        ...current,
+        [selectedSubjectId]: current[selectedSubjectId]?.map(lesson =>
+          lesson.id === selectedLessonId
+            ? { ...lesson, date: newDate }
+            : lesson
+        ) || []
+      }))
+
+      setSubjects(current =>
+        current.map(subject =>
+          subject.id === selectedSubjectId && subject.lessons
+            ? {
+                ...subject,
+                lessons: subject.lessons.map(lesson =>
+                  lesson.id === selectedLessonId
+                    ? { ...lesson, date: newDate }
+                    : lesson
+                )
+              }
+            : subject
+        )
+      )
+
+      if (!opts?.silent) {
+        toast.success('Updated lesson date')
+      }
+    } catch (error) {
+      console.error('Failed to update lesson date:', error)
+      toast.error('Failed to update lesson date')
+    }
+  }
+
+  const ensureLessonDateForActiveLesson = async (reason: 'grade' | 'shortcut' | 'manual') => {
+    if (!selectedLesson || !selectedSubjectId) return
+    const normalized = normalizeDateInput(selectedLesson.date)
+    if (normalized) return
+
+    const proposed = lessonDate || getLocalISODate()
+    setLessonDate(proposed)
+    setLessonDatePrefilled(false)
+    await updateLessonDate(proposed, { silent: reason !== 'manual' })
   }
 
   // Refine handling of selectedLesson.maxPoints
@@ -1167,6 +1427,9 @@ const saveGrade = async (studentId: string) => {
     }
     return;
   }
+
+  // Auto-set lesson date if missing when a grade is being saved (only when we have data to save)
+  await ensureLessonDateForActiveLesson('grade')
 
   try {
     let gradeData: any = {};
@@ -1318,6 +1581,9 @@ const saveGrade = async (studentId: string) => {
     }
 
     try {
+      // Auto-set lesson date if missing when a grade is being saved inline
+      await ensureLessonDateForActiveLesson('grade')
+
       // Find the lesson to get max points
       const lesson = (subjectLessons[selectedSubjectId] || []).find(l => l.id === lessonId);
       if (!lesson) {
@@ -1478,8 +1744,8 @@ const saveGrade = async (studentId: string) => {
       setTempLessonData({}); // Clear temporary data
       
       // After saving lesson, focus on first student in table mode
-      if (activeView === 'table' && enrolledStudents.length > 0) {
-        const firstStudent = enrolledStudents[0];
+      if (activeView === 'table' && displayedStudents.length > 0) {
+        const firstStudent = displayedStudents[0];
         const existingGrade = grades.find(g => g.studentId === firstStudent.id && g.lessonId === lessonId);
         const isSkipped = existingGrade && existingGrade.percentage === 0 && existingGrade.errors === (existingGrade.maxPoints || existingGrade.points);
         const currentValue = existingGrade
@@ -1505,7 +1771,7 @@ const saveGrade = async (studentId: string) => {
   const navigateToNextCell = (currentStudentId: string, currentLessonId: string) => {
     const currentLessons = (subjectLessons[selectedSubjectId] || [])
       .sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0));
-    const currentStudents = enrolledStudents;
+    const currentStudents = displayedStudents;
 
     const currentStudentIndex = currentStudents.findIndex(s => s.id === currentStudentId);
     const currentLessonIndex = currentLessons.findIndex(l => l.id === currentLessonId);
@@ -1550,7 +1816,7 @@ const saveGrade = async (studentId: string) => {
   const navigateToCell = async (direction: 'up' | 'down' | 'left' | 'right', currentStudentId: string, currentLessonId: string) => {
     const currentLessons = (subjectLessons[selectedSubjectId] || [])
       .sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0));
-    const currentStudents = enrolledStudents;
+    const currentStudents = displayedStudents;
 
     const currentStudentIndex = currentStudents.findIndex(s => s.id === currentStudentId);
     const currentLessonIndex = currentLessons.findIndex(l => l.id === currentLessonId);
@@ -1598,6 +1864,42 @@ const saveGrade = async (studentId: string) => {
       }
     }
   };
+
+  // Filter data when teacher selection changes or data is updated
+  useEffect(() => {
+    filterSubjectsByTeacherGroups()
+  }, [filterSubjectsByTeacherGroups])
+
+  // Listen for teacher selection changes
+  useEffect(() => {
+    const handleTeacherChange = () => {
+      // Close the select dropdown to force scroll recalculation
+      setSubjectSelectOpen(false)
+      filterSubjectsByTeacherGroups()
+    }
+    
+    window.addEventListener('teacher-selection-changed', handleTeacherChange)
+    return () => {
+      window.removeEventListener('teacher-selection-changed', handleTeacherChange)
+    }
+  }, [filterSubjectsByTeacherGroups])
+
+  // Filter students when teacher selection changes or data is updated
+  useEffect(() => {
+    filterStudentsByTeacherGroups()
+  }, [filterStudentsByTeacherGroups])
+
+  // Listen for teacher selection changes for student filtering
+  useEffect(() => {
+    const handleTeacherChange = () => {
+      filterStudentsByTeacherGroups()
+    }
+    
+    window.addEventListener('teacher-selection-changed', handleTeacherChange)
+    return () => {
+      window.removeEventListener('teacher-selection-changed', handleTeacherChange)
+    }
+  }, [filterStudentsByTeacherGroups])
 
   // Update grade entry logic
   return (
@@ -1781,8 +2083,15 @@ const saveGrade = async (studentId: string) => {
                     </tr>
                   </thead>
                   <tbody>
-                    {enrolledStudents.map((student) => (
-                      <tr key={student.id} className="border-b border-border hover:bg-muted/20">
+                    {groupedEnrolledStudents.map(({ groupName, students: groupStudents }) => (
+                      <React.Fragment key={groupName}>
+                        <tr className="bg-muted/40">
+                          <td colSpan={((subjectLessons[selectedSubjectId] || []).length + 1)} className="p-2 font-semibold text-sm border-b-2 border-primary">
+                            {groupName}
+                          </td>
+                        </tr>
+                        {groupStudents.map((student) => (
+                          <tr key={student.id} className="border-b border-border hover:bg-muted/20">
                         <td className="p-3 font-medium sticky left-0 bg-background z-10">
                           <div className="flex items-center gap-2">
                             <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-xs font-medium">
@@ -1909,8 +2218,8 @@ const saveGrade = async (studentId: string) => {
                                         navigateToCell('right', student.id, lesson.id);
                                       } else if (e.key === 'PageUp') {
                                         e.preventDefault();
-                                        if (enrolledStudents.length > 0) {
-                                          const firstStudent = enrolledStudents[0];
+                                        if (displayedStudents.length > 0) {
+                                          const firstStudent = displayedStudents[0];
                                           const existingGrade = grades.find(g => g.studentId === firstStudent.id && g.lessonId === lesson.id);
                                           const isSkipped = existingGrade && existingGrade.percentage === 0 && existingGrade.errors === (existingGrade.maxPoints || existingGrade.points);
                                           const currentValue = existingGrade
@@ -1923,8 +2232,8 @@ const saveGrade = async (studentId: string) => {
                                         }
                                       } else if (e.key === 'PageDown') {
                                         e.preventDefault();
-                                        if (enrolledStudents.length > 0) {
-                                          const lastStudent = enrolledStudents[enrolledStudents.length - 1];
+                                        if (displayedStudents.length > 0) {
+                                          const lastStudent = displayedStudents[displayedStudents.length - 1];
                                           const existingGrade = grades.find(g => g.studentId === lastStudent.id && g.lessonId === lesson.id);
                                           const isSkipped = existingGrade && existingGrade.percentage === 0 && existingGrade.errors === (existingGrade.maxPoints || existingGrade.points);
                                           const currentValue = existingGrade
@@ -1969,6 +2278,8 @@ const saveGrade = async (studentId: string) => {
                           );
                         })}
                       </tr>
+                        ))}
+                      </React.Fragment>
                     ))}
                   </tbody>
                 </table>
@@ -2169,16 +2480,22 @@ const saveGrade = async (studentId: string) => {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-muted/30 rounded-lg">
                   <div>
                     <Label htmlFor="grade-entry-subject-select" className="text-sm font-medium">Subject</Label>
-                    <Select value={selectedSubjectId} onValueChange={(subjectId) => {
-                      setSelectedSubjectId(subjectId);
-                      // Clear lesson selection so auto-selection logic will run
-                      setSelectedLessonId("");
-                    }}>
+                    <Select 
+                      open={subjectSelectOpen}
+                      onOpenChange={setSubjectSelectOpen}
+                      value={selectedSubjectId} 
+                      onValueChange={(subjectId) => {
+                        setSelectedSubjectId(subjectId);
+                        // Clear lesson selection so auto-selection logic will run
+                        setSelectedLessonId("");
+                        setSubjectSelectOpen(false);
+                      }}
+                    >
                       <SelectTrigger>
                         <SelectValue placeholder="Select subject" />
                       </SelectTrigger>
-                      <SelectContent>
-                        {availableSubjects.map(subject => (
+                      <SelectContent position="item-aligned">
+                        {availableSubjects.map((subject: any) => (
                           <SelectItem key={subject.id} value={subject.id}>
                             {subject.name}
                           </SelectItem>
@@ -2189,17 +2506,21 @@ const saveGrade = async (studentId: string) => {
                   <div>
                     <Label htmlFor="grade-entry-lesson-select" className="text-sm font-medium">Lesson</Label>
                     <div className="flex gap-2">
-                      <Select value={selectedLessonId} onValueChange={(lessonId) => {
-                        const lesson = subjectLessons[selectedSubjectId]?.find(l => l.id === lessonId)
-                        if (lesson) {
-                          setSelectedLessonId(lessonId)
-                        }
-                      }}>
+                      <Select 
+                        key={`lesson-select-${selectedSubjectId}-${(subjectLessons[selectedSubjectId] || []).length}-${window.SELECTED_TEACHER_GROUPS?.join(',') || 'all'}`}
+                        value={selectedLessonId} 
+                        onValueChange={(lessonId) => {
+                          const lesson = subjectLessons[selectedSubjectId]?.find(l => l.id === lessonId)
+                          if (lesson) {
+                            setSelectedLessonId(lessonId)
+                          }
+                        }}
+                      >
                         <SelectTrigger>
                           <SelectValue placeholder="Select lesson" />
                         </SelectTrigger>
                         <SelectContent>
-                          {(subjectLessons[selectedSubjectId] || []).map(lesson => {
+                          {filteredSubjectLessons.map(lesson => {
                             const gradingStatus = getLessonGradingStatus(lesson.id);
                             const getStatusColor = () => {
                               switch (gradingStatus) {
@@ -2314,10 +2635,10 @@ const saveGrade = async (studentId: string) => {
                         
                         // Function to focus first student based on mode
                         const focusFirstStudent = () => {
-                          if (enrolledStudents.length > 0) {
+                          if (displayedStudents.length > 0) {
                             if (isTableMode && currentSelectedLessonId) {
                               // Table view: start editing first student in current lesson
-                              const firstStudent = enrolledStudents[0];
+                              const firstStudent = displayedStudents[0];
                               const existingGrade = grades.find(g => g.studentId === firstStudent.id && g.lessonId === currentSelectedLessonId);
                               const isSkipped = existingGrade && existingGrade.percentage === 0 && existingGrade.errors === (existingGrade.maxPoints || existingGrade.points);
                               const currentValue = existingGrade
@@ -2328,7 +2649,7 @@ const saveGrade = async (studentId: string) => {
                               startEditingGrade(firstStudent.id, currentSelectedLessonId, currentValue);
                             } else {
                               // Entry view: focus first input
-                              const firstStudentId = enrolledStudents[0].id;
+                              const firstStudentId = displayedStudents[0].id;
                               const firstInput = inputRefs.current[firstStudentId];
                               if (firstInput) {
                                 firstInput.focus();
@@ -2369,20 +2690,70 @@ const saveGrade = async (studentId: string) => {
                     placeholder={placeholderValue}
                     disabled={!selectedLesson}
                   />
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      if (!selectedLesson) return;
-                      const newPoints = parseFloat(lessonPoints)
-                      if (!isNaN(newPoints) && newPoints > 0 && newPoints !== selectedLesson.points) {
-                        updateLessonPoints(newPoints)
-                      }
-                    }}
-                    disabled={!selectedLesson}
-                  >
-                    Update
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Label className="text-sm font-medium">Date:</Label>
+                    <Input
+                      ref={lessonDateRef}
+                      type="date"
+                      value={lessonDate}
+                      onChange={(e) => setLessonDate(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.ctrlKey || e.metaKey || e.altKey) return
+                        if (e.key === 'Enter') {
+                          e.preventDefault()
+                          if (!selectedLesson) return
+                          const normalizedCurrent = normalizeDateInput(selectedLesson.date)
+                          if (lessonDate !== normalizedCurrent) {
+                            updateLessonDate(lessonDate || '')
+                          }
+                          return
+                        }
+                        const lowerKey = e.key.toLowerCase()
+                        if (lowerKey === 't' || lowerKey === 'y') {
+                          e.preventDefault()
+                          if (!selectedLesson) return
+                          const iso = lowerKey === 'y'
+                            ? getLocalISODate(-1)
+                            : getLocalISODate()
+                          setLessonDate(iso)
+                          setLessonDatePrefilled(false)
+                          const normalizedCurrent = normalizeDateInput(selectedLesson.date)
+                          if (iso !== normalizedCurrent) {
+                            updateLessonDate(iso, { silent: true })
+                          }
+                        }
+                      }}
+                      onBlur={() => {
+                        if (!selectedLesson) return
+                        const normalizedCurrent = normalizeDateInput(selectedLesson.date)
+                        if (lessonDate !== normalizedCurrent) {
+                          // Only persist on blur if the user actually touched the date (not an untouched prefill)
+                          if (lessonDatePrefilled && !normalizedCurrent) return
+                          setLessonDatePrefilled(false)
+                          updateLessonDate(lessonDate || '')
+                        }
+                      }}
+                      className="w-36"
+                      disabled={!selectedLesson}
+                    />
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        if (!selectedLesson) return
+                        const iso = getLocalISODate()
+                        setLessonDate(iso)
+                        setLessonDatePrefilled(false)
+                        const normalizedCurrent = normalizeDateInput(selectedLesson.date)
+                        if (iso !== normalizedCurrent) {
+                          updateLessonDate(iso, { silent: true })
+                        }
+                      }}
+                      disabled={!selectedLesson}
+                    >
+                      Today
+                    </Button>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent>
@@ -2410,7 +2781,13 @@ const saveGrade = async (studentId: string) => {
                       <div className="col-span-2">Status</div>
                     </div>
                     
-                    {enrolledStudents.map((student, index) => {
+                    {groupedEnrolledStudents.map(({ groupName, students: groupStudents }) => (
+                      <div key={groupName} className="space-y-2">
+                        <h4 className="text-lg font-semibold px-3 py-2 bg-muted/20 rounded-md border-l-4 border-primary">
+                          {groupName}
+                        </h4>
+                        {groupStudents.map((student) => {
+                          const globalIndex = displayedStudentIndex.get(student.id) ?? -1
                       const currentValue = gradeValues[student.id] || ''
                       let displayPercentage = 0
                       
@@ -2449,7 +2826,7 @@ const saveGrade = async (studentId: string) => {
                         <div
                           key={student.id}
                           className={`grid grid-cols-12 gap-4 p-3 rounded-lg border transition-colors ${
-                            focusedCell?.row === index ? 'bg-primary/5 border-primary' : 'bg-card border-border'
+                            focusedCell?.row === globalIndex ? 'bg-primary/5 border-primary' : 'bg-card border-border'
                           }`}
                         >
                           <div className="col-span-5 flex items-center">
@@ -2467,9 +2844,9 @@ const saveGrade = async (studentId: string) => {
                               value={currentValue}
                               onChange={(e) => updateGradeValue(student.id, e.target.value)}
                               onBlur={() => saveGrade(student.id)}
-                              onKeyDown={(e) => handleKeyNavigation(e, student.id, index)}
+                              onKeyDown={(e) => handleKeyNavigation(e, student.id, globalIndex)}
                               onFocus={(e) => {
-                                setFocusedCell({ row: index, col: 0 });
+                                setFocusedCell({ row: globalIndex, col: 0 });
                                 e.target.select();
                               }}
                               className="grade-cell font-medium tabular-nums"
@@ -2535,6 +2912,8 @@ const saveGrade = async (studentId: string) => {
                         </div>
                       )
                     })}
+                      </div>
+                    ))}
                   </div>
                 )}
               </CardContent>
@@ -2561,6 +2940,12 @@ const saveGrade = async (studentId: string) => {
                     <Label className="text-sm">Max Points</Label>
                     <p className="font-medium">{selectedLesson.points || selectedLesson.maxPoints}</p>
                   </div>
+                  {selectedLesson.date && (
+                    <div>
+                      <Label className="text-sm">Date</Label>
+                      <p className="font-medium">{normalizeDateInput(selectedLesson.date)}</p>
+                    </div>
+                  )}
                   {selectedLesson.dueDate && (
                     <div>
                       <Label className="text-sm">Due Date</Label>
@@ -2632,6 +3017,18 @@ const saveGrade = async (studentId: string) => {
                   <Badge variant="outline" className="text-xs">Space</Badge>
                 </div>
                 <div className="flex justify-between">
+                  <span>Edit lesson date</span>
+                  <Badge variant="outline" className="text-xs">Shift+Space</Badge>
+                </div>
+                <div className="flex justify-between">
+                  <span>Set date to today</span>
+                  <Badge variant="outline" className="text-xs">T</Badge>
+                </div>
+                <div className="flex justify-between">
+                  <span>Set date to yesterday</span>
+                  <Badge variant="outline" className="text-xs">Y</Badge>
+                </div>
+                <div className="flex justify-between">
                   <span>Save current grade</span>
                   <Badge variant="outline" className="text-xs">Tab / Blur</Badge>
                 </div>
@@ -2658,13 +3055,23 @@ const saveGrade = async (studentId: string) => {
               handleEditLessonSave({
                 name: formData.get('name') as string,
                 type: formData.get('type') as string, // Allow any custom grade category type
-                points: parseInt(formData.get('points') as string) || 0
+                points: parseInt(formData.get('points') as string) || 0,
+                date: formData.get('date') ? String(formData.get('date')) : undefined
               });
             }}>
               <div className="space-y-4">
                 <div>
                   <Label htmlFor="edit-lesson-name">Name</Label>
                   <Input id="edit-lesson-name" name="name" defaultValue={editLessonDialog.lesson.name} onFocus={(e) => e.target.select()} />
+                </div>
+                <div>
+                  <Label htmlFor="edit-lesson-date">Date</Label>
+                  <Input
+                    id="edit-lesson-date"
+                    name="date"
+                    type="date"
+                    defaultValue={normalizeDateInput(editLessonDialog.lesson.date)}
+                  />
                 </div>
                 <div>
                   <Label htmlFor="edit-lesson-type">Type</Label>

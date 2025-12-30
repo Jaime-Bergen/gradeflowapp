@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { apiClient } from '@/lib/api'
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -15,8 +15,9 @@ import { toast } from 'sonner'
 
 export default function Students() {
   const [students, setStudents] = useState<Student[]>([])
-  const [subjects, setSubjects] = useState<Subject[]>([])
+  const [filteredStudents, setFilteredStudents] = useState<Student[]>([])
   const [studentGroups, setStudentGroups] = useState<any[]>([])
+  const [enrollmentSubjects, setEnrollmentSubjects] = useState<Subject[]>([]) // Only for enrollment dialogs
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false)
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
   const [editingStudent, setEditingStudent] = useState<Student | null>(null)
@@ -35,19 +36,106 @@ export default function Students() {
     subjects: [] as string[]
   })
 
+  const formatDateForInput = (value?: string | null) => {
+    if (!value) return ''
+    const match = value.match(/^\d{4}-\d{2}-\d{2}/)
+    return match ? match[0] : ''
+  }
+
+  const normalizeStudentBirthdays = (rawStudents: Student[]): Student[] =>
+    rawStudents.map(student => ({
+      ...student,
+      birthday: formatDateForInput((student as any).birthday)
+    }))
+
+  // Helper function to extract grade number from group name for sorting
+  const extractGradeNumber = (groupName: string): number => {
+    const match = groupName.match(/Grade\s+(\d+)/i)
+    return match ? parseInt(match[1], 10) : 999 // Put non-grade groups at the end
+  }
+
+  // Helper function to get the first group from a student's group_name
+  const getFirstGroup = (groupName: string | null | undefined): string => {
+    if (!groupName) return 'No Group'
+    return groupName.split(',')[0].trim()
+  }
+
+  // Helper function to group and sort students by their first group
+  const groupAndSortStudents = (students: Student[]) => {
+    // Group students by their first group
+    const grouped = students.reduce((acc, student) => {
+      const firstGroup = getFirstGroup(student.group_name)
+      if (!acc[firstGroup]) {
+        acc[firstGroup] = []
+      }
+      acc[firstGroup].push(student)
+      return acc
+    }, {} as Record<string, Student[]>)
+
+    // Sort groups by grade number, then alphabetically
+    const sortedGroupNames = Object.keys(grouped).sort((a, b) => {
+      const gradeA = extractGradeNumber(a)
+      const gradeB = extractGradeNumber(b)
+      
+      // If both are grades, sort numerically
+      if (gradeA !== 999 && gradeB !== 999) {
+        return gradeA - gradeB
+      }
+      
+      // If one is a grade and one isn't, put grade first
+      if (gradeA !== 999 && gradeB === 999) return -1
+      if (gradeA === 999 && gradeB !== 999) return 1
+      
+      // If neither are grades, sort alphabetically
+      return a.localeCompare(b)
+    })
+
+    // Return sorted groups with their students (also sorted by name)
+    return sortedGroupNames.map(groupName => ({
+      groupName,
+      students: grouped[groupName].sort((a, b) => a.name.localeCompare(b.name))
+    }))
+  }
+
+  const filterDataByTeacherGroups = useCallback(() => {
+    const selectedGroupIds = window.SELECTED_TEACHER_GROUPS
+    
+    // Don't filter if we don't have student groups data yet
+    if (studentGroups.length === 0) {
+      return
+    }
+    
+    if (!selectedGroupIds || selectedGroupIds.length === 0) {
+      // If no teacher selected or no groups, show all data
+      setFilteredStudents(students)
+      return
+    }
+
+    // Filter students by their group membership
+    const filtered = students.filter(student => {
+      if (!student.group_name) return false
+      
+      // Parse student's group names and check if any match selected teacher's groups
+      const studentGroupNames = student.group_name.split(',').map(g => g.trim())
+      const teacherGroupNames = studentGroups
+        .filter(group => selectedGroupIds.includes(group.id))
+        .map(group => group.name)
+      
+      return studentGroupNames.some(studentGroup => 
+        teacherGroupNames.includes(studentGroup)
+      )
+    })
+
+    setFilteredStudents(filtered)
+  }, [students, studentGroups])
+
   const fetchData = async () => {
     try {
       const studentsRes = await apiClient.getStudents();
-      setStudents(Array.isArray(studentsRes.data)
+      const studentsData = Array.isArray(studentsRes.data)
         ? studentsRes.data
         : (studentsRes.data as any)?.students || []
-      )
-      
-      const subjectsRes = await apiClient.getSubjects()
-      setSubjects(Array.isArray(subjectsRes.data) 
-        ? subjectsRes.data 
-        : (subjectsRes.data as any)?.subjects || []
-      )
+      setStudents(normalizeStudentBirthdays(studentsData))
 
       const groupsRes = await apiClient.getStudentGroups()
       const rawGroups = Array.isArray(groupsRes.data) 
@@ -66,7 +154,8 @@ export default function Students() {
   }
 
   useEffect(() => { 
-    fetchData() 
+    fetchData()
+    fetchEnrollmentSubjects() // Fetch subjects on component mount
 
     // Add click-outside handler for dropdowns
     const handleClickOutside = (event: MouseEvent) => {
@@ -105,6 +194,23 @@ export default function Students() {
     window.addEventListener('gradeflow-students-highlight-action', handleHighlightAction as EventListener);
     return () => window.removeEventListener('gradeflow-students-highlight-action', handleHighlightAction as EventListener);
   }, []);
+
+  // Filter data when teacher selection changes or data is updated
+  useEffect(() => {
+    filterDataByTeacherGroups()
+  }, [filterDataByTeacherGroups])
+
+  // Listen for teacher selection changes
+  useEffect(() => {
+    const handleTeacherChange = () => {
+      filterDataByTeacherGroups()
+    }
+    
+    window.addEventListener('teacher-selection-changed', handleTeacherChange)
+    return () => {
+      window.removeEventListener('teacher-selection-changed', handleTeacherChange)
+    }
+  }, [filterDataByTeacherGroups])
 
   const createNewGroup = async () => {
     if (!newGroupName.trim()) return
@@ -149,8 +255,8 @@ export default function Students() {
     
     // Find enrolled subjects that would no longer be available
     const affectedSubjects = student.subjects
-      .map(subjectId => subjects.find(s => s.id === subjectId))
-      .filter(subject => subject && !remainingSubjectIds.includes(subject.id));
+      .map(subjectId => enrollmentSubjects.find(s => s.id === subjectId))
+      .filter((subject): subject is Subject => subject !== undefined && !remainingSubjectIds.includes(subject.id));
     
     return affectedSubjects.length > 0 ? affectedSubjects : null;
   };
@@ -161,7 +267,7 @@ export default function Students() {
     const affectedSubjects = checkGroupRemovalWarning(group, editingStudent);
     
     if (affectedSubjects && affectedSubjects.length > 0) {
-      const subjectNames = affectedSubjects.map(s => s?.name).filter(Boolean).join(', ');
+      const subjectNames = affectedSubjects.map(s => s.name).join(', ');
       const proceed = window.confirm(
         `Warning: Removing "${group.name}" will make these enrolled subjects unavailable: ${subjectNames}.\n\n` +
         `The student will be automatically unenrolled from these subjects. Do you want to continue?`
@@ -172,7 +278,7 @@ export default function Students() {
       }
       
       // Remove affected subjects from student's enrollment
-      const affectedSubjectIds = affectedSubjects.map(s => s?.id).filter(Boolean);
+      const affectedSubjectIds = affectedSubjects.map(s => s.id);
       setNewStudent(prev => ({
         ...prev,
         subjects: prev.subjects.filter(subjectId => !affectedSubjectIds.includes(subjectId))
@@ -183,14 +289,29 @@ export default function Students() {
     setEditSelectedGroupIds(prev => prev.filter(id => id !== group.id));
   };
 
-  const getAvailableSubjects = (groupNames?: string) => {
-    return subjects.filter(subject => {
+  // Fetch subjects for enrollment dialogs (separate from Subjects component state)
+  const fetchEnrollmentSubjects = async () => {
+    try {
+      const subjectsRes = await apiClient.getSubjects()
+      const subjectsData = Array.isArray(subjectsRes.data) 
+        ? subjectsRes.data 
+        : (subjectsRes.data as any)?.subjects || []
+      setEnrollmentSubjects(subjectsData)
+    } catch (error) {
+      console.error('Error fetching subjects for enrollment:', error)
+      setEnrollmentSubjects([])
+    }
+  }
+
+  const getAvailableSubjects = (groupNames?: string): Subject[] => {
+    // Always use the full subjects list for student enrollment, regardless of teacher filtering
+    return enrollmentSubjects.filter(subject => {
       // If subject has no group restriction, it's available to all
       if (!subject.group_name || !groupNames) return true;
       
       // Parse comma-separated group names
-      const studentGroups = groupNames.split(',').map(g => g.trim().toLowerCase());
-      const subjectGroups = subject.group_name.split(',').map(g => g.trim().toLowerCase());
+      const studentGroups = groupNames.split(',').map((g: string) => g.trim().toLowerCase());
+      const subjectGroups = subject.group_name.split(',').map((g: string) => g.trim().toLowerCase());
       
       // Check if there's any overlap between student groups and subject groups
       return studentGroups.some(studentGroup => 
@@ -208,25 +329,36 @@ export default function Students() {
       return
     }
     
-    const student: any = {
-      name: newStudent.name.trim(),
-      birthday: newStudent.birthday || null,
-      groupIds: selectedGroupIds // Send as groupIds for proper junction table handling
-    };
-    
-    await apiClient.createStudent(student)
-    await fetchData() // Refresh data
-    setNewStudent({ name: '', birthday: '', subjects: [] })
-    setSelectedGroupIds([])
-    setIsAddDialogOpen(false)
-    toast.success("Student added successfully")
+    try {
+      const birthday = formatDateForInput(newStudent.birthday)
+
+      const student: any = {
+        name: newStudent.name.trim(),
+        birthday: birthday || null,
+        groupIds: selectedGroupIds // Send as groupIds for proper junction table handling
+      };
+      
+      const res = await apiClient.createStudent(student)
+      if ((res as any)?.error) {
+        throw new Error((res as any).error)
+      }
+
+      await fetchData() // Refresh data
+      setNewStudent({ name: '', birthday: '', subjects: [] })
+      setSelectedGroupIds([])
+      setIsAddDialogOpen(false)
+      toast.success("Student added successfully")
+    } catch (error) {
+      console.error("Error adding student:", error)
+      toast.error("Failed to add student")
+    }
   }
 
   const editStudent = (student: Student) => {
     setEditingStudent(student)
     setNewStudent({
       name: student.name,
-      birthday: student.birthday || '',
+      birthday: formatDateForInput(student.birthday),
       subjects: [...student.subjects]
     })
     // Set selected groups for editing
@@ -237,6 +369,7 @@ export default function Students() {
         }).filter(Boolean)
       : []
     setEditSelectedGroupIds(studentGroupIds)
+    fetchEnrollmentSubjects() // Fetch subjects when opening edit dialog
     setIsEditDialogOpen(true)
   }
 
@@ -251,23 +384,36 @@ export default function Students() {
       return
     }
     
-    const updatedStudent: any = {
-      name: newStudent.name.trim(),
-      birthday: newStudent.birthday || null,
-      groupIds: editSelectedGroupIds // Send as groupIds for proper junction table handling
-    };
-    
-    await apiClient.updateStudent(editingStudent.id, updatedStudent)
-    
-    // Update student subjects (including any that were removed due to group deselection)
-    await apiClient.updateStudentSubjects(editingStudent.id, { subjects: newStudent.subjects })
-    
-    await fetchData() // Refresh data
-    setNewStudent({ name: '', birthday: '', subjects: [] })
-    setEditSelectedGroupIds([])
-    setEditingStudent(null)
-    setIsEditDialogOpen(false)
-    toast.success("Student updated successfully")
+    try {
+      const birthday = formatDateForInput(newStudent.birthday)
+
+      const updatedStudent: any = {
+        name: newStudent.name.trim(),
+        birthday: birthday || null,
+        groupIds: editSelectedGroupIds // Send as groupIds for proper junction table handling
+      };
+      
+      const updateRes = await apiClient.updateStudent(editingStudent.id, updatedStudent)
+      if ((updateRes as any)?.error) {
+        throw new Error((updateRes as any).error)
+      }
+      
+      // Update student subjects (including any that were removed due to group deselection)
+      const subjectsRes = await apiClient.updateStudentSubjects(editingStudent.id, { subjects: newStudent.subjects })
+      if ((subjectsRes as any)?.error) {
+        throw new Error((subjectsRes as any).error)
+      }
+      
+      await fetchData() // Refresh data
+      setNewStudent({ name: '', birthday: '', subjects: [] })
+      setEditSelectedGroupIds([])
+      setEditingStudent(null)
+      setIsEditDialogOpen(false)
+      toast.success("Student updated successfully")
+    } catch (error) {
+      console.error("Error updating student:", error)
+      toast.error("Failed to update student")
+    }
   }
 
   const removeStudent = async (studentId: string) => {
@@ -706,112 +852,127 @@ export default function Students() {
         </div>
       </div>
 
-      {students.length === 0 ? (
+      {filteredStudents.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center">
             <UserPlus size={48} className="mx-auto text-muted-foreground mb-4" />
             <h3 className="text-lg font-medium mb-2">No students yet</h3>
             <p className="text-muted-foreground mb-4">Add your first student to get started</p>
-            <Button onClick={() => setIsAddDialogOpen(true)}>
+            <Button onClick={() => {
+              fetchEnrollmentSubjects() // Fetch subjects when opening add dialog
+              setIsAddDialogOpen(true)
+            }}>
               <Plus size={16} className="mr-2" />
               Add Student
             </Button>
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {students.map((student) => (
-            <Card key={student.id} className="relative group">
-              <CardHeader className="pb-3">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <CardTitle className="text-lg flex items-center gap-2">
-                      {student.name}
-                      {student.group_name && (
+        <div className="space-y-8">
+          {groupAndSortStudents(filteredStudents).map(({ groupName, students: groupStudents }) => (
+            <div key={groupName}>
+              <h3 className="text-xl font-semibold mb-4 pb-2 border-b">{groupName}</h3>
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                {groupStudents.map((student) => (
+                  <Card key={student.id} className="relative group">
+                    <CardHeader className="pb-3">
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <CardTitle className="text-lg flex items-center gap-2">
+                            {student.name}
+                            {student.group_name && (
+                              <div className="flex gap-1">
+                                {student.group_name.split(',').map(group => group.trim()).filter(g => g).map((group, index) => (
+                                  <Badge key={`${student.id}-${group}-${index}`} variant="outline">{group}</Badge>
+                                ))}
+                              </div>
+                            )}
+                          </CardTitle>
+                          {student.birthday && (
+                            <p className="text-sm text-muted-foreground mt-1">
+                              Birthday: {student.birthday}
+                            </p>
+                          )}
+                        </div>
                         <div className="flex gap-1">
-                          {student.group_name.split(',').map(group => group.trim()).filter(g => g).map((group, index) => (
-                            <Badge key={`${student.id}-${group}-${index}`} variant="outline">{group}</Badge>
-                          ))}
-                        </div>
-                      )}
-                    </CardTitle>
-                    {student.birthday && (
-                      <p className="text-sm text-muted-foreground mt-1">
-                        Birthday: {new Date(student.birthday).toLocaleDateString()}
-                      </p>
-                    )}
-                  </div>
-                  <div className="flex gap-1">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => editStudent(student)}
-                    >
-                      <PencilSimple size={16} />
-                    </Button>
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                        >
-                          <Trash size={16} className="text-destructive" />
-                        </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>Delete Student</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            Are you sure you want to delete <strong>{student.name}</strong>? 
-                            This action cannot be undone and will permanently remove the student and all associated grades.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>Cancel</AlertDialogCancel>
-                          <AlertDialogAction 
-                            onClick={() => removeStudent(student.id)}
-                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => editStudent(student)}
                           >
-                            Delete Student
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  <div>
-                    <Label className="text-sm font-medium">Subjects ({student.subjects.length})</Label>
-                    {(() => {
-                      const availableSubjects = getAvailableSubjects(student.group_name)
-                      if (availableSubjects.length === 0) {
-                        return <p className="text-xs text-muted-foreground">No subjects available for this group</p>;
-                      }
-                      return (
-                        <div className="flex flex-wrap gap-1 mt-2">
-                          {availableSubjects.map((subject) => {
-                            const isEnrolled = student.subjects.includes(subject.id);
-                            return (
+                            <PencilSimple size={16} />
+                          </Button>
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
                               <Button
-                                key={subject.id}
-                                variant={isEnrolled ? "default" : "outline"}
+                                variant="ghost"
                                 size="sm"
-                                onClick={() => toggleSubject(student.id, subject.id)}
-                                className="text-xs px-2 py-1 h-7"
                               >
-                                {subject.name}
+                                <Trash size={16} className="text-destructive" />
                               </Button>
-                            );
-                          })}
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>Delete Student</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  Are you sure you want to delete <strong>{student.name}</strong>? 
+                                  This action cannot be undone and will permanently remove the student and all associated grades.
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                <AlertDialogAction 
+                                  onClick={() => removeStudent(student.id)}
+                                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                >
+                                  Delete Student
+                                </AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
                         </div>
-                      )
-                    })()}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+                      </div>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-3">
+                        <div>
+                          <Label className="text-sm font-medium">Subjects ({student.subjects.length})</Label>
+                          {(() => {
+                            const availableSubjects = getAvailableSubjects(student.group_name)
+                            
+                            if (enrollmentSubjects.length === 0) {
+                              return <p className="text-xs text-muted-foreground">Loading subjects...</p>;
+                            }
+                            
+                            if (availableSubjects.length === 0) {
+                              return <p className="text-xs text-muted-foreground">No subjects available for this group</p>;
+                            }
+                            return (
+                              <div className="flex flex-wrap gap-1 mt-2">
+                                {availableSubjects.map((subject) => {
+                                  const isEnrolled = student.subjects.includes(subject.id);
+                                  return (
+                                    <Button
+                                      key={subject.id}
+                                      variant={isEnrolled ? "default" : "outline"}
+                                      size="sm"
+                                      onClick={() => toggleSubject(student.id, subject.id)}
+                                      className="text-xs px-2 py-1 h-7"
+                                    >
+                                      {subject.name}
+                                    </Button>
+                                  );
+                                })}
+                              </div>
+                            )
+                          })()}
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </div>
           ))}
         </div>
       )}

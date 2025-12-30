@@ -148,6 +148,45 @@ const styles = StyleSheet.create({
     color: '#4b5563',
     lineHeight: 1.4,
   },
+  attendanceSection: {
+    marginTop: 16,
+    padding: 12,
+    backgroundColor: '#f8fafc',
+    borderRadius: 6,
+    border: '1px solid #e2e8f0',
+  },
+  attendanceHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  attendanceTitle: {
+    fontSize: 12,
+    color: '#1f2937',
+  },
+  attendanceRange: {
+    fontSize: 9,
+    color: '#6b7280',
+  },
+  attendanceGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  attendanceItem: {
+    width: '50%',
+    paddingVertical: 4,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  attendanceLabel: {
+    fontSize: 10,
+    color: '#4b5563',
+  },
+  attendanceValue: {
+    fontSize: 10,
+    color: '#1f2937',
+    fontWeight: 'bold',
+  },
   footer: {
     position: 'absolute',
     bottom: 30,
@@ -407,6 +446,36 @@ const ReportCardPDF: React.FC<ReportCardPDFProps> = ({ student, reportCard, scho
             )}
           </View>
         </View>
+
+        {/* Attendance Summary */}
+        {reportCard.attendanceSummary && (
+          <View style={styles.attendanceSection}>
+            <View style={styles.attendanceHeader}>
+              <Text style={styles.attendanceTitle}>Attendance</Text>
+              <Text style={styles.attendanceRange}>
+                {(reportCard.attendanceSummary.startDate || '').trim() || 'Start'} – {(reportCard.attendanceSummary.endDate || '').trim() || 'End'}
+              </Text>
+            </View>
+            <View style={styles.attendanceGrid}>
+              <View style={styles.attendanceItem}>
+                <Text style={styles.attendanceLabel}>Present</Text>
+                <Text style={styles.attendanceValue}>{reportCard.attendanceSummary.present ?? 0}</Text>
+              </View>
+              <View style={styles.attendanceItem}>
+                <Text style={styles.attendanceLabel}>Tardy</Text>
+                <Text style={styles.attendanceValue}>{reportCard.attendanceSummary.tardy ?? 0}</Text>
+              </View>
+              <View style={styles.attendanceItem}>
+                <Text style={styles.attendanceLabel}>Absent</Text>
+                <Text style={styles.attendanceValue}>{reportCard.attendanceSummary.absent ?? 0}</Text>
+              </View>
+              <View style={styles.attendanceItem}>
+                <Text style={styles.attendanceLabel}>Total Days</Text>
+                <Text style={styles.attendanceValue}>{reportCard.attendanceSummary.total ?? 0}</Text>
+              </View>
+            </View>
+          </View>
+        )}
 
         {/* Comments Section */}
         {reportCard.comments && (

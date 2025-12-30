@@ -18,8 +18,11 @@ import restoreRoutes from './routes/restore';
 import metadataRoutes from './routes/metadata';
 import backupRoutes from './routes/backups';
 import gradingPeriodMarkersRoutes from './routes/gradingPeriodMarkers';
+import gradingPeriodsRoutes from './routes/gradingPeriods';
 import feedbackRoutes from './routes/feedback';
 import utilsRoutes from './routes/utils';
+import teachersRoutes from './routes/teachers';
+import attendanceRoutes from './routes/attendance';
 import { errorHandler } from './middleware/errorHandler';
 import { authenticateToken } from './middleware/auth';
 
@@ -67,15 +70,17 @@ if (process.env.NODE_ENV !== 'production') {
 // Trust proxy for Heroku (more specific configuration)
 app.set('trust proxy', 1); // Trust first proxy (Heroku)
 
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'), // 15 minutes
-  max: parseInt(process.env.RATE_LIMIT_MAX || '100'),
-  message: 'Too many requests from this IP, please try again later.',
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-app.use(limiter);
+// Rate limiting (disabled in non-production to avoid blocking local dev)
+if (process.env.NODE_ENV === 'production' || process.env.ENABLE_RATE_LIMIT === 'true') {
+  const limiter = rateLimit({
+    windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'), // 15 minutes
+    max: parseInt(process.env.RATE_LIMIT_MAX || '100'),
+    message: 'Too many requests from this IP, please try again later.',
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+  app.use(limiter);
+}
 
 // Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
@@ -98,7 +103,10 @@ app.use('/api/grade-category-types', authenticateToken, gradeCategoryTypesRoutes
 app.use('/api/reports', authenticateToken, reportRoutes);
 app.use('/api/lessons', authenticateToken, lessonsRoutes);
 app.use('/api/grading-period-markers', authenticateToken, gradingPeriodMarkersRoutes);
+app.use('/api/grading-periods', authenticateToken, gradingPeriodsRoutes);
 app.use('/api/feedback', authenticateToken, feedbackRoutes);
+app.use('/api/teachers', authenticateToken, teachersRoutes);
+app.use('/api/attendance', authenticateToken, attendanceRoutes);
 app.use('/api/utils', utilsRoutes);
 app.use('/api/metadata', metadataRoutes);
 app.use('/api/backups', backupRoutes);

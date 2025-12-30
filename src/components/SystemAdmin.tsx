@@ -25,11 +25,13 @@ import {
   Plus,
   Pencil,
   Trash2,
-  FileJson
+  FileJson,
+  LogOut
 } from "lucide-react"
 import { toast } from 'sonner'
+import { v4 as uuidv4 } from 'uuid'
 import { apiClient } from '@/lib/api'
-import { Student, Subject, Grade } from '@/lib/types'
+import { Student, Subject, Grade, GradingPeriod } from '@/lib/types'
 
 export default function SystemAdmin() {
   const [students, setStudents] = useState<Student[]>([])
@@ -44,12 +46,30 @@ export default function SystemAdmin() {
   const [schoolSettings, setSchoolSettings] = useState({
     schoolName: '',
     firstDayOfSchool: '',
-    gradingPeriods: 6
+    gradingPeriods: 6,
+    gradingMode: 'dates' as 'dates' | 'markers',
+    autoEnrollSubjects: true
   })
   const [passwordChange, setPasswordChange] = useState({
     currentPassword: '',
     newPassword: '',
     confirmPassword: ''
+  })
+  const [passwordDialog, setPasswordDialog] = useState(false)
+  const [userProfile, setUserProfile] = useState<any>(null)
+
+  // Teachers state
+  const [teachers, setTeachers] = useState<any[]>([])
+  const [teacherDialog, setTeacherDialog] = useState({
+    open: false,
+    mode: 'add' as 'add' | 'edit',
+    teacher: null as any
+  })
+  const [teacherForm, setTeacherForm] = useState({
+    name: '',
+    email: '',
+    password: '',
+    selectedGroups: [] as string[]
   })
 
   // Student Group Management state
@@ -77,6 +97,10 @@ export default function SystemAdmin() {
     is_default: false
   })
 
+  // Grading periods (date-based reporting)
+  const [gradingPeriods, setGradingPeriods] = useState<GradingPeriod[]>([])
+  const [gradingPeriodsDirty, setGradingPeriodsDirty] = useState(false)
+
   // Restore state
   const [restoreDialog, setRestoreDialog] = useState({
     open: false,
@@ -91,6 +115,7 @@ export default function SystemAdmin() {
 
   useEffect(() => {
     loadSystemStats()
+    loadUserProfile()
   }, [])
 
   // Listen for settings navigation event
@@ -135,8 +160,20 @@ export default function SystemAdmin() {
                             Array.isArray((categoriesRes as any).data) ? (categoriesRes as any).data : []
       setGradeCategoryTypes(categoriesData)
 
+      // Fetch grading periods
+      const periodsRes = await apiClient.getGradingPeriods()
+      const periodsData = Array.isArray(periodsRes.data) ? periodsRes.data : []
+      const sortedPeriods = [...periodsData].sort((a, b) => a.orderIndex - b.orderIndex)
+      setGradingPeriods(sortedPeriods)
+      setGradingPeriodsDirty(false)
+
       // Load settings from Users
       await loadSettings()
+
+      // Load teachers
+      const teachersRes = await apiClient.getTeachers()
+      const teachersData = Array.isArray(teachersRes.data?.data) ? teachersRes.data.data : []
+      setTeachers(teachersData)
 
       setLastRefresh(new Date())
     } catch (error) {
@@ -144,6 +181,15 @@ export default function SystemAdmin() {
       toast.error('Failed to load system statistics')
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  const loadUserProfile = async () => {
+    try {
+      const response = await apiClient.getProfile()
+      setUserProfile(response.data)
+    } catch (error) {
+      console.error('Failed to load user profile:', error)
     }
   }
 
@@ -161,7 +207,15 @@ export default function SystemAdmin() {
         setSchoolSettings({
           schoolName: user.school_name || '',
           firstDayOfSchool: formattedDate,
-          gradingPeriods: user.grading_periods || 6
+          gradingPeriods: user.grading_periods || 6,
+          gradingMode: (() => {
+            const persisted = localStorage.getItem('gradeflow-grading-mode') as 'dates' | 'markers' | null
+            if ((user as any)?.grading_mode === 'markers') return 'markers'
+            if ((user as any)?.grading_mode === 'dates') return 'dates'
+            if (persisted === 'markers' || persisted === 'dates') return persisted
+            return gradingPeriods.length > 0 ? 'dates' : 'markers'
+          })(),
+          autoEnrollSubjects: user.auto_enroll_subjects ?? true
         })
       }
     } catch (error) {
@@ -174,13 +228,108 @@ export default function SystemAdmin() {
       await apiClient.updateProfile({
         school_name: schoolSettings.schoolName,
         first_day_of_school: schoolSettings.firstDayOfSchool,
-        grading_periods: schoolSettings.gradingPeriods
+        grading_periods: schoolSettings.gradingPeriods,
+        grading_mode: schoolSettings.gradingMode,
+        auto_enroll_subjects: schoolSettings.autoEnrollSubjects
       })
+      // Persist locally as a fallback when backend doesn't return grading_mode
+      localStorage.setItem('gradeflow-grading-mode', schoolSettings.gradingMode)
+      window.dispatchEvent(new CustomEvent('gradeflow-profile-updated', { detail: { gradingMode: schoolSettings.gradingMode } }))
       toast.success('School settings saved successfully')
     } catch (error) {
       console.error('Failed to save settings:', error)
       toast.error('Failed to save settings')
     }
+  }
+
+  const saveGradingPeriods = async () => {
+    if (gradingPeriods.length === 0) {
+      toast.error('Add at least one grading period')
+      return
+    }
+
+    // Basic validation: start <= end and ascending order
+    for (const period of gradingPeriods) {
+      if (new Date(period.startDate) > new Date(period.endDate)) {
+        toast.error(`Start date must be before end date for ${period.name}`)
+        return
+      }
+    }
+
+    const sorted = [...gradingPeriods].sort((a, b) => a.orderIndex - b.orderIndex)
+    const payload = sorted.map((p, idx) => ({
+      id: p.id,
+      name: p.name,
+      startDate: p.startDate,
+      endDate: p.endDate,
+      orderIndex: idx + 1
+    }))
+
+    try {
+      await apiClient.upsertGradingPeriods(payload)
+      setGradingPeriods(payload as any)
+      setGradingPeriodsDirty(false)
+      toast.success('Grading periods saved')
+    } catch (error) {
+      console.error('Failed to save grading periods:', error)
+      toast.error('Failed to save grading periods')
+    }
+  }
+
+  const safeUuid = () => {
+    // Prefer native randomUUID when available; fallback to uuid package otherwise
+    return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : uuidv4()
+  }
+
+  const addGradingPeriod = () => {
+    const maxAllowed = schoolSettings.gradingPeriods || 6
+    if (gradingPeriods.length >= maxAllowed) {
+      toast.error(`You set ${maxAllowed} grading periods. You can't add more.`)
+      return
+    }
+
+    const nextIndex = gradingPeriods.length + 1
+    const last = gradingPeriods[gradingPeriods.length - 1]
+    const start = last?.endDate || schoolSettings.firstDayOfSchool || new Date().toISOString().split('T')[0]
+    const end = last?.endDate || start
+    setGradingPeriods(prev => [...prev, {
+      id: safeUuid(),
+      name: `Period ${nextIndex}`,
+      startDate: start,
+      endDate: end,
+      orderIndex: nextIndex
+    }])
+    setGradingPeriodsDirty(true)
+  }
+
+  const updateGradingPeriod = (id: string, field: keyof GradingPeriod, value: string | number) => {
+    setGradingPeriods(prev => prev.map(p => p.id === id ? { ...p, [field]: value } : p))
+    setGradingPeriodsDirty(true)
+  }
+
+  const deleteGradingPeriod = (id: string) => {
+    setGradingPeriods(prev => prev.filter(p => p.id !== id).map((p, idx) => ({ ...p, orderIndex: idx + 1 })))
+    setGradingPeriodsDirty(true)
+  }
+
+  const openPasswordDialog = () => {
+    setPasswordDialog(true)
+    setPasswordChange({
+      currentPassword: '',
+      newPassword: '',
+      confirmPassword: ''
+    })
+  }
+
+  const closePasswordDialog = () => {
+    setPasswordDialog(false)
+    setPasswordChange({
+      currentPassword: '',
+      newPassword: '',
+      confirmPassword: ''
+    })
   }
 
   const changePassword = async () => {
@@ -206,14 +355,126 @@ export default function SystemAdmin() {
       })
       
       toast.success('Password changed successfully')
-      setPasswordChange({
-        currentPassword: '',
-        newPassword: '',
-        confirmPassword: ''
-      })
+      closePasswordDialog()
     } catch (error) {
       console.error('Failed to change password:', error)
       toast.error('Failed to change password')
+    }
+  }
+
+  const logout = async () => {
+    try {
+      await apiClient.logout()
+      // Clear local storage and redirect to login
+      localStorage.removeItem('authToken')
+      window.location.href = '/'
+      toast.success('Logged out successfully')
+    } catch (error) {
+      console.error('Logout error:', error)
+      // Even if the API call fails, clear local storage and redirect
+      localStorage.removeItem('authToken')
+      window.location.href = '/'
+    }
+  }
+
+  // Teachers Management functions
+  const openTeacherDialog = (mode: 'add' | 'edit', teacher?: any) => {
+    setTeacherDialog({ open: true, mode, teacher })
+    if (mode === 'edit' && teacher) {
+      setTeacherForm({
+        name: teacher.name || '',
+        email: teacher.email || '',
+        password: '',
+        selectedGroups: teacher.assigned_groups?.map((g: any) => g.name) || []
+      })
+    } else {
+      setTeacherForm({
+        name: '',
+        email: '',
+        password: '',
+        selectedGroups: []
+      })
+    }
+  }
+
+  const closeTeacherDialog = () => {
+    setTeacherDialog({ open: false, mode: 'add', teacher: null })
+    setTeacherForm({
+      name: '',
+      email: '',
+      password: '',
+      selectedGroups: []
+    })
+  }
+
+  const saveTeacher = async () => {
+    if (!teacherForm.name.trim()) {
+      toast.error('Teacher name is required')
+      return
+    }
+
+    if (!teacherForm.email.trim()) {
+      toast.error('Teacher email is required')
+      return
+    }
+
+    if (teacherDialog.mode === 'add' && !teacherForm.password.trim()) {
+      toast.error('Password is required for new teachers')
+      return
+    }
+
+    try {
+      if (teacherDialog.mode === 'edit' && teacherDialog.teacher) {
+        await apiClient.updateTeacher(teacherDialog.teacher.id, {
+          name: teacherForm.name,
+          email: teacherForm.email,
+          selectedGroups: teacherForm.selectedGroups
+        })
+        toast.success('Teacher updated successfully')
+      } else {
+        await apiClient.createTeacher({
+          name: teacherForm.name,
+          email: teacherForm.email,
+          password: teacherForm.password,
+          selectedGroups: teacherForm.selectedGroups
+        })
+        toast.success('Teacher created successfully')
+      }
+
+      // Refresh teachers list
+      const teachersRes = await apiClient.getTeachers()
+      const teachersData = Array.isArray(teachersRes.data?.data) ? teachersRes.data.data : []
+      setTeachers(teachersData)
+
+      // Notify other components that teachers have been updated
+      window.dispatchEvent(new CustomEvent('gradeflow-teachers-updated'))
+
+      closeTeacherDialog()
+    } catch (error) {
+      console.error('Failed to save teacher:', error)
+      toast.error(`Failed to ${teacherDialog.mode === 'edit' ? 'update' : 'create'} teacher`)
+    }
+  }
+
+  const deleteTeacher = async (teacher: any) => {
+    if (!window.confirm(`Are you sure you want to delete teacher "${teacher.name}"?`)) {
+      return
+    }
+
+    try {
+      await apiClient.deleteTeacher(teacher.id)
+      toast.success('Teacher deleted successfully')
+      
+      // Refresh teachers list
+      const teachersRes = await apiClient.getTeachers()
+      const teachersData = Array.isArray(teachersRes.data?.data) ? teachersRes.data.data : []
+      setTeachers(teachersData)
+      
+      // Notify other components that teachers have been updated
+      window.dispatchEvent(new CustomEvent('gradeflow-teachers-updated'))
+    } catch (error) {
+      console.error('Failed to delete teacher:', error)
+      toast.error('Failed to delete teacher')
     }
   }
 
@@ -470,7 +731,9 @@ export default function SystemAdmin() {
         schoolSettings: {
           schoolName: userProfile.school_name || schoolSettings.schoolName,
           firstDayOfSchool: userProfile.first_day_of_school || schoolSettings.firstDayOfSchool,
-          gradingPeriods: userProfile.grading_periods || schoolSettings.gradingPeriods
+          gradingPeriods: userProfile.grading_periods || schoolSettings.gradingPeriods,
+          gradingMode: (userProfile as any)?.grading_mode === 'markers' ? 'markers' : schoolSettings.gradingMode,
+          autoEnrollSubjects: userProfile.auto_enroll_subjects ?? true
         },
         
         // Export metadata
@@ -601,6 +864,7 @@ export default function SystemAdmin() {
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="settings">Settings</TabsTrigger>
+          <TabsTrigger value="teachers">Teachers</TabsTrigger>
           <TabsTrigger value="backups">Backups</TabsTrigger>
         </TabsList>
 
@@ -721,6 +985,8 @@ export default function SystemAdmin() {
                   <Label htmlFor="schoolName">School Name</Label>
                   <Input
                     id="schoolName"
+                    name="school-name"
+                    autoComplete="organization"
                     value={schoolSettings.schoolName}
                     onChange={(e) => setSchoolSettings(prev => ({ ...prev, schoolName: e.target.value }))}
                     placeholder="Enter school name"
@@ -757,6 +1023,96 @@ export default function SystemAdmin() {
                   </Select>
                 </div>
 
+                <div className="space-y-2">
+                  <Label className="flex items-center justify-between">
+                    <span>Grading Mode</span>
+                    <span className="text-xs text-muted-foreground">Dates vs. Markers</span>
+                  </Label>
+                  <div className="flex items-center justify-between rounded-md border p-3 bg-muted/30">
+                    <div>
+                      <p className="text-sm font-medium">Date-based periods</p>
+                      <p className="text-xs text-muted-foreground">Uses configured start/end dates; marker buttons are hidden.</p>
+                    </div>
+                    <Switch
+                      checked={schoolSettings.gradingMode === 'dates'}
+                      onCheckedChange={(checked) => setSchoolSettings(prev => ({ ...prev, gradingMode: checked ? 'dates' : 'markers' }))}
+                      aria-label="Toggle grading mode"
+                    />
+                  </div>
+                  <div className="rounded-md border p-3 bg-amber-50 text-amber-900 text-xs">
+                    {schoolSettings.gradingMode === 'dates'
+                      ? 'Reports filter grades by lesson date using the configured grading period dates.'
+                      : 'Marker-based grading stays enabled; grading period dates are ignored for reports.'}
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm font-medium">Grading Period Dates</Label>
+                    <Button size="sm" variant="outline" onClick={addGradingPeriod}>
+                      <Plus size={14} className="mr-1" /> Add Period
+                    </Button>
+                  </div>
+                  <div className="space-y-2">
+                    {gradingPeriods.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No grading periods yet. Add one to begin using date-based reporting.</p>
+                    ) : (
+                      [...gradingPeriods].sort((a, b) => a.orderIndex - b.orderIndex).map((period) => (
+                        <div key={period.id} className="grid grid-cols-1 gap-2 sm:grid-cols-5 items-center border rounded-md p-3 bg-muted/30">
+                          <Input
+                            value={period.name}
+                            onChange={(e) => updateGradingPeriod(period.id, 'name', e.target.value)}
+                            className="sm:col-span-2"
+                          />
+                          <Input
+                            type="date"
+                            value={period.startDate}
+                            onChange={(e) => updateGradingPeriod(period.id, 'startDate', e.target.value)}
+                          />
+                          <Input
+                            type="date"
+                            value={period.endDate}
+                            onChange={(e) => updateGradingPeriod(period.id, 'endDate', e.target.value)}
+                          />
+                          <div className="flex justify-end">
+                            <Button variant="ghost" size="icon" onClick={() => deleteGradingPeriod(period.id)}>
+                              <Trash2 size={16} />
+                            </Button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span>{gradingPeriodsDirty ? 'Unsaved changes' : 'Synced'}</span>
+                    <Button size="sm" onClick={saveGradingPeriods} disabled={!gradingPeriodsDirty}>
+                      Save Grading Periods
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <Label className="text-sm font-medium">Auto-Enrollment Settings</Label>
+                  <div className="flex items-center space-x-3 p-3 bg-muted/30 rounded-lg">
+                    <div className="flex items-center space-x-2">
+                      <input
+                        type="checkbox"
+                        id="autoEnrollSubjects"
+                        checked={schoolSettings.autoEnrollSubjects}
+                        onChange={(e) => setSchoolSettings(prev => ({ ...prev, autoEnrollSubjects: e.target.checked }))}
+                        className="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded"
+                      />
+                      <Label htmlFor="autoEnrollSubjects" className="text-sm">
+                        Auto-enroll students in subjects based on their groups
+                      </Label>
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    When enabled, new subjects will automatically be assigned to students who belong to the same group as the subject.
+                    Similarly, new students will be automatically enrolled in subjects assigned to their group.
+                  </p>
+                </div>
+
                 <Button onClick={saveSettings} className="w-full">
                   Save School Settings
                 </Button>
@@ -766,51 +1122,51 @@ export default function SystemAdmin() {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <Key size={20} />
-                  Change Password
+                  <UserCheck size={20} />
+                  Account Information
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="currentPassword">Current Password</Label>
-                  <Input
-                    id="currentPassword"
-                    type="password"
-                    value={passwordChange.currentPassword}
-                    onChange={(e) => setPasswordChange(prev => ({ ...prev, currentPassword: e.target.value }))}
-                    placeholder="Enter current password"
-                  />
-                </div>
+                {userProfile && (
+                  <div className="p-3 bg-muted/30 rounded-lg">
+                    <div className="flex items-center gap-3 mb-2">
+                      <div className="w-10 h-10 bg-primary/20 rounded-full flex items-center justify-center">
+                        <span className="text-primary font-medium">
+                          {userProfile.name ? userProfile.name.charAt(0).toUpperCase() : 'U'}
+                        </span>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium text-sm truncate">{userProfile.name || 'Unknown User'}</p>
+                        <p className="text-xs text-muted-foreground truncate">{userProfile.email || 'No email'}</p>
+                      </div>
+                    </div>
+                    {userProfile.created_at && (
+                      <p className="text-xs text-muted-foreground">
+                        Member since: {new Date(userProfile.created_at).toLocaleDateString()}
+                      </p>
+                    )}
+                  </div>
+                )}
                 
                 <div className="space-y-2">
-                  <Label htmlFor="newPassword">New Password</Label>
-                  <Input
-                    id="newPassword"
-                    type="password"
-                    value={passwordChange.newPassword}
-                    onChange={(e) => setPasswordChange(prev => ({ ...prev, newPassword: e.target.value }))}
-                    placeholder="Enter new password"
-                  />
+                  <Button 
+                    onClick={openPasswordDialog} 
+                    variant="outline"
+                    className="w-full justify-start"
+                  >
+                    <Key size={16} className="mr-2" />
+                    Change Password
+                  </Button>
+                  
+                  <Button 
+                    onClick={logout}
+                    variant="outline"
+                    className="w-full justify-start text-destructive hover:text-destructive"
+                  >
+                    <LogOut size={16} className="mr-2" />
+                    Logout
+                  </Button>
                 </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="confirmPassword">Confirm New Password</Label>
-                  <Input
-                    id="confirmPassword"
-                    type="password"
-                    value={passwordChange.confirmPassword}
-                    onChange={(e) => setPasswordChange(prev => ({ ...prev, confirmPassword: e.target.value }))}
-                    placeholder="Confirm new password"
-                  />
-                </div>
-
-                <Button 
-                  onClick={changePassword} 
-                  className="w-full"
-                  disabled={!passwordChange.currentPassword || !passwordChange.newPassword || !passwordChange.confirmPassword}
-                >
-                  Change Password
-                </Button>
               </CardContent>
             </Card>
           </div>
@@ -965,6 +1321,91 @@ export default function SystemAdmin() {
                       <div className="flex items-center gap-2 text-xs text-muted-foreground">
                         <span>Color: {category.color || '#6366f1'}</span>
                         {category.is_default && <Badge variant="secondary" className="text-xs">Default</Badge>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="teachers" className="space-y-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-semibold">Teacher Management</h3>
+              <p className="text-sm text-muted-foreground">
+                Manage teacher accounts and assign student groups
+              </p>
+            </div>
+            <Button onClick={() => openTeacherDialog('add')} className="flex items-center gap-2">
+              <Plus size={16} />
+              Add Teacher
+            </Button>
+          </div>
+
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle className="flex items-center gap-2">
+                  <Users size={20} />
+                  Teachers ({teachers.length})
+                </CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {teachers.length === 0 ? (
+                <div className="text-center py-12 text-muted-foreground">
+                  <Users size={48} className="mx-auto mb-4 opacity-50" />
+                  <p className="text-lg mb-2">No teachers found</p>
+                  <p className="text-sm mb-4">
+                    Add teachers to help manage different student groups and subjects
+                  </p>
+                  <Button onClick={() => openTeacherDialog('add')} variant="outline">
+                    <Plus size={16} className="mr-2" />
+                    Add First Teacher
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {teachers.map((teacher, index) => (
+                    <div key={teacher.id || index} className="flex items-center justify-between p-4 bg-muted/30 rounded-lg border">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-primary/20 rounded-full flex items-center justify-center">
+                          <span className="text-primary font-medium">
+                            {teacher.name ? teacher.name.charAt(0).toUpperCase() : 'T'}
+                          </span>
+                        </div>
+                        <div>
+                          <h4 className="font-medium">{teacher.name}</h4>
+                          <p className="text-sm text-muted-foreground">{teacher.email}</p>
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {teacher.assigned_groups?.length > 0 ? teacher.assigned_groups.map((group: any, idx: number) => (
+                              <Badge key={idx} variant="outline" className="text-xs">
+                                {group.name}
+                              </Badge>
+                            )) : <span className="text-xs text-muted-foreground">No groups assigned</span>}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button 
+                          size="sm" 
+                          variant="ghost" 
+                          onClick={() => openTeacherDialog('edit', teacher)}
+                          title="Edit Teacher"
+                        >
+                          <Pencil size={16} />
+                        </Button>
+                        <Button 
+                          size="sm" 
+                          variant="ghost" 
+                          onClick={() => deleteTeacher(teacher)}
+                          className="text-destructive hover:text-destructive"
+                          title="Delete Teacher"
+                        >
+                          <Trash2 size={16} />
+                        </Button>
                       </div>
                     </div>
                   ))}
@@ -1206,6 +1647,168 @@ export default function SystemAdmin() {
                 {isRestoring ? 'Restoring...' : 'Restore from JSON'}
               </Button>
               <Button variant="outline" onClick={closeRestoreDialog} disabled={isRestoring}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Password Change Dialog */}
+      <Dialog open={passwordDialog} onOpenChange={(open) => !open && closePasswordDialog()}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Key size={20} />
+              Change Password
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="current-password">Current Password</Label>
+              <Input
+                id="current-password"
+                type="password"
+                value={passwordChange.currentPassword}
+                onChange={(e) => setPasswordChange(prev => ({ ...prev, currentPassword: e.target.value }))}
+                placeholder="Enter current password"
+              />
+            </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="new-password">New Password</Label>
+              <Input
+                id="new-password"
+                type="password"
+                value={passwordChange.newPassword}
+                onChange={(e) => setPasswordChange(prev => ({ ...prev, newPassword: e.target.value }))}
+                placeholder="Enter new password"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="confirm-new-password">Confirm New Password</Label>
+              <Input
+                id="confirm-new-password"
+                type="password"
+                value={passwordChange.confirmPassword}
+                onChange={(e) => setPasswordChange(prev => ({ ...prev, confirmPassword: e.target.value }))}
+                placeholder="Confirm new password"
+              />
+            </div>
+
+            <div className="flex gap-2 pt-4">
+              <Button 
+                onClick={changePassword} 
+                className="flex-1"
+                disabled={!passwordChange.currentPassword || !passwordChange.newPassword || !passwordChange.confirmPassword}
+              >
+                Change Password
+              </Button>
+              <Button variant="outline" onClick={closePasswordDialog}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Teacher Dialog */}
+      <Dialog open={teacherDialog.open} onOpenChange={(open) => !open && closeTeacherDialog()}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {teacherDialog.mode === 'edit' ? 'Edit Teacher' : 'Add Teacher'}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="teacher-name">Teacher Name *</Label>
+              <Input
+                id="teacher-name"
+                name="teacher-name"
+                autoComplete="name"
+                value={teacherForm.name}
+                onChange={(e) => setTeacherForm(prev => ({ ...prev, name: e.target.value }))}
+                placeholder="Enter teacher's full name"
+              />
+            </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="teacher-email">Email Address *</Label>
+              <Input
+                id="teacher-email"
+                name="teacher-email"
+                type="email"
+                autoComplete="email"
+                value={teacherForm.email}
+                onChange={(e) => setTeacherForm(prev => ({ ...prev, email: e.target.value }))}
+                placeholder="teacher@school.edu"
+              />
+            </div>
+
+            {teacherDialog.mode === 'add' && (
+              <div className="space-y-2">
+                <Label htmlFor="teacher-password">Password *</Label>
+                <Input
+                  id="teacher-password"
+                  name="teacher-password"
+                  type="password"
+                  autoComplete="new-password"
+                  value={teacherForm.password}
+                  onChange={(e) => setTeacherForm(prev => ({ ...prev, password: e.target.value }))}
+                  placeholder="Enter initial password"
+                />
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <Label>Assigned Student Groups</Label>
+              <div className="max-h-32 overflow-y-auto border rounded p-2 space-y-2">
+                {studentGroups.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No student groups available</p>
+                ) : (
+                  studentGroups.map((group) => (
+                    <div key={group.id} className="flex items-center space-x-2">
+                      <input
+                        type="checkbox"
+                        id={`group-${group.id}`}
+                        checked={teacherForm.selectedGroups.includes(group.name)}
+                        onChange={(e) => {
+                          const groupName = group.name
+                          setTeacherForm(prev => ({
+                            ...prev,
+                            selectedGroups: e.target.checked
+                              ? [...prev.selectedGroups, groupName]
+                              : prev.selectedGroups.filter(g => g !== groupName)
+                          }))
+                        }}
+                        className="rounded"
+                      />
+                      <Label 
+                        htmlFor={`group-${group.id}`} 
+                        className="text-sm font-normal cursor-pointer flex-1"
+                      >
+                        {group.name}
+                        {group.description && (
+                          <span className="text-muted-foreground ml-2">- {group.description}</span>
+                        )}
+                      </Label>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div className="flex gap-2 pt-4">
+              <Button 
+                onClick={saveTeacher} 
+                className="flex-1"
+                disabled={!teacherForm.name.trim() || !teacherForm.email.trim() || (teacherDialog.mode === 'add' && !teacherForm.password.trim())}
+              >
+                {teacherDialog.mode === 'edit' ? 'Save Changes' : 'Create Teacher'}
+              </Button>
+              <Button variant="outline" onClick={closeTeacherDialog}>
                 Cancel
               </Button>
             </div>

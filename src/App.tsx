@@ -15,11 +15,13 @@ import {
 import Dashboard from './components/Dashboard'
 import Students from './components/Students'
 import Subjects from './components/Subjects'
-import GradeEntry from './components/GradeEntry'
-import Reports from './components/Reports'
-import SystemAdmin from './components/SystemAdmin'
+import GradeEntry from './components/GradeEntry.tsx'
+import Reports from './components/Reports.tsx'
+// Explicit .tsx to avoid picking stale .js build artifacts
+import SystemAdmin from './components/SystemAdmin.tsx'
 import Help from './components/Help'
 import UserAuth, { UserData } from './components/UserAuth'
+import TeacherSelector from './components/TeacherSelector'
 import AdminDanger from '@/components/AdminDanger'
 import { Toaster } from 'sonner'
 
@@ -27,6 +29,7 @@ import { Toaster } from 'sonner'
 declare global {
   interface Window {
     CURRENT_USER_ID?: string
+    SELECTED_TEACHER_GROUPS?: string[]
   }
 }
 
@@ -54,6 +57,16 @@ function App() {
     }
   }
 
+  const handleTeacherChange = (teacher: any) => {
+    // Store selected teacher's group IDs globally for filtering
+    if (teacher && teacher.assigned_groups) {
+      window.SELECTED_TEACHER_GROUPS = teacher.assigned_groups.map((g: any) => g.id)
+    } else {
+      // For admin or no teacher selection, set empty array to show all data
+      window.SELECTED_TEACHER_GROUPS = []
+    }
+  }
+
   return (
     <>
       <Routes>
@@ -75,7 +88,7 @@ function App() {
                         <p className="text-sm text-muted-foreground">Streamlined Grade Management</p>
                       </div>
                     </div>
-                    <UserAuth onUserChange={handleUserChange} />
+                    <TeacherSelector onTeacherChange={handleTeacherChange} />
                   </div>
                 </div>
               </header>

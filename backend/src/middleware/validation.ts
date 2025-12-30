@@ -40,7 +40,8 @@ export const schemas = {
 
   student: Joi.object({
     name: Joi.string().min(2).max(100).required(),
-    birthday: Joi.date().iso().optional().allow(null),
+    // Keep birthday as a plain YYYY-MM-DD string to avoid timezone shifts when saving to Postgres DATE
+    birthday: Joi.string().pattern(/^\d{4}-\d{2}-\d{2}$/).optional().allow(null, ''),
     groupIds: Joi.array().items(Joi.string().uuid()).optional() // Many-to-many format
   }),
 
@@ -67,6 +68,36 @@ export const schemas = {
     percentage: Joi.number().min(0).max(100).optional(),
     errors: Joi.number().min(0).optional(), // Allow decimal errors (e.g., 2.5)
     points: Joi.number().integer().min(1).optional() // Keep as integer for total points
+  }),
+
+  attendanceBulk: Joi.object({
+    records: Joi.array()
+      .items(
+        Joi.object({
+          studentId: Joi.string().uuid().required(),
+          // Keep as a plain YYYY-MM-DD string to avoid timezone coercion
+          date: Joi.string().pattern(/^\d{4}-\d{2}-\d{2}$/).required(),
+          status: Joi.string().valid('present', 'absent', 'tardy', 'excused').required(),
+          notes: Joi.string().max(500).allow('', null).optional()
+        })
+      )
+      .min(1)
+      .required()
+  }),
+
+  gradingPeriodsBulk: Joi.object({
+    periods: Joi.array()
+      .items(
+        Joi.object({
+          id: Joi.string().uuid().optional(),
+          name: Joi.string().min(1).max(100).required(),
+          startDate: Joi.string().pattern(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/).required(),
+          endDate: Joi.string().pattern(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/).required(),
+          orderIndex: Joi.number().integer().min(1).required()
+        })
+      )
+      .min(1)
+      .required()
   }),
 
   kv: Joi.object({

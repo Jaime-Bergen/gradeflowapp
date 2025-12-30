@@ -1,24 +1,32 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
 import { Eye, Users, FilePdf, Gear } from "@phosphor-icons/react"
-import { Student, Subject, Grade, ReportCard } from '@/lib/types'
+import { Student, Subject, Grade, ReportCard, AttendanceRecord, AttendanceSummary, GradingPeriod } from '@/lib/types'
 import { getLetterGrade, generateReportCard, getSubjectCalculationBreakdown } from '@/lib/reportUtils'
 import { toast } from 'sonner'
 import { pdf } from '@react-pdf/renderer'
-import ReportCardPDF from './ReportCardPDF'
+import ReportCardPDF from './ReportCardPDF.tsx'
 import { apiClient } from '@/lib/api'
 
 export default function Reports() {
   const [students, setStudents] = useState<Student[]>([])
+  const [filteredStudents, setFilteredStudents] = useState<Student[]>([])
+  const [studentGroups, setStudentGroups] = useState<any[]>([])
   const [subjects, setSubjects] = useState<Subject[]>([])
   const [grades, setGrades] = useState<Grade[]>([])
   const [subjectMarkers, setSubjectMarkers] = useState<Record<string, any[]>>({})
+  const [gradingPeriods, setGradingPeriods] = useState<GradingPeriod[]>([])
+  const [attendanceStartDate, setAttendanceStartDate] = useState("")
+  const [attendanceEndDate, setAttendanceEndDate] = useState("")
+  const [attendanceData, setAttendanceData] = useState<Record<string, AttendanceRecord[]>>({})
+  const [attendanceLoading, setAttendanceLoading] = useState(false)
   
   const [selectedStudents, setSelectedStudents] = useState<string[]>([])
   const [reportPeriod, setReportPeriod] = useState("")
@@ -30,13 +38,96 @@ export default function Reports() {
   const [schoolSettings, setSchoolSettings] = useState({
     schoolName: '',
     firstDayOfSchool: '',
-    gradingPeriods: 6
+    gradingPeriods: 6,
+    gradingMode: 'dates' as 'dates' | 'markers'
   })
   const [isGenerating, setIsGenerating] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
 
+  // Helper function to extract grade number from group name for sorting
+  const extractGradeNumber = (groupName: string): number => {
+    const match = groupName.match(/Grade\s+(\d+)/i)
+    return match ? parseInt(match[1], 10) : 999 // Put non-grade groups at the end
+  }
+
+  // Helper function to get the first group from a student's group_name
+  const getFirstGroup = (groupName: string | null | undefined): string => {
+    if (!groupName) return 'No Group'
+    return groupName.split(',')[0].trim()
+  }
+
+  // Helper function to group and sort students by their first group
+  const groupAndSortStudents = (students: Student[]) => {
+    // Group students by their first group
+    const grouped = students.reduce((acc, student) => {
+      const firstGroup = getFirstGroup(student.group_name)
+      if (!acc[firstGroup]) {
+        acc[firstGroup] = []
+      }
+      acc[firstGroup].push(student)
+      return acc
+    }, {} as Record<string, Student[]>)
+
+    // Sort groups by grade number, then alphabetically
+    const sortedGroupNames = Object.keys(grouped).sort((a, b) => {
+      const gradeA = extractGradeNumber(a)
+      const gradeB = extractGradeNumber(b)
+      
+      // If both are grades, sort numerically
+      if (gradeA !== 999 && gradeB !== 999) {
+        return gradeA - gradeB
+      }
+      
+      // If one is a grade and one isn't, put grade first
+      if (gradeA !== 999 && gradeB === 999) return -1
+      if (gradeA === 999 && gradeB !== 999) return 1
+      
+      // If neither are grades, sort alphabetically
+      return a.localeCompare(b)
+    })
+
+    // Return sorted groups with their students (also sorted by name)
+    return sortedGroupNames.map(groupName => ({
+      groupName,
+      students: grouped[groupName].sort((a, b) => a.name.localeCompare(b.name))
+    }))
+  }
+
+  const filterDataByTeacherGroups = useCallback(() => {
+    const selectedGroupIds = window.SELECTED_TEACHER_GROUPS
+    
+    // Don't filter if we don't have student groups data yet
+    if (studentGroups.length === 0) {
+      return
+    }
+    
+    if (!selectedGroupIds || selectedGroupIds.length === 0) {
+      // If no teacher selected or no groups, show all data
+      setFilteredStudents(students)
+      return
+    }
+
+    // Filter students by their group membership
+    const filtered = students.filter(student => {
+      if (!student.group_name) return false
+      
+      // Parse student's group names and check if any match selected teacher's groups
+      const studentGroupNames = student.group_name.split(',').map(g => g.trim())
+      const teacherGroupNames = studentGroups
+        .filter(group => selectedGroupIds.includes(group.id))
+        .map(group => group.name)
+      
+      return studentGroupNames.some(studentGroup => 
+        teacherGroupNames.includes(studentGroup)
+      )
+    })
+
+    setFilteredStudents(filtered)
+  }, [students, studentGroups])
+
   // Compute marker validation errors using useMemo to avoid infinite loops
   const markerErrors = useMemo(() => {
+    if (schoolSettings.gradingMode === 'dates') return [] // date-based mode disables marker validation
     if (!reportPeriod || subjects.length === 0) return []
     
     const periodMatch = reportPeriod.match(/(\d+)$/)
@@ -62,29 +153,81 @@ export default function Reports() {
     })
     
     return errors
-  }, [reportPeriod, subjects.length, grades.length, Object.keys(subjectMarkers).length])
+  }, [reportPeriod, subjects.length, grades.length, Object.keys(subjectMarkers).length, schoolSettings.gradingMode])
 
   // Load all data from API
   useEffect(() => {
     loadData()
   }, [])
 
+  // Filter data when teacher selection changes or data is updated
+  useEffect(() => {
+    filterDataByTeacherGroups()
+  }, [filterDataByTeacherGroups])
+
+  // Ensure a report period is always selected based on the active grading mode
+  useEffect(() => {
+    if (schoolSettings.gradingMode === 'dates') {
+      if (!reportPeriod && gradingPeriods.length > 0) {
+        setReportPeriod(gradingPeriods[0].id)
+      }
+    } else {
+      if (!reportPeriod) {
+        const firstOption = getReportingPeriodOptions(schoolSettings.gradingPeriods)[0]
+        if (firstOption) {
+          setReportPeriod(firstOption.value)
+        }
+      }
+    }
+  }, [schoolSettings.gradingMode, schoolSettings.gradingPeriods, gradingPeriods, reportPeriod])
+
+  // Listen for teacher selection changes
+  useEffect(() => {
+    const handleTeacherChange = () => {
+      filterDataByTeacherGroups()
+    }
+    
+    window.addEventListener('teacher-selection-changed', handleTeacherChange)
+    return () => {
+      window.removeEventListener('teacher-selection-changed', handleTeacherChange)
+    }
+  }, [filterDataByTeacherGroups])
+
   const loadData = async () => {
     setIsLoading(true)
     try {
       // Load all data in parallel
-      const [studentsRes, subjectsRes, gradesRes] = await Promise.all([
+      const [studentsRes, subjectsRes, gradesRes, groupsRes, periodsRes] = await Promise.all([
         apiClient.getStudents(),
         apiClient.getSubjects(), 
-        apiClient.getGrades()
+        apiClient.getGrades(),
+        apiClient.getStudentGroups(),
+        apiClient.getGradingPeriods()
       ])
 
       const studentsData = Array.isArray(studentsRes.data) ? studentsRes.data : []
       const subjectsData = Array.isArray(subjectsRes.data) ? subjectsRes.data : []
       const gradesData = Array.isArray(gradesRes.data) ? gradesRes.data : []
+      const rawGroups = Array.isArray(groupsRes.data) 
+        ? groupsRes.data 
+        : (groupsRes.data as any)?.groups || []
 
       setStudents(studentsData)
       setGrades(gradesData)
+      const periodsData = Array.isArray(periodsRes.data) ? periodsRes.data : []
+      setGradingPeriods(periodsData)
+      if (periodsData.length > 0) {
+        const first = periodsData[0]
+        setReportPeriod(prev => prev || first.id)
+        setAttendanceStartDate(prev => prev || first.startDate)
+        setAttendanceEndDate(prev => prev || first.endDate)
+      }
+      
+      // Deduplicate groups by ID to prevent React key conflicts
+      const uniqueGroups = rawGroups.filter((group: any, index: number, self: any[]) => 
+        index === self.findIndex((g: any) => g.id === group.id)
+      )
+      setStudentGroups(uniqueGroups)
 
       // Load lessons and markers for each subject
       const subjectsWithLessons = await Promise.all(
@@ -129,24 +272,122 @@ export default function Reports() {
         const formattedDate = user.first_day_of_school 
           ? new Date(user.first_day_of_school).toISOString().split('T')[0]
           : ''
+
+        const persistedMode = localStorage.getItem('gradeflow-grading-mode') as 'dates' | 'markers' | null
+        const hasConfiguredPeriods = gradingPeriods.length > 0
+        const resolvedMode: 'dates' | 'markers' = (user as any)?.grading_mode === 'markers'
+          ? 'markers'
+          : (user as any)?.grading_mode === 'dates'
+            ? 'dates'
+            : persistedMode === 'markers' || persistedMode === 'dates'
+              ? persistedMode
+              : hasConfiguredPeriods
+                ? 'dates'
+                : 'markers'
         
         setSchoolSettings({
           schoolName: user.school_name || 'School Name',
           firstDayOfSchool: formattedDate,
-          gradingPeriods: user.grading_periods || 6
+          gradingPeriods: user.grading_periods || 6,
+          gradingMode: resolvedMode
         })
+
+        // Persist locally as a fallback when backend omits grading_mode
+        localStorage.setItem('gradeflow-grading-mode', resolvedMode)
+
+        const today = new Date().toISOString().split('T')[0]
+        setAttendanceStartDate(prev => prev || formattedDate || today)
+        setAttendanceEndDate(prev => prev || today)
         
         // Auto-select current reporting period
-        const currentPeriod = getCurrentReportingPeriod(
-          formattedDate, 
-          user.grading_periods || 6
-        )
-        setReportPeriod(currentPeriod)
+        if (resolvedMode === 'dates' && gradingPeriods.length > 0) {
+          const currentPeriod = getCurrentReportingPeriod(
+            formattedDate, 
+            user.grading_periods || 6
+          )
+          setReportPeriod(prev => prev || currentPeriod)
+        } else if (resolvedMode === 'markers') {
+          const firstOption = getReportingPeriodOptions(user.grading_periods || 6)[0]
+          setReportPeriod(prev => prev || firstOption?.value || 'q1')
+        }
       }
     } catch (error) {
       console.error('Failed to load settings:', error)
     }
   }
+
+  const fetchAttendanceForRange = useCallback(async (startDate: string, endDate: string) => {
+    if (!startDate || !endDate) return
+
+    const start = new Date(startDate)
+    const end = new Date(endDate)
+    if (start > end) {
+      toast.error('Attendance start date must be before the end date')
+      return
+    }
+
+    setAttendanceLoading(true)
+    try {
+      const res = await apiClient.getAttendance({ startDate, endDate })
+      const rawData = Array.isArray(res.data) ? res.data : (res.data as any)?.data || []
+      const grouped: Record<string, AttendanceRecord[]> = {}
+
+      rawData.forEach((record: any) => {
+        const studentId = record.studentId || record.student_id
+        if (!studentId) return
+
+        const normalized: AttendanceRecord = {
+          id: record.id,
+          studentId,
+          date: record.date,
+          status: record.status,
+          notes: record.notes ?? '',
+          student_name: record.student_name,
+          created_at: record.created_at,
+          updated_at: record.updated_at
+        }
+
+        if (!grouped[studentId]) {
+          grouped[studentId] = []
+        }
+        grouped[studentId].push(normalized)
+      })
+
+      setAttendanceData(grouped)
+    } catch (error) {
+      console.error('Failed to load attendance range', error)
+      toast.error('Could not load attendance for the selected range')
+    } finally {
+      setAttendanceLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!attendanceStartDate || !attendanceEndDate) return
+    const start = new Date(attendanceStartDate)
+    const end = new Date(attendanceEndDate)
+    if (start > end) return
+    fetchAttendanceForRange(attendanceStartDate, attendanceEndDate)
+  }, [attendanceStartDate, attendanceEndDate, fetchAttendanceForRange])
+
+  const getAttendanceSummaryForStudent = useCallback((studentId: string): AttendanceSummary => {
+    const records = attendanceData[studentId] || []
+    const present = records.filter(r => r.status === 'present').length
+    const absent = records.filter(r => r.status === 'absent').length
+    const tardy = records.filter(r => r.status === 'tardy').length
+    const excused = records.filter(r => r.status === 'excused').length
+    const total = records.length
+
+    return {
+      startDate: attendanceStartDate,
+      endDate: attendanceEndDate,
+      present,
+      absent,
+      tardy,
+      excused,
+      total
+    }
+  }, [attendanceData, attendanceStartDate, attendanceEndDate])
 
   // Calculate current reporting period based on today's date and first day of school
   const getCurrentReportingPeriod = (firstDayOfSchool: string, gradingPeriods: number): string => {
@@ -278,35 +519,56 @@ export default function Reports() {
 
   // Helper function to filter grades based on markers for the selected reporting period
   const getFilteredGradesForPeriod = (): Grade[] => {
+    // If grading mode is date-based, use date filtering when periods exist
+    if (schoolSettings.gradingMode === 'dates') {
+      if (gradingPeriods.length === 0) return []
+      const period = gradingPeriods.find(p => p.id === reportPeriod) || gradingPeriods[0]
+      if (!period) return []
+
+      const start = new Date(period.startDate)
+      const end = new Date(period.endDate)
+
+      return grades.filter(grade => {
+        if (!grade.subjectId) return false
+        const subject = subjects.find(s => s.id === grade.subjectId)
+        if (!subject || !subject.lessons) return false
+        const lesson = subject.lessons.find(l => l.id === grade.lessonId)
+        if (!lesson || !lesson.date) return false
+        const lessonDate = new Date(lesson.date)
+        return lessonDate >= start && lessonDate <= end
+      })
+    }
+
+    // Fallback to marker-based filtering for legacy data
     if (markerErrors.length > 0) return []
-    
-    // Get period index from reportPeriod (e.g., 'sw1' -> 1, 'q2' -> 2, etc.)
     const periodMatch = reportPeriod.match(/(\d+)$/)
     const periodIndex = periodMatch ? parseInt(periodMatch[1], 10) : 1
-    
-    // Filter grades based on markers for each subject
+
     return grades.filter(grade => {
       if (!grade.subjectId) return false
-      
       const range = getLessonRangeForPeriod(grade.subjectId, periodIndex)
-      if (!range) return false // Skip if no valid range
-      
-      // Get the lesson to check its order_index
+      if (!range) return false
       const subject = subjects.find(s => s.id === grade.subjectId)
       if (!subject || !subject.lessons) return false
-      
       const lesson = subject.lessons.find(l => l.id === grade.lessonId)
       if (!lesson) return false
-      
       const orderIndex = (lesson as any).order_index ?? lesson.orderIndex ?? 0
-      
-      // Check if lesson is in range
       if (range.max === null) {
         return orderIndex >= range.min
-      } else {
-        return orderIndex >= range.min && orderIndex <= range.max
       }
+      return orderIndex >= range.min && orderIndex <= range.max
     })
+  }
+
+  const handleReportPeriodChange = (value: string) => {
+    setReportPeriod(value)
+    if (schoolSettings.gradingMode === 'dates') {
+      const period = gradingPeriods.find(p => p.id === value)
+      if (period) {
+        setAttendanceStartDate(period.startDate)
+        setAttendanceEndDate(period.endDate)
+      }
+    }
   }
 
   const generateReportCardForStudent = (studentId: string): ReportCard | null => {
@@ -321,16 +583,41 @@ export default function Reports() {
         return null
       }
       
+      if (schoolSettings.gradingMode === 'dates' && gradingPeriods.length === 0) {
+        console.warn('Date-based grading mode selected but no grading periods are configured')
+        return null
+      }
+
       // Check if there are marker validation errors
-      if (markerErrors.length > 0) {
+      if (schoolSettings.gradingMode === 'markers' && markerErrors.length > 0) {
         console.warn('Marker validation errors:', markerErrors)
         return null
       }
       
       // Get filtered grades for the selected period
       const filteredGrades = getFilteredGradesForPeriod()
-      
-      return generateReportCard(studentId, reportPeriod, comments, students, subjects, filteredGrades)
+
+      // Use human-readable period name for the PDF header when grading periods are date-based
+      const selectedPeriod = gradingPeriods.find(p => p.id === reportPeriod)
+      const displayPeriod = (() => {
+        if (selectedPeriod) {
+          // Use configured grading periods count when present so the header reflects the intended total (e.g., 6 even if only 3 are entered so far)
+          const configuredTotal = schoolSettings.gradingPeriods || gradingPeriods.length || 1
+          const total = Math.max(configuredTotal, gradingPeriods.length || 1)
+          const position = typeof selectedPeriod.orderIndex === 'number'
+            ? selectedPeriod.orderIndex
+            : gradingPeriods.findIndex(p => p.id === selectedPeriod.id) + 1
+          const safePosition = Math.min(Math.max(1, position), total)
+          return `${safePosition} of ${total}`
+        }
+        return reportPeriod
+      })()
+
+      const baseReport = generateReportCard(studentId, displayPeriod, comments, students, subjects, filteredGrades)
+      if (!baseReport) return null
+
+      const attendanceSummary = getAttendanceSummaryForStudent(studentId)
+      return { ...baseReport, attendanceSummary }
     } catch (error) {
       console.error('Error generating report card for student:', studentId, error)
       return null
@@ -346,7 +633,7 @@ export default function Reports() {
   }
 
   const selectAllStudents = () => {
-    setSelectedStudents(students.map(s => s.id))
+    setSelectedStudents(filteredStudents.map(s => s.id))
   }
 
   const clearSelection = () => {
@@ -619,10 +906,19 @@ export default function Reports() {
     grades.length, 
     Object.keys(subjectMarkers).length,
     // Create a stable key from subjects with lessons
-    subjects.map(s => `${s.id}:${s.lessons?.length || 0}`).join(',')
+    subjects.map(s => `${s.id}:${s.lessons?.length || 0}`).join(','),
+    schoolSettings.gradingMode
   ])
   
   const previewStudentData = students.find(s => s.id === previewStudent)
+  const attendanceRangeInvalid = Boolean(
+    attendanceStartDate &&
+    attendanceEndDate &&
+    new Date(attendanceStartDate) > new Date(attendanceEndDate)
+  )
+  const selectedPeriod = schoolSettings.gradingMode === 'dates'
+    ? gradingPeriods.find(p => p.id === reportPeriod)
+    : undefined
 
   if (isLoading) {
     return (
@@ -660,7 +956,7 @@ export default function Reports() {
             <CardContent className="space-y-4">
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" onClick={selectAllStudents}>
-                  Select All ({students.length})
+                  Select All ({filteredStudents.length})
                 </Button>
                 <Button variant="outline" size="sm" onClick={clearSelection}>
                   Clear Selection
@@ -670,13 +966,17 @@ export default function Reports() {
                 </Badge>
               </div>
 
-              {students.length === 0 ? (
+              {filteredStudents.length === 0 ? (
                 <p className="text-center text-muted-foreground py-8">
                   No students available
                 </p>
               ) : (
-                <div className="grid gap-3 md:grid-cols-2">
-                  {students.map(student => {
+                <div className="space-y-6">
+                  {groupAndSortStudents(filteredStudents).map(({ groupName, students: groupStudents }) => (
+                    <div key={groupName}>
+                      <h4 className="text-lg font-semibold mb-3 pb-2 border-b">{groupName}</h4>
+                      <div className="grid gap-3 md:grid-cols-2">
+                        {groupStudents.map(student => {
                     const isSelected = selectedStudents.includes(student.id)
                     const hasGrades = grades.some(g => g.studentId === student.id)
                     // Calculate subjects for this student from grades
@@ -718,6 +1018,9 @@ export default function Reports() {
                       </div>
                     )
                   })}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </CardContent>
@@ -786,21 +1089,27 @@ export default function Reports() {
 
               <div>
                 <Label htmlFor="report-period">Reporting Period</Label>
-                <Select value={reportPeriod} onValueChange={setReportPeriod}>
+                <Select value={reportPeriod} onValueChange={handleReportPeriodChange}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {getReportingPeriodOptions(schoolSettings.gradingPeriods).map(option => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
+                    {schoolSettings.gradingMode === 'dates' && gradingPeriods.length > 0
+                      ? gradingPeriods.map(period => (
+                          <SelectItem key={period.id} value={period.id}>
+                            {period.name} ({period.startDate} → {period.endDate})
+                          </SelectItem>
+                        ))
+                      : getReportingPeriodOptions(schoolSettings.gradingPeriods).map(option => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
                   </SelectContent>
                 </Select>
                 
-                {/* Display marker validation errors */}
-                {markerErrors.length > 0 && (
+                {/* Display marker validation errors (legacy only) */}
+                {schoolSettings.gradingMode === 'markers' && markerErrors.length > 0 && (
                   <div className="mt-2 p-3 bg-red-50 border border-red-200 rounded-md">
                     <p className="text-sm font-medium text-red-800 mb-1">⚠️ Missing Grading Period Markers:</p>
                     <ul className="text-sm text-red-700 space-y-1">
@@ -821,6 +1130,34 @@ export default function Reports() {
                       Click "Add Marker →" to go to the Subjects tab and add the required markers.
                     </p>
                   </div>
+                )}
+
+                {schoolSettings.gradingMode === 'dates' && gradingPeriods.length === 0 && (
+                  <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-md text-sm text-amber-900">
+                    No grading periods are configured. Add periods in Settings or switch to marker mode.
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label>Attendance Date Range</Label>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <Input
+                    type="date"
+                    value={attendanceStartDate}
+                    onChange={(e) => setAttendanceStartDate(e.target.value)}
+                  />
+                  <Input
+                    type="date"
+                    value={attendanceEndDate}
+                    onChange={(e) => setAttendanceEndDate(e.target.value)}
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Attendance summary (present, tardy, absent, total) will use this range in previews and PDFs.
+                </p>
+                {attendanceRangeInvalid && (
+                  <p className="text-xs text-destructive">Start date must be on or before end date.</p>
                 )}
               </div>
 
@@ -846,7 +1183,7 @@ export default function Reports() {
                 <Button 
                   onClick={generateReports} 
                   className="w-full"
-                  disabled={selectedStudents.length === 0 || isGenerating}
+                  disabled={selectedStudents.length === 0 || isGenerating || attendanceRangeInvalid || attendanceLoading}
                 >
                   <FilePdf size={16} className="mr-2" />
                   {isGenerating 
@@ -859,6 +1196,9 @@ export default function Reports() {
                   <p className="text-xs text-muted-foreground text-center">
                     Multiple reports will be packaged in a ZIP file
                   </p>
+                )}
+                {attendanceLoading && (
+                  <p className="text-xs text-muted-foreground text-center">Loading attendance for the selected range…</p>
                 )}
               </div>
             </CardContent>
@@ -879,7 +1219,7 @@ export default function Reports() {
                     <SelectValue placeholder="Select student to preview" />
                   </SelectTrigger>
                   <SelectContent>
-                    {students.map(student => (
+                    {filteredStudents.map(student => (
                       <SelectItem key={student.id} value={student.id}>
                         {student.name}
                       </SelectItem>
@@ -893,7 +1233,9 @@ export default function Reports() {
                   <div className="p-4 border border-border rounded-lg bg-muted/30 space-y-3">
                     <div className="text-center border-b border-border pb-3">
                       <h3 className="font-bold text-lg">{previewStudentData.name}</h3>
-                      <p className="text-sm text-muted-foreground">Report Card - {reportPeriod}</p>
+                      <p className="text-sm text-muted-foreground">
+                        Report Card - {selectedPeriod ? `${selectedPeriod.name} (${selectedPeriod.startDate} to ${selectedPeriod.endDate})` : reportPeriod}
+                      </p>
                       <p className="text-sm font-medium mt-1">
                         Overall GPA: {(previewReport.overallGPA ?? 0).toFixed(2)} ({getLetterGrade(previewReport.overallGPA ?? 0)})
                       </p>
@@ -961,6 +1303,35 @@ export default function Reports() {
                         )
                       })}
                     </div>
+
+                    {previewReport.attendanceSummary && (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <h4 className="font-medium text-sm">Attendance</h4>
+                          <span className="text-xs text-muted-foreground">
+                            {previewReport.attendanceSummary.startDate || 'Start'} – {previewReport.attendanceSummary.endDate || 'End'}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 text-sm">
+                          <div className="flex items-center justify-between rounded-md border border-border bg-white/40 p-2">
+                            <span>Present</span>
+                            <Badge variant="secondary">{previewReport.attendanceSummary.present}</Badge>
+                          </div>
+                          <div className="flex items-center justify-between rounded-md border border-border bg-white/40 p-2">
+                            <span>Tardy</span>
+                            <Badge variant="secondary">{previewReport.attendanceSummary.tardy}</Badge>
+                          </div>
+                          <div className="flex items-center justify-between rounded-md border border-border bg-white/40 p-2">
+                            <span>Absent</span>
+                            <Badge variant="destructive">{previewReport.attendanceSummary.absent}</Badge>
+                          </div>
+                          <div className="flex items-center justify-between rounded-md border border-border bg-white/40 p-2">
+                            <span>Total Days</span>
+                            <Badge variant="outline">{previewReport.attendanceSummary.total}</Badge>
+                          </div>
+                        </div>
+                      </div>
+                    )}
 
                     {includeComments && comments[previewStudent] && (
                       <div className="space-y-2">

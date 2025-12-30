@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog"
 import { Input } from "@/components/ui/input"
 import { toast } from "sonner"
@@ -8,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Plus, Trash, X, CaretDown, CaretUp, PencilSimple } from "@phosphor-icons/react"
+import { Plus, Trash, X, CaretDown, CaretUp, PencilSimple, Upload } from "@phosphor-icons/react"
 import { Lesson, GradingPeriodMarker, User } from '@/lib/types'
 import { apiClient } from '@/lib/api'
 
@@ -521,6 +522,7 @@ function Subjects() {
   }
 
   const [subjects, setSubjects] = useState<any[]>([]);
+  const [filteredSubjects, setFilteredSubjects] = useState<any[]>([]);
   const [studentGroups, setStudentGroups] = useState<any[]>([]);
   const [gradeCategoryTypes, setGradeCategoryTypes] = useState<any[]>([]);
   const [selectedGroups, setSelectedGroups] = useState<string[]>([]);
@@ -555,6 +557,185 @@ function Subjects() {
   const [lessonPoints, setLessonPoints] = useState(100);
   const [addMarkerDialog, setAddMarkerDialog] = useState<{ open: boolean, subjectId: string | null, desiredOrderIndex: number | null, selectedOptionIdx: number | null }>({ open: false, subjectId: null, desiredOrderIndex: null, selectedOptionIdx: null });
   const [userProfile, setUserProfile] = useState<User | null>(null);
+  const [bulkMarkerAdding, setBulkMarkerAdding] = useState(false);
+  const gradingMode: 'dates' | 'markers' = (userProfile as any)?.grading_mode === 'markers' ? 'markers' : 'dates'
+  const isDateMode = gradingMode === 'dates'
+
+  // Helper function to extract grade number from group name for sorting
+  const extractGradeNumber = (groupName: string): number => {
+    const match = groupName.match(/Grade\s+(\d+)/i)
+    return match ? parseInt(match[1], 10) : 999 // Put non-grade groups at the end
+  }
+
+  // Helper function to get the first group from a subject's group_name
+  const getFirstGroup = (groupName: string | null | undefined): string => {
+    if (!groupName) return 'No Group'
+    return groupName.split(',')[0].trim()
+  }
+
+  // Helper function to group and sort subjects by their first group
+  const groupAndSortSubjects = (subjects: any[]) => {
+    // Group subjects by their first group
+    const grouped = subjects.reduce((acc, subject) => {
+      const firstGroup = getFirstGroup(subject.group_name)
+      if (!acc[firstGroup]) {
+        acc[firstGroup] = []
+      }
+      acc[firstGroup].push(subject)
+      return acc
+    }, {} as Record<string, any[]>)
+
+    // Sort groups by grade number, then alphabetically
+    const sortedGroupNames = Object.keys(grouped).sort((a, b) => {
+      const gradeA = extractGradeNumber(a)
+      const gradeB = extractGradeNumber(b)
+      
+      // If both are grades, sort numerically
+      if (gradeA !== 999 && gradeB !== 999) {
+        return gradeA - gradeB
+      }
+      
+      // If one is a grade and one isn't, put grade first
+      if (gradeA !== 999 && gradeB === 999) return -1
+      if (gradeA === 999 && gradeB !== 999) return 1
+      
+      // If neither are grades, sort alphabetically
+      return a.localeCompare(b)
+    })
+
+    // Return sorted groups with their subjects (also sorted by name)
+    return sortedGroupNames.map(groupName => ({
+      groupName,
+      subjects: grouped[groupName].sort((a: any, b: any) => a.name.localeCompare(b.name))
+    }))
+  }
+
+  const filterSubjectsByTeacherGroups = useCallback(() => {
+    const selectedGroupIds = window.SELECTED_TEACHER_GROUPS
+    
+    // Don't filter if we don't have student groups data yet
+    if (studentGroups.length === 0) {
+      return
+    }
+    
+    if (!selectedGroupIds || selectedGroupIds.length === 0) {
+      // If no teacher selected or no groups, show all subjects
+      setFilteredSubjects(subjects)
+      return
+    }
+
+    // Filter subjects by their group membership
+    const filtered = subjects.filter(subject => {
+      if (!subject.group_name) return true // If no group restriction, show to all teachers
+      
+      // Parse subject's group names and check if any match selected teacher's groups  
+      const subjectGroupNames = subject.group_name.split(',').map((g: string) => g.trim())
+      const teacherGroupNames = studentGroups
+        .filter(group => selectedGroupIds.includes(group.id))
+        .map(group => group.name)
+      
+      return subjectGroupNames.some((subjectGroup: string) => 
+        teacherGroupNames.includes(subjectGroup)
+      )
+    })
+
+    setFilteredSubjects(filtered)
+  }, [subjects, studentGroups])
+
+  const handleInsertMarkersAfterLastGraded = useCallback(async () => {
+    if (isDateMode) {
+      toast.info('Markers are hidden in date-based grading mode');
+      return;
+    }
+    if (bulkMarkerAdding) return
+
+    if (!filteredSubjects || filteredSubjects.length === 0) {
+      toast.info('No subjects available for the current teacher')
+      return
+    }
+
+    const confirmed = window.confirm('Insert the next grading period marker after the last graded lesson for each visible subject?')
+    if (!confirmed) return
+
+    setBulkMarkerAdding(true)
+
+    const maxMarkersPerSubject = Math.max((userProfile?.grading_periods || 6) - 1, 0)
+    let added = 0
+    let skipped = 0
+
+    for (const subject of filteredSubjects) {
+      try {
+        const [lessonsRes, markersRes, gradesRes] = await Promise.all([
+          apiClient.getLessonsForSubject(subject.id),
+          apiClient.getGradingPeriodMarkersForSubject(subject.id),
+          apiClient.getGradesForSubject(subject.id)
+        ])
+
+        const lessons = Array.isArray(lessonsRes.data) ? lessonsRes.data : []
+        const markers = Array.isArray(markersRes.data) ? markersRes.data : []
+        const grades = Array.isArray(gradesRes.data) ? gradesRes.data : []
+
+        if (markers.length >= maxMarkersPerSubject) {
+          skipped += 1
+          continue
+        }
+
+        const lessonById = new Map<string, any>(lessons.map((l: any) => [l.id, l]))
+        let highestOrder = -1
+
+        grades.forEach((g: any) => {
+          const lesson = lessonById.get(g.lessonId)
+          if (!lesson) return
+          const orderIndex = (lesson as any).order_index ?? (lesson as any).orderIndex ?? 0
+          if (orderIndex > highestOrder) {
+            highestOrder = orderIndex
+          }
+        })
+
+        if (highestOrder === -1) {
+          skipped += 1
+          continue
+        }
+
+        const insertAt = highestOrder + 1
+        const createRes = await apiClient.createGradingPeriodMarker(subject.id, undefined, insertAt)
+        if ((createRes as any)?.error) {
+          skipped += 1
+          continue
+        }
+
+        const [updatedMarkersRes, updatedLessonsRes] = await Promise.all([
+          apiClient.getGradingPeriodMarkersForSubject(subject.id),
+          apiClient.getLessonsForSubject(subject.id)
+        ])
+
+        let updatedMarkers = Array.isArray(updatedMarkersRes.data) ? updatedMarkersRes.data : []
+
+        for (let i = 0; i < updatedMarkers.length; i++) {
+          const desiredName = `End of Grading Period ${i + 1}`
+          if (updatedMarkers[i].name !== desiredName) {
+            await apiClient.updateGradingPeriodMarker(updatedMarkers[i].id, desiredName, (updatedMarkers[i] as any).order_index)
+            updatedMarkers[i].name = desiredName
+          }
+        }
+
+        setSubjectMarkers(prev => ({ ...prev, [subject.id]: updatedMarkers }))
+        setSubjectLessons(prev => ({ ...prev, [subject.id]: Array.isArray(updatedLessonsRes.data) ? updatedLessonsRes.data : [] }))
+        added += 1
+      } catch (err) {
+        console.error('Failed to insert grading period marker after last graded lesson', err)
+        skipped += 1
+      }
+    }
+
+    setBulkMarkerAdding(false)
+
+    if (added > 0) {
+      toast.success(`Inserted markers for ${added} subject${added === 1 ? '' : 's'}${skipped > 0 ? `; skipped ${skipped}` : ''}`)
+    } else {
+      toast.info(skipped > 0 ? `No markers added; skipped ${skipped} subject${skipped === 1 ? '' : 's'}` : 'No markers added')
+    }
+  }, [bulkMarkerAdding, filteredSubjects, userProfile, isDateMode])
 
   // Update lesson type when categories are loaded
   useEffect(() => {
@@ -596,6 +777,34 @@ function Subjects() {
     fetchData();
   }, []);
 
+  // Listen for grading mode updates from settings without requiring a full reload
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent).detail as { gradingMode?: 'dates' | 'markers' } | undefined
+      if (!detail?.gradingMode) return
+      setUserProfile(prev => ({ ...(prev || {} as any), grading_mode: detail.gradingMode }))
+    }
+    window.addEventListener('gradeflow-profile-updated', handler as EventListener)
+    return () => window.removeEventListener('gradeflow-profile-updated', handler as EventListener)
+  }, [])
+
+  // Filter data when teacher selection changes or data is updated
+  useEffect(() => {
+    filterSubjectsByTeacherGroups()
+  }, [subjects, studentGroups])
+
+  // Listen for teacher selection changes
+  useEffect(() => {
+    const handleTeacherChange = () => {
+      filterSubjectsByTeacherGroups()
+    }
+    
+    window.addEventListener('teacher-selection-changed', handleTeacherChange)
+    return () => {
+      window.removeEventListener('teacher-selection-changed', handleTeacherChange)
+    }
+  }, [filterSubjectsByTeacherGroups])
+
   // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -617,6 +826,10 @@ function Subjects() {
   useEffect(() => {
     const handleExpandAndHighlight = (event: CustomEvent) => {
       const { subjectId, action } = event.detail;
+
+      if (action === 'add-marker' && isDateMode) {
+        return;
+      }
       
       // Expand the subject if it's not already expanded
       const isCurrentlyExpanded = expandedSubjects[subjectId];
@@ -664,7 +877,7 @@ function Subjects() {
 
     window.addEventListener('gradeflow-subjects-expand-and-highlight', handleExpandAndHighlight as EventListener);
     return () => window.removeEventListener('gradeflow-subjects-expand-and-highlight', handleExpandAndHighlight as EventListener);
-  }, [expandedSubjects, toggleLessons]);
+  }, [expandedSubjects, toggleLessons, isDateMode]);
 
   // Listen for general highlight action (for top-level buttons like Add Subject)
   useEffect(() => {
@@ -727,6 +940,10 @@ function Subjects() {
     setAddLessonDialog({ open: false, subjectId: null });
   }
   function openAddMarkerDialog(subjectId: string, insertAfterOrderIndex: number | null) {
+    if (isDateMode) {
+      toast.info('Markers are hidden in date-based grading mode');
+      return;
+    }
     const desiredOrderIndex = insertAfterOrderIndex !== null ? insertAfterOrderIndex + 1 : null;
     
     // Find the option index that matches this orderIndex
@@ -837,6 +1054,79 @@ function Subjects() {
     }
   }
 
+  const bulkImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    const reader = new FileReader()
+    reader.onload = async (e) => {
+      try {
+        const csv = e.target?.result as string
+        const lines = csv.split('\n').filter(line => line.trim())
+        
+        if (lines.length === 0) {
+          toast.error("CSV file is empty")
+          return
+        }
+
+        // Skip header row and parse data
+        const subjectsData = []
+        const errors = []
+        
+        for (let i = 1; i < lines.length; i++) {
+          const values = lines[i].split(',').map(v => v.trim())
+          
+          // Validate that required fields are provided (Name is required, Group and Report Card Name are optional)
+          if (values.length < 1) {
+            errors.push(`Row ${i + 1}: Missing subject name`)
+            continue
+          }
+          
+          const name = values[0]
+          const group = values[1] || '' // Optional
+          const reportCardName = values[2] || '' // Optional
+          
+          // Check for empty required fields
+          if (!name) {
+            errors.push(`Row ${i + 1}: Subject name is required`)
+            continue
+          }
+          
+          subjectsData.push({
+            name: name,
+            group: group,
+            reportCardName: reportCardName
+          })
+        }
+        
+        // Show errors if any
+        if (errors.length > 0) {
+          toast.error(`CSV validation failed:\n${errors.slice(0, 5).join('\n')}${errors.length > 5 ? `\n... and ${errors.length - 5} more errors` : ''}`)
+          return
+        }
+
+        if (subjectsData.length === 0) {
+          toast.error("No valid subject data found in CSV")
+          return
+        }
+
+        // Send to backend
+        const result = await apiClient.bulkImportSubjects({ subjects: subjectsData })
+        
+        // Refresh the subjects list
+        const subjectsRes = await apiClient.getSubjects()
+        setSubjects(Array.isArray(subjectsRes.data) ? subjectsRes.data : [])
+        
+        toast.success((result.data as any)?.message || `Imported ${subjectsData.length} subjects`)
+      } catch (error: any) {
+        console.error('Import error:', error)
+        toast.error(error.response?.data?.error || "Failed to import CSV file")
+      }
+    }
+    reader.readAsText(file)
+    event.target.value = ''
+  }
+
   return (
     <>
       <div className="space-y-6">
@@ -845,9 +1135,54 @@ function Subjects() {
             <h2 className="text-3xl font-bold text-foreground">Subjects</h2>
             <p className="text-muted-foreground">Manage subjects and lessons</p>
           </div>
-          <Button variant="default" onClick={openAddSubjectDialog} data-action="add-subject">
-            <Plus size={16} className="mr-2" /> Add Subject
-          </Button>
+          <div className="flex gap-2">
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Label htmlFor="subjects-csv-upload" className="cursor-pointer">
+                    <Button variant="outline" asChild>
+                      <span className="flex items-center gap-2">
+                        <Upload size={16} />
+                        Import CSV
+                      </span>
+                    </Button>
+                  </Label>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <div className="text-sm">
+                    <div className="font-medium mb-1">CSV Format:</div>
+                    <div className="text-xs text-muted-foreground">
+                      <div>Column 1: Subject Name (required)</div>
+                      <div>Column 2: Group (optional)</div>
+                      <div>Column 3: Report Card Name (optional)</div>
+                    </div>
+                    <div className="mt-2 text-xs text-blue-600">
+                      Groups will be created automatically if they don't exist
+                    </div>
+                  </div>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+            {!isDateMode && (
+              <Button
+                variant="outline"
+                onClick={handleInsertMarkersAfterLastGraded}
+                disabled={bulkMarkerAdding}
+              >
+                {bulkMarkerAdding ? 'Inserting markers...' : 'Insert next markers'}
+              </Button>
+            )}
+            <input
+              id="subjects-csv-upload"
+              type="file"
+              accept=".csv"
+              className="hidden"
+              onChange={bulkImport}
+            />
+            <Button variant="default" onClick={openAddSubjectDialog} data-action="add-subject">
+              <Plus size={16} className="mr-2" /> Add Subject
+            </Button>
+          </div>
         </div>
         <Dialog open={isAddDialogOpen} onOpenChange={(open) => {
           setIsAddDialogOpen(open);
@@ -1082,7 +1417,7 @@ function Subjects() {
             </div>
           </DialogContent>
         </Dialog>
-        {subjects.length === 0 ? (
+        {filteredSubjects.length === 0 ? (
           <Card>
             <CardContent className="py-12 text-center">
               <Plus size={48} className="mx-auto text-muted-foreground mb-4" />
@@ -1094,8 +1429,13 @@ function Subjects() {
             </CardContent>
           </Card>
         ) : (
-          subjects.map((subject) => (
-            <Card key={subject.id} className="relative group" data-subject-id={subject.id}>
+          <div className="space-y-8">
+            {groupAndSortSubjects(filteredSubjects).map(({ groupName, subjects: groupSubjects }) => (
+              <div key={groupName}>
+                <h3 className="text-xl font-semibold mb-4 pb-2 border-b">{groupName}</h3>
+                <div className="space-y-4">
+                  {groupSubjects.map((subject: any) => (
+                    <Card key={subject.id} className="relative group" data-subject-id={subject.id}>
               <CardHeader>
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
@@ -1134,14 +1474,16 @@ function Subjects() {
                       >
                         <Plus size={14} className="mr-1 text-primary" /> Add Lesson
                       </Button>
-                      <Button 
-                        size="sm" 
-                        variant="outline" 
-                        onClick={() => openAddMarkerDialog(subject.id, null)}
-                        data-action="add-marker"
-                      >
-                        📍 Add Marker
-                      </Button>
+                      {!isDateMode && (
+                        <Button 
+                          size="sm" 
+                          variant="outline" 
+                          onClick={() => openAddMarkerDialog(subject.id, null)}
+                          data-action="add-marker"
+                        >
+                          📍 Add Marker
+                        </Button>
+                      )}
                       <Button size="sm" variant="secondary" onClick={() => handleAutoGenDialog(subject.id)} data-action="add-lessons">
                         Add Lessons
                       </Button>
@@ -1233,7 +1575,7 @@ function Subjects() {
                       <ul className="space-y-2">
                         {(() => {
                           const lessons = subjectLessons[subject.id] ?? [];
-                          const markers = subjectMarkers[subject.id] ?? [];
+                          const markers = isDateMode ? [] : subjectMarkers[subject.id] ?? [];
                           
                           // Combine and sort lessons and markers by order_index
                           // Use 'itemType' to distinguish between lessons and markers, not 'type' (which is the category name)
@@ -1363,8 +1705,12 @@ function Subjects() {
                   </div>
                 )}
               </CardContent>
-            </Card>
-          ))
+                    </Card>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
         )}
       </div>
       {/* Add Lesson Dialog */}
@@ -1483,7 +1829,7 @@ function Subjects() {
             <div className="max-h-60 overflow-y-auto space-y-2">
               {(() => {
                 const lessons = subjectLessons[addMarkerDialog.subjectId || ''] ?? [];
-                const markers = subjectMarkers[addMarkerDialog.subjectId || ''] ?? [];
+                const markers = isDateMode ? [] : subjectMarkers[addMarkerDialog.subjectId || ''] ?? [];
                 
                 // Combine and sort lessons and markers by orderIndex
                 const combinedItems = [

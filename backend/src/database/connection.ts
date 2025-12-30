@@ -1,9 +1,12 @@
-import { Pool } from 'pg';
+import { Pool, types } from 'pg';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
 let pool: Pool;
+
+// Ensure DATE columns return the raw YYYY-MM-DD string to avoid timezone shifts
+types.setTypeParser(1082, (val) => val);
 
 export const connectDB = async (): Promise<void> => {
   try {

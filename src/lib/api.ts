@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Grade, User } from '@/lib/types'
+import { AttendanceRecord, Grade, User } from '@/lib/types'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
@@ -142,7 +142,9 @@ class ApiClient {
     name?: string; 
     school_name?: string; 
     first_day_of_school?: string; 
-    grading_periods?: number 
+    grading_periods?: number;
+    grading_mode?: 'dates' | 'markers';
+    auto_enroll_subjects?: boolean
   }) {
     return this.request<User>('/users/profile', {
       method: 'PUT',
@@ -214,6 +216,13 @@ class ApiClient {
 
   async bulkImportStudents(data: { students: Array<{ name: string; birthday?: string; group?: string }> }) {
     return this.request('/students/bulk-import', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async bulkImportSubjects(data: { subjects: Array<{ name: string; group?: string; reportCardName?: string }> }) {
+    return this.request('/subjects/bulk-import', {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -339,6 +348,18 @@ class ApiClient {
     return this.request(`/lessons/subject/${subjectId}`);
   }
 
+  // Grading Periods (date-based reporting)
+  async getGradingPeriods() {
+    return this.request(`/grading-periods`)
+  }
+
+  async upsertGradingPeriods(periods: Array<{ id?: string; name: string; startDate: string; endDate: string; orderIndex: number }>) {
+    return this.request(`/grading-periods`, {
+      method: 'PUT',
+      body: JSON.stringify({ periods })
+    })
+  }
+
   // Grading Period Markers
   async getGradingPeriodMarkersForSubject(subjectId: string) {
     return this.request(`/grading-period-markers/subject/${subjectId}`);
@@ -417,6 +438,62 @@ class ApiClient {
   // Add getGrades method to apiClient
   async getGrades() {
     return this.request('/grades', { method: 'GET' });
+  }
+
+  // Attendance
+  async getAttendance(params?: { date?: string; startDate?: string; endDate?: string }) {
+    const search = new URLSearchParams()
+    if (params?.date) search.set('date', params.date)
+    if (params?.startDate) search.set('startDate', params.startDate)
+    if (params?.endDate) search.set('endDate', params.endDate)
+    const qs = search.toString()
+    return this.request<AttendanceRecord[]>(`/attendance${qs ? `?${qs}` : ''}`)
+  }
+
+  async upsertAttendance(records: Array<Pick<AttendanceRecord, 'studentId' | 'date' | 'status' | 'notes'>>) {
+    return this.request<{ success: boolean; count: number }>(`/attendance/bulk`, {
+      method: 'POST',
+      body: JSON.stringify({ records })
+    })
+  }
+
+  async getStudentAttendance(studentId: string, limit = 50) {
+    return this.request<AttendanceRecord[]>(`/attendance/student/${studentId}?limit=${limit}`)
+  }
+
+  // Teachers
+  async getTeachers() {
+    return this.request('/teachers');
+  }
+
+  async getTeacher(id: string) {
+    return this.request(`/teachers/${id}`);
+  }
+
+  async createTeacher(data: { name: string; email: string; password: string; selectedGroups?: string[] }) {
+    return this.request('/teachers', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateTeacher(id: string, data: { name: string; email: string; selectedGroups?: string[] }) {
+    return this.request(`/teachers/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteTeacher(id: string) {
+    return this.request(`/teachers/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async toggleTeacherActive(id: string) {
+    return this.request(`/teachers/${id}/toggle-active`, {
+      method: 'PATCH',
+    });
   }
 
   // Backup and Restore Methods

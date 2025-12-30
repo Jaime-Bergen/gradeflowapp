@@ -5,6 +5,7 @@
     "type": "module",
     "scripts": {
         "dev": "vite --host",
+        "dev:node": "node ./node_modules/vite/bin/vite.js",
         "kill": "fuser -k 5000/tcp",
         "build": "tsc -b --noCheck && vite build",
         "start": "cd backend && npm start",

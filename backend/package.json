@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "dist/server.js",
   "scripts": {
-    "build": "tsc",
+    "build": "node ./node_modules/typescript/lib/tsc.js",
     "dev": "nodemon --watch src --ext ts,js --exec ts-node src/server.ts",
     "start": "node dist/server.js",
     "heroku-postbuild": "npm run build",
