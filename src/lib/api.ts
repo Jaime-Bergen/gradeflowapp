@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { AttendanceRecord, Grade, SchoolYear, User, UserSchoolYearLicense } from '@/lib/types'
+import { AttendanceRecord, Grade, RolloverScope, RolloverScopePreview, SchoolYear, User, UserSchoolYearLicense } from '@/lib/types'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
@@ -270,6 +270,90 @@ class ApiClient {
       headers: {
         'x-admin-passcode': adminPasscode,
       },
+    })
+  }
+
+  async getRolloverScopes() {
+    return this.request<RolloverScope[]>('/rollover/scopes')
+  }
+
+  async createRolloverScope(
+    adminPasscode: string,
+    payload: { name: string; minGrade: number; maxGrade: number; teacherId?: string | null }
+  ) {
+    return this.request<RolloverScope>('/rollover/scopes', {
+      method: 'POST',
+      headers: {
+        'x-admin-passcode': adminPasscode,
+      },
+      body: JSON.stringify(payload),
+    })
+  }
+
+  async updateRolloverScope(
+    adminPasscode: string,
+    scopeId: string,
+    payload: { name: string; minGrade: number; maxGrade: number; teacherId?: string | null }
+  ) {
+    return this.request<RolloverScope>(`/rollover/scopes/${scopeId}`, {
+      method: 'PUT',
+      headers: {
+        'x-admin-passcode': adminPasscode,
+      },
+      body: JSON.stringify(payload),
+    })
+  }
+
+  async lockRolloverScope(scopeId: string, payload?: { teacherId?: string | null; notes?: string }) {
+    return this.request<RolloverScope>(`/rollover/scopes/${scopeId}/lock`, {
+      method: 'POST',
+      body: JSON.stringify(payload || {}),
+    })
+  }
+
+  async unlockRolloverScope(adminPasscode: string, scopeId: string) {
+    return this.request<RolloverScope>(`/rollover/scopes/${scopeId}/unlock`, {
+      method: 'POST',
+      headers: {
+        'x-admin-passcode': adminPasscode,
+      },
+    })
+  }
+
+  async getRolloverScopePreview(scopeId: string, riskThreshold = 80) {
+    return this.request<RolloverScopePreview>(`/rollover/scopes/${scopeId}/preview?riskThreshold=${riskThreshold}`)
+  }
+
+  async executeRolloverStudents(
+    scopeId: string,
+    payload: { targetSchoolYearId: string; holdBackStudentIds?: string[] }
+  ) {
+    return this.request(`/rollover/scopes/${scopeId}/execute/students`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  }
+
+  async executeRolloverSubjects(
+    scopeId: string,
+    payload: { targetSchoolYearId: string }
+  ) {
+    return this.request(`/rollover/scopes/${scopeId}/execute/subjects`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  }
+
+  async finalizeRollover(
+    adminPasscode: string,
+    payload: { targetSchoolYearId: string; firstDayOfSchool?: string }
+  ) {
+    return this.request('/rollover/finalize', {
+      method: 'POST',
+      headers: {
+        'x-admin-passcode': adminPasscode,
+      },
+      body: JSON.stringify(payload),
     })
   }
 

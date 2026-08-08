@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { AlertTriangle, CalendarRange, Database, Download, PlusCircle, Upload } from "lucide-react"
 import { toast } from 'sonner'
 import DataCleaner from './DataCleaner'
-import { SchoolYear, UserSchoolYearLicense } from '@/lib/types'
+import { RolloverScope, SchoolYear, UserSchoolYearLicense } from '@/lib/types'
 // import { apiClient } from '@/lib/api' // Uncomment when backend supports /users
 
 export default function AdminDanger() {
@@ -31,12 +31,24 @@ export default function AdminDanger() {
   const [newYearLabel, setNewYearLabel] = useState('')
   const [newYearStart, setNewYearStart] = useState('')
   const [newYearEnd, setNewYearEnd] = useState('')
+  const [rolloverScopes, setRolloverScopes] = useState<RolloverScope[]>([])
+  const [teachers, setTeachers] = useState<Array<{ id: string; name: string; email: string }>>([])
+  const [newScopeName, setNewScopeName] = useState('')
+  const [newScopeMinGrade, setNewScopeMinGrade] = useState('3')
+  const [newScopeMaxGrade, setNewScopeMaxGrade] = useState('5')
+  const [newScopeTeacherId, setNewScopeTeacherId] = useState('')
+  const [selectedScopeId, setSelectedScopeId] = useState('')
+  const [scopePreview, setScopePreview] = useState<any | null>(null)
+  const [scopeNotes, setScopeNotes] = useState('')
+  const [rolloverTargetYearId, setRolloverTargetYearId] = useState('')
+  const [rolloverFirstDay, setRolloverFirstDay] = useState('')
 
   const adminPass = import.meta.env.VITE_ADMIN_PASS
 
   useEffect(() => {
     if (!entered) return
     loadLicenseAdminData()
+    loadRolloverData()
   }, [entered])
 
   useEffect(() => {
@@ -139,6 +151,9 @@ export default function AdminDanger() {
       if (!selectedYearId && yearRows.length > 0) {
         setSelectedYearId(yearRows[0].id)
       }
+      if (!rolloverTargetYearId && yearRows.length > 0) {
+        setRolloverTargetYearId(yearRows[0].id)
+      }
     } catch (error) {
       console.error('Failed to load school year license admin data:', error)
       toast.error('Failed to load school year license data')
@@ -219,6 +234,178 @@ export default function AdminDanger() {
     } catch (error) {
       console.error('Failed to revoke license:', error)
       toast.error('Failed to revoke license')
+    }
+  }
+
+  const loadRolloverData = async () => {
+    if (!adminPass) return
+    try {
+      const [scopesRes, teachersRes] = await Promise.all([
+        apiClient.getRolloverScopes(),
+        apiClient.getTeachers(),
+      ])
+
+      const scopes = Array.isArray(scopesRes.data) ? scopesRes.data : []
+      const teacherRows = Array.isArray((teachersRes.data as any)?.data) ? (teachersRes.data as any).data : []
+
+      setRolloverScopes(scopes)
+      setTeachers(
+        teacherRows.map((t: any) => ({
+          id: t.id,
+          name: t.name,
+          email: t.email,
+        }))
+      )
+
+      if (!selectedScopeId && scopes.length > 0) {
+        setSelectedScopeId(scopes[0].id)
+      }
+    } catch (error) {
+      console.error('Failed to load rollover scopes:', error)
+      toast.error('Failed to load rollover scope data')
+    }
+  }
+
+  const createRolloverScope = async () => {
+    if (!adminPass) return
+    const minGrade = Number(newScopeMinGrade)
+    const maxGrade = Number(newScopeMaxGrade)
+
+    if (!newScopeName.trim()) {
+      toast.error('Scope name is required')
+      return
+    }
+    if (!Number.isInteger(minGrade) || !Number.isInteger(maxGrade) || minGrade < 0 || maxGrade < minGrade) {
+      toast.error('Invalid grade range')
+      return
+    }
+
+    try {
+      await apiClient.createRolloverScope(adminPass, {
+        name: newScopeName.trim(),
+        minGrade,
+        maxGrade,
+        teacherId: newScopeTeacherId || null,
+      })
+      toast.success('Rollover scope created')
+      setNewScopeName('')
+      setScopeNotes('')
+      await loadRolloverData()
+    } catch (error) {
+      console.error('Failed to create rollover scope:', error)
+      toast.error('Failed to create rollover scope')
+    }
+  }
+
+  const lockScope = async (scopeId: string, teacherId?: string | null) => {
+    try {
+      await apiClient.lockRolloverScope(scopeId, {
+        teacherId: teacherId || null,
+        notes: scopeNotes.trim() || undefined,
+      })
+      toast.success('Scope locked')
+      await loadRolloverData()
+    } catch (error) {
+      console.error('Failed to lock scope:', error)
+      toast.error('Failed to lock scope')
+    }
+  }
+
+  const unlockScope = async (scopeId: string) => {
+    if (!adminPass) return
+    try {
+      await apiClient.unlockRolloverScope(adminPass, scopeId)
+      toast.success('Scope unlocked')
+      await loadRolloverData()
+    } catch (error) {
+      console.error('Failed to unlock scope:', error)
+      toast.error('Failed to unlock scope')
+    }
+  }
+
+  const previewScope = async (scopeId: string) => {
+    try {
+      const res = await apiClient.getRolloverScopePreview(scopeId, 80)
+      setScopePreview(res.data || null)
+    } catch (error) {
+      console.error('Failed to preview scope:', error)
+      toast.error('Failed to load scope preview')
+    }
+  }
+
+  const executeScopeStudents = async (scopeId: string) => {
+    if (!rolloverTargetYearId) {
+      toast.error('Select a target school year for rollover execution')
+      return
+    }
+
+    try {
+      const holdBackIds =
+        scopePreview && selectedScopeId === scopeId
+          ? (scopePreview.students || [])
+              .filter((s: any) => !!s.suggested_hold_back)
+              .map((s: any) => s.id)
+          : []
+
+      const res = await apiClient.executeRolloverStudents(scopeId, {
+        targetSchoolYearId: rolloverTargetYearId,
+        holdBackStudentIds: holdBackIds,
+      })
+
+      if ((res as any).error) {
+        throw new Error((res as any).error)
+      }
+
+      toast.success('Student promotion step complete')
+    } catch (error) {
+      console.error('Failed to execute student rollover:', error)
+      toast.error('Failed to execute student rollover')
+    }
+  }
+
+  const executeScopeSubjects = async (scopeId: string) => {
+    if (!rolloverTargetYearId) {
+      toast.error('Select a target school year for rollover execution')
+      return
+    }
+
+    try {
+      const res = await apiClient.executeRolloverSubjects(scopeId, {
+        targetSchoolYearId: rolloverTargetYearId,
+      })
+      if ((res as any).error) {
+        throw new Error((res as any).error)
+      }
+      toast.success('Subject cloning step complete')
+    } catch (error) {
+      console.error('Failed to execute subject rollover:', error)
+      toast.error('Failed to execute subject rollover')
+    }
+  }
+
+  const finalizeRollover = async () => {
+    if (!adminPass) return
+    if (!rolloverTargetYearId) {
+      toast.error('Select a target school year to finalize')
+      return
+    }
+
+    if (!window.confirm('Finalize rollover and switch active school year?')) {
+      return
+    }
+
+    try {
+      const res = await apiClient.finalizeRollover(adminPass, {
+        targetSchoolYearId: rolloverTargetYearId,
+        firstDayOfSchool: rolloverFirstDay || undefined,
+      })
+      if ((res as any).error) {
+        throw new Error((res as any).error)
+      }
+      toast.success('Rollover finalized. Active year switched.')
+    } catch (error) {
+      console.error('Failed to finalize rollover:', error)
+      toast.error('Failed to finalize rollover')
     }
   }
 
@@ -456,6 +643,179 @@ export default function AdminDanger() {
                 ))}
               </div>
             )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border-destructive">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-destructive">
+            <CalendarRange size={24} />
+            Rollover Scopes (Teacher Locking)
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <Alert variant="destructive">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription>
+              <strong>Workflow:</strong> Create grade-range scopes, assign a teacher, and lock completed scopes so later rollover steps cannot edit them.
+            </AlertDescription>
+          </Alert>
+
+          <div className="grid gap-4 md:grid-cols-2 rounded-md border p-4">
+            <div className="space-y-2">
+              <Label>Target School Year</Label>
+              <Select value={rolloverTargetYearId || undefined} onValueChange={setRolloverTargetYearId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select target year" />
+                </SelectTrigger>
+                <SelectContent>
+                  {schoolYears.map((y) => (
+                    <SelectItem key={y.id} value={y.id}>
+                      {y.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="rollover-first-day">New First Day Of School</Label>
+              <Input
+                id="rollover-first-day"
+                type="date"
+                value={rolloverFirstDay}
+                onChange={(e) => setRolloverFirstDay(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2 rounded-md border p-4">
+            <div className="space-y-2">
+              <Label htmlFor="scope-name">Scope Name</Label>
+              <Input
+                id="scope-name"
+                placeholder="Grades 3-5"
+                value={newScopeName}
+                onChange={(e) => setNewScopeName(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Assigned Teacher</Label>
+              <Select value={newScopeTeacherId || 'none'} onValueChange={(v) => setNewScopeTeacherId(v === 'none' ? '' : v)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Optional" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Unassigned</SelectItem>
+                  {teachers.map((t) => (
+                    <SelectItem key={t.id} value={t.id}>{t.name} ({t.email})</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="scope-min-grade">Min Grade</Label>
+              <Input
+                id="scope-min-grade"
+                type="number"
+                value={newScopeMinGrade}
+                onChange={(e) => setNewScopeMinGrade(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="scope-max-grade">Max Grade</Label>
+              <Input
+                id="scope-max-grade"
+                type="number"
+                value={newScopeMaxGrade}
+                onChange={(e) => setNewScopeMaxGrade(e.target.value)}
+              />
+            </div>
+            <Button onClick={createRolloverScope} className="md:col-span-2">
+              <PlusCircle size={16} className="mr-2" />
+              Create Scope
+            </Button>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="scope-notes">Lock Notes</Label>
+            <Input
+              id="scope-notes"
+              placeholder="Optional note when locking"
+              value={scopeNotes}
+              onChange={(e) => setScopeNotes(e.target.value)}
+            />
+          </div>
+
+          <div className="space-y-2">
+            {rolloverScopes.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No rollover scopes configured yet.</p>
+            ) : (
+              rolloverScopes.map((scope) => (
+                <div key={scope.id} className="rounded-md border p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="font-medium">{scope.name}</div>
+                      <div className="text-xs text-muted-foreground">
+                        Grades {scope.min_grade}-{scope.max_grade}
+                        {scope.teacher_name ? ` • ${scope.teacher_name}` : ' • Unassigned'}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        Students: {scope.total_students || 0} • Suggested hold-backs (&lt;80%): {scope.at_risk_students || 0}
+                      </div>
+                    </div>
+                    <div className="text-xs font-medium uppercase">{scope.status}</div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" onClick={() => { setSelectedScopeId(scope.id); previewScope(scope.id) }}>
+                      Preview
+                    </Button>
+                    {scope.status === 'draft' ? (
+                      <Button size="sm" onClick={() => lockScope(scope.id, scope.teacher_id || undefined)}>
+                        Mark Complete + Lock
+                      </Button>
+                    ) : (
+                      <>
+                        <Button size="sm" onClick={() => executeScopeStudents(scope.id)}>
+                          Execute Students
+                        </Button>
+                        <Button size="sm" onClick={() => executeScopeSubjects(scope.id)}>
+                          Execute Subjects
+                        </Button>
+                        <Button size="sm" variant="destructive" onClick={() => unlockScope(scope.id)}>
+                          Unlock (Admin)
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+
+          {scopePreview && selectedScopeId ? (
+            <div className="rounded-md border p-4 space-y-2">
+              <h4 className="font-medium">Preview: {scopePreview.scope?.name}</h4>
+              <p className="text-xs text-muted-foreground">
+                Threshold: {scopePreview.riskThreshold}% • {scopePreview.students?.length || 0} students
+              </p>
+              <div className="max-h-56 overflow-auto text-sm space-y-1">
+                {(scopePreview.students || []).map((s: any) => (
+                  <div key={s.id} className="flex items-center justify-between border-b py-1">
+                    <span>{s.name} ({s.grade || 'N/A'})</span>
+                    <span className={s.suggested_hold_back ? 'text-destructive font-medium' : 'text-muted-foreground'}>
+                      Avg: {s.average_percentage ?? 'N/A'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          <div className="flex justify-end">
+            <Button variant="destructive" onClick={finalizeRollover}>
+              Finalize Rollover + Switch Active Year
+            </Button>
           </div>
         </CardContent>
       </Card>

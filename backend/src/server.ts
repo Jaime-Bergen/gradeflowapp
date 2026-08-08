@@ -23,6 +23,7 @@ import feedbackRoutes from './routes/feedback';
 import utilsRoutes from './routes/utils';
 import teachersRoutes from './routes/teachers';
 import attendanceRoutes from './routes/attendance';
+import rolloverRoutes from './routes/rollover';
 import { errorHandler } from './middleware/errorHandler';
 import { authenticateToken, resolveSchoolYearContext } from './middleware/auth';
 
@@ -107,6 +108,7 @@ app.use('/api/grading-periods', authenticateToken, resolveSchoolYearContext, gra
 app.use('/api/feedback', authenticateToken, feedbackRoutes);
 app.use('/api/teachers', authenticateToken, teachersRoutes);
 app.use('/api/attendance', authenticateToken, resolveSchoolYearContext, attendanceRoutes);
+app.use('/api/rollover', authenticateToken, resolveSchoolYearContext, rolloverRoutes);
 app.use('/api/utils', utilsRoutes);
 app.use('/api/metadata', metadataRoutes);
 app.use('/api/backups', backupRoutes);

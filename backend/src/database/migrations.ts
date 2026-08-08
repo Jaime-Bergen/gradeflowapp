@@ -50,6 +50,7 @@ export const runMigrations = async (): Promise<void> => {
     await seedDefaultSchoolYears(db);
     await seedInitialUserSchoolYearLicenses(db);
     await addSchoolYearScopingToTables(db);
+    await createRolloverScopesTable(db);
     
     console.log('All migrations completed successfully');
   } catch (error) {
@@ -1099,6 +1100,39 @@ const addSchoolYearScopingToTables = async (db: any) => {
     console.log('✅ Added school_year_id scoping to year-based tables');
   } catch (error) {
     console.error('Error adding school_year_id scoping:', error);
+    throw error;
+  }
+};
+
+const createRolloverScopesTable = async (db: any) => {
+  try {
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS rollover_scopes (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        school_year_id UUID NOT NULL REFERENCES school_years(id) ON DELETE CASCADE,
+        name VARCHAR(255) NOT NULL,
+        min_grade INTEGER NOT NULL,
+        max_grade INTEGER NOT NULL,
+        teacher_id UUID REFERENCES teachers(id) ON DELETE SET NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'draft',
+        lock_notes TEXT,
+        locked_at TIMESTAMP,
+        locked_by_teacher_id UUID REFERENCES teachers(id) ON DELETE SET NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT rollover_scopes_grade_range_check CHECK (min_grade >= 0 AND max_grade >= min_grade),
+        CONSTRAINT rollover_scopes_status_check CHECK (status IN ('draft', 'locked')),
+        UNIQUE(user_id, school_year_id, name)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_rollover_scopes_user_year ON rollover_scopes(user_id, school_year_id);
+      CREATE INDEX IF NOT EXISTS idx_rollover_scopes_teacher ON rollover_scopes(teacher_id);
+      CREATE INDEX IF NOT EXISTS idx_rollover_scopes_status ON rollover_scopes(user_id, school_year_id, status);
+    `);
+    console.log('✅ Rollover scopes table created/verified');
+  } catch (error) {
+    console.error('Error creating rollover_scopes table:', error);
     throw error;
   }
 };

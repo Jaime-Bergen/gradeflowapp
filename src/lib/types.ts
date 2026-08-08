@@ -45,6 +45,47 @@ export interface UserSchoolYearLicense {
   is_active: boolean
 }
 
+export interface RolloverScope {
+  id: string
+  user_id: string
+  school_year_id: string
+  name: string
+  min_grade: number
+  max_grade: number
+  teacher_id?: string | null
+  teacher_name?: string | null
+  teacher_email?: string | null
+  status: 'draft' | 'locked'
+  lock_notes?: string | null
+  locked_at?: string | null
+  locked_by_teacher_id?: string | null
+  locked_by_teacher_name?: string | null
+  total_students?: number
+  at_risk_students?: number
+  created_at: string
+  updated_at: string
+}
+
+export interface RolloverScopePreviewStudent {
+  id: string
+  name: string
+  grade?: string | null
+  average_percentage?: number | null
+  suggested_hold_back: boolean
+}
+
+export interface RolloverScopePreview {
+  scope: {
+    id: string
+    name: string
+    min_grade: number
+    max_grade: number
+    status: 'draft' | 'locked'
+  }
+  riskThreshold: number
+  students: RolloverScopePreviewStudent[]
+}
+
 export interface Student {
   id: string
   name: string
