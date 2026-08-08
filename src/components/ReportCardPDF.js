@@ -288,18 +288,27 @@ const getGradeStyle = (grade) => {
             return {};
     }
 };
-const ReportCardPDF = ({ student, reportCard, schoolName = "Lincoln Elementary School", showPercentage = true }) => {
+const ReportCardPDF = ({ student, reportCard, schoolName = "Lincoln Elementary School", firstDayOfSchool, showPercentage = true }) => {
     // Add safety checks for required props
     if (!student || !reportCard) {
         return (_jsx(Document, { children: _jsx(Page, { size: "A4", style: styles.page, children: _jsxs(View, { style: styles.header, children: [_jsx(Text, { style: styles.schoolName, children: "Error" }), _jsx(Text, { style: styles.reportTitle, children: "Unable to generate report" }), _jsx(Text, { style: styles.semester, children: "Missing required data" })] }) }) }));
     }
-    const currentYear = new Date().getFullYear();
+    const inferredStartYear = (() => {
+        if (!firstDayOfSchool)
+            return new Date().getFullYear();
+        const yearPart = firstDayOfSchool.split('-')[0];
+        const parsedYear = parseInt(yearPart, 10);
+        if (!isNaN(parsedYear))
+            return parsedYear;
+        const parsedDate = new Date(firstDayOfSchool);
+        return isNaN(parsedDate.getTime()) ? new Date().getFullYear() : parsedDate.getFullYear();
+    })();
     const reportDate = new Date().toLocaleDateString('en-US', {
         year: 'numeric',
         month: 'long',
         day: 'numeric'
     });
-    return (_jsx(Document, { children: _jsxs(Page, { size: "A4", style: styles.page, children: [_jsxs(View, { style: styles.header, children: [_jsx(Text, { style: styles.schoolName, children: schoolName }), _jsx(Text, { style: styles.reportTitle, children: "Academic Report Card" }), _jsxs(Text, { style: styles.semester, children: [formatReportPeriod(reportCard.period), " \u2022 ", currentYear, "-", currentYear + 1, " School Year"] })] }), _jsxs(View, { style: styles.studentInfo, children: [_jsxs(View, { style: styles.studentDetails, children: [_jsx(Text, { style: styles.studentName, children: student.name || 'Unknown Student' }), _jsxs(View, { style: styles.infoRow, children: [_jsx(Text, { style: styles.infoLabel, children: "Subjects:" }), _jsx(Text, { style: styles.infoValue, children: reportCard.subjects.length })] }), _jsxs(View, { style: styles.infoRow, children: [_jsx(Text, { style: styles.infoLabel, children: "Class:" }), _jsx(Text, { style: styles.infoValue, children: student.group_name || student.grade || 'N/A' })] })] }), _jsxs(View, { style: styles.gpaSection, children: [_jsx(Text, { style: styles.gpaLabel, children: showPercentage ? 'Overall Percentage' : 'Overall GPA' }), _jsx(Text, { style: styles.gpa, children: (() => {
+    return (_jsx(Document, { children: _jsxs(Page, { size: "A4", style: styles.page, children: [_jsxs(View, { style: styles.header, children: [_jsx(Text, { style: styles.schoolName, children: schoolName }), _jsx(Text, { style: styles.reportTitle, children: "Academic Report Card" }), _jsxs(Text, { style: styles.semester, children: [formatReportPeriod(reportCard.period), " \u2022 ", inferredStartYear, "-", inferredStartYear + 1, " School Year"] })] }), _jsxs(View, { style: styles.studentInfo, children: [_jsxs(View, { style: styles.studentDetails, children: [_jsx(Text, { style: styles.studentName, children: student.name || 'Unknown Student' }), _jsxs(View, { style: styles.infoRow, children: [_jsx(Text, { style: styles.infoLabel, children: "Subjects:" }), _jsx(Text, { style: styles.infoValue, children: reportCard.subjects.length })] }), _jsxs(View, { style: styles.infoRow, children: [_jsx(Text, { style: styles.infoLabel, children: "Class:" }), _jsx(Text, { style: styles.infoValue, children: student.group_name || student.grade || 'N/A' })] })] }), _jsxs(View, { style: styles.gpaSection, children: [_jsx(Text, { style: styles.gpaLabel, children: showPercentage ? 'Overall Percentage' : 'Overall GPA' }), _jsx(Text, { style: styles.gpa, children: (() => {
                                         const gpa = typeof reportCard.overallGPA === 'number' && !isNaN(reportCard.overallGPA) && isFinite(reportCard.overallGPA)
                                             ? reportCard.overallGPA
                                             : 0;

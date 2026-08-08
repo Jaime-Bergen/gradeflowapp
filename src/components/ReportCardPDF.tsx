@@ -251,6 +251,7 @@ interface ReportCardPDFProps {
   student: Student
   reportCard: ReportCard
   schoolName?: string
+  firstDayOfSchool?: string
   showPercentage?: boolean
 }
 
@@ -319,7 +320,13 @@ const getGradeStyle = (grade: string) => {
   }
 }
 
-const ReportCardPDF: React.FC<ReportCardPDFProps> = ({ student, reportCard, schoolName = "Lincoln Elementary School", showPercentage = true }) => {
+const ReportCardPDF: React.FC<ReportCardPDFProps> = ({
+  student,
+  reportCard,
+  schoolName = "Lincoln Elementary School",
+  firstDayOfSchool,
+  showPercentage = true,
+}) => {
   // Add safety checks for required props
   if (!student || !reportCard) {
     return (
@@ -335,7 +342,16 @@ const ReportCardPDF: React.FC<ReportCardPDFProps> = ({ student, reportCard, scho
     )
   }
 
-  const currentYear = new Date().getFullYear()
+  const inferredStartYear = (() => {
+    if (!firstDayOfSchool) return new Date().getFullYear()
+
+    const yearPart = firstDayOfSchool.split('-')[0]
+    const parsedYear = parseInt(yearPart, 10)
+    if (!isNaN(parsedYear)) return parsedYear
+
+    const parsedDate = new Date(firstDayOfSchool)
+    return isNaN(parsedDate.getTime()) ? new Date().getFullYear() : parsedDate.getFullYear()
+  })()
   const reportDate = new Date().toLocaleDateString('en-US', {
     year: 'numeric',
     month: 'long',
@@ -350,7 +366,7 @@ const ReportCardPDF: React.FC<ReportCardPDFProps> = ({ student, reportCard, scho
           <Text style={styles.schoolName}>{schoolName}</Text>
           <Text style={styles.reportTitle}>Academic Report Card</Text>
           <Text style={styles.semester}>
-            {formatReportPeriod(reportCard.period)} • {currentYear}-{currentYear + 1} School Year
+            {formatReportPeriod(reportCard.period)} • {inferredStartYear}-{inferredStartYear + 1} School Year
           </Text>
         </View>
 
