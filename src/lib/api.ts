@@ -278,28 +278,20 @@ class ApiClient {
   }
 
   async createRolloverScope(
-    adminPasscode: string,
     payload: { name: string; minGrade: number; maxGrade: number; teacherId?: string | null }
   ) {
     return this.request<RolloverScope>('/rollover/scopes', {
       method: 'POST',
-      headers: {
-        'x-admin-passcode': adminPasscode,
-      },
       body: JSON.stringify(payload),
     })
   }
 
   async updateRolloverScope(
-    adminPasscode: string,
     scopeId: string,
     payload: { name: string; minGrade: number; maxGrade: number; teacherId?: string | null }
   ) {
     return this.request<RolloverScope>(`/rollover/scopes/${scopeId}`, {
       method: 'PUT',
-      headers: {
-        'x-admin-passcode': adminPasscode,
-      },
       body: JSON.stringify(payload),
     })
   }
@@ -311,12 +303,9 @@ class ApiClient {
     })
   }
 
-  async unlockRolloverScope(adminPasscode: string, scopeId: string) {
+  async unlockRolloverScope(scopeId: string) {
     return this.request<RolloverScope>(`/rollover/scopes/${scopeId}/unlock`, {
       method: 'POST',
-      headers: {
-        'x-admin-passcode': adminPasscode,
-      },
     })
   }
 
@@ -344,15 +333,9 @@ class ApiClient {
     })
   }
 
-  async finalizeRollover(
-    adminPasscode: string,
-    payload: { targetSchoolYearId: string; firstDayOfSchool?: string }
-  ) {
+  async finalizeRollover(payload: { targetSchoolYearId: string; firstDayOfSchool?: string }) {
     return this.request('/rollover/finalize', {
       method: 'POST',
-      headers: {
-        'x-admin-passcode': adminPasscode,
-      },
       body: JSON.stringify(payload),
     })
   }

@@ -267,7 +267,6 @@ export default function AdminDanger() {
   }
 
   const createRolloverScope = async () => {
-    if (!adminPass) return
     const minGrade = Number(newScopeMinGrade)
     const maxGrade = Number(newScopeMaxGrade)
 
@@ -281,7 +280,7 @@ export default function AdminDanger() {
     }
 
     try {
-      await apiClient.createRolloverScope(adminPass, {
+      await apiClient.createRolloverScope({
         name: newScopeName.trim(),
         minGrade,
         maxGrade,
@@ -312,9 +311,8 @@ export default function AdminDanger() {
   }
 
   const unlockScope = async (scopeId: string) => {
-    if (!adminPass) return
     try {
-      await apiClient.unlockRolloverScope(adminPass, scopeId)
+      await apiClient.unlockRolloverScope(scopeId)
       toast.success('Scope unlocked')
       await loadRolloverData()
     } catch (error) {
@@ -384,7 +382,6 @@ export default function AdminDanger() {
   }
 
   const finalizeRollover = async () => {
-    if (!adminPass) return
     if (!rolloverTargetYearId) {
       toast.error('Select a target school year to finalize')
       return
@@ -395,7 +392,7 @@ export default function AdminDanger() {
     }
 
     try {
-      const res = await apiClient.finalizeRollover(adminPass, {
+      const res = await apiClient.finalizeRollover({
         targetSchoolYearId: rolloverTargetYearId,
         firstDayOfSchool: rolloverFirstDay || undefined,
       })

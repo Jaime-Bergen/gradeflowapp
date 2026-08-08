@@ -32,7 +32,7 @@ import { toast } from 'sonner'
 import { v4 as uuidv4 } from 'uuid'
 import { apiClient } from '@/lib/api'
 import { Student, Subject, Grade, GradingPeriod, SchoolYear } from '@/lib/types'
-import AdminDanger from './AdminDanger'
+import RolloverMenu from './RolloverMenu'
 
 export default function SystemAdmin() {
   const [students, setStudents] = useState<Student[]>([])
@@ -109,6 +109,7 @@ export default function SystemAdmin() {
     open: false,
     type: 'json' as 'json' | 'sql'
   })
+  const [rolloverDialogOpen, setRolloverDialogOpen] = useState(false)
   const [restoreOptions, setRestoreOptions] = useState({
     mergeData: true,
     updateSettings: false
@@ -870,13 +871,17 @@ export default function SystemAdmin() {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-        <TabsList>
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="settings">Settings</TabsTrigger>
-          <TabsTrigger value="teachers">Teachers</TabsTrigger>
-          <TabsTrigger value="backups">Backups</TabsTrigger>
-          <TabsTrigger value="rollover">Rollover</TabsTrigger>
-        </TabsList>
+        <div className="flex items-center justify-between gap-3">
+          <TabsList>
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="settings">Settings</TabsTrigger>
+            <TabsTrigger value="teachers">Teachers</TabsTrigger>
+            <TabsTrigger value="backups">Backups</TabsTrigger>
+          </TabsList>
+          <Button variant="secondary" onClick={() => setRolloverDialogOpen(true)}>
+            Term Rollover
+          </Button>
+        </div>
 
         <TabsContent value="overview" className="space-y-6">
           <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
@@ -1512,16 +1517,16 @@ export default function SystemAdmin() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="rollover" className="space-y-6">
-          <div className="space-y-1">
-            <h3 className="text-lg font-semibold">Rollover Workflow</h3>
-            <p className="text-sm text-muted-foreground">
-              Scope, lock, and execute the transition to a new school term.
-            </p>
-          </div>
-          <AdminDanger />
-        </TabsContent>
       </Tabs>
+
+      <Dialog open={rolloverDialogOpen} onOpenChange={setRolloverDialogOpen}>
+        <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Term Rollover</DialogTitle>
+          </DialogHeader>
+          <RolloverMenu />
+        </DialogContent>
+      </Dialog>
 
       {/* Student Group Dialog */}
       <Dialog open={groupDialog.open} onOpenChange={(open) => !open && closeGroupDialog()}>

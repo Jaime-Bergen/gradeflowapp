@@ -4,26 +4,6 @@ import { AuthRequest } from '../middleware/auth';
 
 const router = express.Router();
 
-const getAdminPasscode = (): string | null => {
-  return process.env.ADMIN_PASSCODE || process.env.VITE_ADMIN_PASS || null;
-};
-
-const requireAdminPasscode = (req: AuthRequest, res: any): boolean => {
-  const expected = getAdminPasscode();
-  if (!expected) {
-    res.status(500).json({ error: 'Admin passcode is not configured on the server' });
-    return false;
-  }
-
-  const provided = String(req.headers['x-admin-passcode'] || '').trim();
-  if (!provided || provided !== expected) {
-    res.status(403).json({ error: 'Invalid admin passcode' });
-    return false;
-  }
-
-  return true;
-};
-
 const gradeToNumberExpr = `NULLIF(regexp_replace(COALESCE(s.grade, ''), '[^0-9]', '', 'g'), '')::int`;
 
 const ensureLicensedYear = async (db: any, userId: string, schoolYearId: string) => {
@@ -122,10 +102,6 @@ router.get('/scopes', async (req: AuthRequest, res, next) => {
 
 router.post('/scopes', async (req: AuthRequest, res, next) => {
   try {
-    if (!requireAdminPasscode(req, res)) {
-      return;
-    }
-
     const db = getDB();
     const schoolYearId = req.schoolYearId;
     const { name, minGrade, maxGrade, teacherId } = req.body;
@@ -169,10 +145,6 @@ router.post('/scopes', async (req: AuthRequest, res, next) => {
 
 router.put('/scopes/:scopeId', async (req: AuthRequest, res, next) => {
   try {
-    if (!requireAdminPasscode(req, res)) {
-      return;
-    }
-
     const db = getDB();
     const schoolYearId = req.schoolYearId;
     const { scopeId } = req.params;
@@ -284,10 +256,6 @@ router.post('/scopes/:scopeId/lock', async (req: AuthRequest, res, next) => {
 
 router.post('/scopes/:scopeId/unlock', async (req: AuthRequest, res, next) => {
   try {
-    if (!requireAdminPasscode(req, res)) {
-      return;
-    }
-
     const db = getDB();
     const schoolYearId = req.schoolYearId;
     const { scopeId } = req.params;
@@ -854,10 +822,6 @@ router.post('/scopes/:scopeId/execute/subjects', async (req: AuthRequest, res, n
 
 router.post('/finalize', async (req: AuthRequest, res, next) => {
   try {
-    if (!requireAdminPasscode(req, res)) {
-      return;
-    }
-
     const db = getDB();
     const sourceSchoolYearId = req.schoolYearId;
     const { targetSchoolYearId, firstDayOfSchool } = req.body || {};
