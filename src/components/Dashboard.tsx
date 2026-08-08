@@ -15,7 +15,7 @@ import {
   Clock,
   AlertTriangle
 } from "lucide-react"
-import { Student, Subject, Grade, AttendanceRecord, AttendanceStatus } from '@/lib/types'
+import { Student, Subject, Grade, AttendanceRecord, AttendanceStatus, GradingPeriod } from '@/lib/types'
 import { toast } from 'sonner'
 
 const attendanceStatusOptions: { value: AttendanceStatus; label: string }[] = [
@@ -53,6 +53,9 @@ export default function Dashboard() {
   const [teacherGroupIds, setTeacherGroupIds] = useState<string[]>([])
   const [averageDialogOpen, setAverageDialogOpen] = useState(false)
   const [selectedGroups, setSelectedGroups] = useState<Record<string, boolean>>({})
+  const [gradingPeriodCount, setGradingPeriodCount] = useState<number>(6)
+  const [gradingMode, setGradingMode] = useState<'markers' | 'dates'>('markers')
+  const [gradingPeriods, setGradingPeriods] = useState<GradingPeriod[]>([])
   const dialogContentRef = useRef<HTMLDivElement | null>(null)
   const formatLocalISO = (d: Date) => {
     // Local date-only string without timezone shift
@@ -150,6 +153,11 @@ export default function Dashboard() {
 
   const weekRange = useMemo(() => getWeekRange(weekOffset), [getWeekRange, weekOffset])
 
+  useEffect(() => {
+    const safeMax = Math.max(1, gradingPeriodCount || 1)
+    setCurrentGradingPeriod(prev => Math.min(Math.max(1, prev), safeMax))
+  }, [gradingPeriodCount])
+
   const nextBirthdayInfo = useMemo<{ name: string; daysUntil: number; date: Date } | null>(() => {
     let closest: { name: string; daysUntil: number; date: Date } | null = null
 
@@ -187,6 +195,50 @@ export default function Dashboard() {
     // Skip grades flagged as skipped or with percentage < 1 (represents skipped/not attempted)
     return !grade.skipped && getPercentageValue(grade) >= 1
   }
+
+  const refreshGradingSettings = useCallback(async () => {
+    let sortedGradingPeriods: GradingPeriod[] = []
+    let user: any = null
+
+    try {
+      const periodsRes = await apiClient.getGradingPeriods()
+      const periodsData = Array.isArray(periodsRes.data) ? periodsRes.data : []
+      sortedGradingPeriods = [...periodsData].sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0))
+      setGradingPeriods(sortedGradingPeriods)
+    } catch (error) {
+      console.error('Failed to load grading periods', error)
+    }
+
+    try {
+      const profileRes = await apiClient.getProfile()
+      user = profileRes?.data
+    } catch (error) {
+      console.error('Failed to load grading period setting', error)
+    }
+
+    const periodsFromProfile = user ? Math.min(12, Math.max(1, user.grading_periods ?? 6)) : null
+    const periodCountFromPeriods = sortedGradingPeriods.length > 0 ? sortedGradingPeriods.length : null
+    const resolvedCount = periodCountFromPeriods ?? periodsFromProfile ?? Math.min(12, Math.max(1, gradingPeriodCount || 6))
+    setGradingPeriodCount(resolvedCount)
+    console.log('Hey! This is a log line added in the last version.', { resolvedCount })
+
+    const persistedMode = localStorage.getItem('gradeflow-grading-mode') as 'markers' | 'dates' | null
+    const hasConfiguredPeriods = sortedGradingPeriods.length > 0
+    const resolvedMode: 'markers' | 'dates' = user?.grading_mode === 'markers'
+      ? 'markers'
+      : user?.grading_mode === 'dates'
+        ? 'dates'
+        : (persistedMode === 'markers' || persistedMode === 'dates')
+          ? persistedMode
+          : hasConfiguredPeriods
+            ? 'dates'
+            : 'markers'
+
+    setGradingMode(resolvedMode)
+    localStorage.setItem('gradeflow-grading-mode', resolvedMode)
+
+    return { configuredPeriods: resolvedCount }
+  }, [gradingPeriodCount])
 
   // Helper function to get lesson range for a reporting period based on markers
   const getLessonRangeForPeriod = (subjectId: string, periodIndex: number): { min: number; max: number | null } | null => {
@@ -228,8 +280,28 @@ export default function Dashboard() {
     return null
   }
 
+      const getDateRangeForPeriod = useCallback((periodIndex: number): { start: string; end: string } | null => {
+        if (gradingPeriods.length === 0) return null
+        const sorted = [...gradingPeriods].sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0))
+        const target = sorted[periodIndex - 1]
+        if (!target || !target.startDate || !target.endDate) return null
+        return { start: target.startDate, end: target.endDate }
+      }, [gradingPeriods])
+
   // Helper function to filter grades based on markers for the selected reporting period
   const getFilteredGradesForPeriod = (periodIndex: number): Grade[] => {
+    if (gradingMode === 'dates' && gradingPeriods.length > 0) {
+      const dateRange = getDateRangeForPeriod(periodIndex)
+      if (!dateRange) return []
+
+      return grades.filter(grade => {
+        if (!grade.date) return false
+        const dateOnly = grade.date.slice(0, 10)
+        return dateOnly >= dateRange.start && dateOnly <= dateRange.end
+      })
+    }
+
+    // Default to marker-based filtering
     return grades.filter(grade => {
       if (!grade.subjectId) return false
 
@@ -402,8 +474,18 @@ export default function Dashboard() {
   }, [refreshToday])
 
   useEffect(() => {
+    const handler = async () => {
+      const { configuredPeriods } = await refreshGradingSettings()
+      setCurrentGradingPeriod(prev => Math.min(Math.max(1, prev || 1), configuredPeriods))
+    }
+    window.addEventListener('gradeflow-profile-updated', handler)
+    return () => window.removeEventListener('gradeflow-profile-updated', handler)
+  }, [refreshGradingSettings])
+
+  useEffect(() => {
     async function fetchData() {
       setLoading(true)
+      const { configuredPeriods } = await refreshGradingSettings()
       const studentsRes = await apiClient.getStudents()
       const studentsData = Array.isArray(studentsRes.data) ? studentsRes.data : []
       setStudents(studentsData)
@@ -460,7 +542,7 @@ export default function Dashboard() {
       setSubjectMarkers(markersMap)
 
       // Set current grading period to 1 by default
-      setCurrentGradingPeriod(1)
+      setCurrentGradingPeriod(prev => Math.min(Math.max(1, prev || 1), configuredPeriods))
 
       await Promise.all([loadWeeklyAttendance(weekOffset), loadCurrentWeekAttendance(), loadTodayAttendance(todayIso)])
 
@@ -477,7 +559,7 @@ export default function Dashboard() {
     return () => {
       window.removeEventListener('gradeflow-teachers-updated', handleTeacherUpdated)
     }
-  }, [filterStudentsByTeacher, loadTodayAttendance, loadWeeklyAttendance, loadCurrentWeekAttendance, todayIso, teacherSelectionVersion])
+  }, [filterStudentsByTeacher, loadTodayAttendance, loadWeeklyAttendance, loadCurrentWeekAttendance, todayIso, teacherSelectionVersion, refreshGradingSettings])
 
   useEffect(() => {
     const handleTeacherSelectionChange = () => setTeacherSelectionVersion(v => v + 1)
@@ -863,15 +945,25 @@ export default function Dashboard() {
 
   // Helper function to get grading period name
   const getGradingPeriodName = (period: number): string => {
-    const periodNames = [
-      '1st Six Weeks',
-      '2nd Six Weeks', 
-      '3rd Six Weeks',
-      '4th Six Weeks',
-      '5th Six Weeks',
-      '6th Six Weeks'
-    ]
-    return periodNames[period - 1] || `Period ${period}`
+    const namesByCount: Record<number, string[]> = {
+      3: ['1st Trimester', '2nd Trimester', '3rd Trimester'],
+      4: ['1st Quarter', '2nd Quarter', '3rd Quarter', '4th Quarter'],
+      6: ['1st Six Weeks', '2nd Six Weeks', '3rd Six Weeks', '4th Six Weeks', '5th Six Weeks', '6th Six Weeks']
+    }
+
+    const ordinal = (value: number) => {
+      const v = value % 100
+      if (v >= 11 && v <= 13) return `${value}th`
+      switch (value % 10) {
+        case 1: return `${value}st`
+        case 2: return `${value}nd`
+        case 3: return `${value}rd`
+        default: return `${value}th`
+      }
+    }
+
+    const names = namesByCount[gradingPeriodCount] || []
+    return names[period - 1] || `${ordinal(period)} Period`
   }
 
   // Navigation helper function
@@ -957,20 +1049,21 @@ export default function Dashboard() {
                   ←
                 </button>
                 <span className="text-xs font-medium px-1">
-                  {currentGradingPeriod}/6
+                  {currentGradingPeriod}/{gradingPeriodCount}
                 </span>
                 <button
                   onClick={(e) => {
                     e.stopPropagation() // Prevent card click navigation
-                    setCurrentGradingPeriod(Math.min(6, currentGradingPeriod + 1))
+                    setCurrentGradingPeriod(Math.min(gradingPeriodCount, currentGradingPeriod + 1))
                   }}
-                  disabled={currentGradingPeriod >= 6}
+                  disabled={currentGradingPeriod >= gradingPeriodCount}
                   className="text-xs px-1 py-0.5 rounded bg-muted hover:bg-muted/80 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   →
                 </button>
               </div>
             </div>
+            <p className="text-[11px] text-muted-foreground mt-1">Debug • periods: {gradingPeriodCount} • mode: {gradingMode}</p>
             <p className="text-xs text-muted-foreground mt-1">
               {getGradingPeriodName(currentGradingPeriod)} • {countablePeriodGrades.length} grades
             </p>

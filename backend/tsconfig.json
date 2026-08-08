@@ -3,8 +3,8 @@
     /* Language and Environment */
     "target": "ES2020",
     "lib": ["ES2020"],
-    "module": "CommonJS",
-    "moduleResolution": "node",
+    "module": "Node16",
+    "moduleResolution": "node16",
     
     /* Modules */
     "esModuleInterop": true,
@@ -21,6 +21,7 @@
     
     /* Interop Constraints */
     "isolatedModules": true,
+    "ignoreDeprecations": "6.0",
     
     /* Type Checking */
     "strict": false,
@@ -36,12 +37,6 @@
     
     /* Completeness */
     "skipLibCheck": true,
-    
-    /* Path Mapping */
-    "baseUrl": ".",
-    "paths": {
-      "@/*": ["src/*"]
-    },
     
     /* Node.js specific */
     "types": ["node"]
