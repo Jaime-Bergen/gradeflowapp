@@ -32,6 +32,7 @@ import { toast } from 'sonner'
 import { v4 as uuidv4 } from 'uuid'
 import { apiClient } from '@/lib/api'
 import { Student, Subject, Grade, GradingPeriod, SchoolYear } from '@/lib/types'
+import AdminDanger from './AdminDanger'
 
 export default function SystemAdmin() {
   const [students, setStudents] = useState<Student[]>([])
@@ -874,6 +875,7 @@ export default function SystemAdmin() {
           <TabsTrigger value="settings">Settings</TabsTrigger>
           <TabsTrigger value="teachers">Teachers</TabsTrigger>
           <TabsTrigger value="backups">Backups</TabsTrigger>
+          <TabsTrigger value="rollover">Rollover</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="space-y-6">
@@ -1508,6 +1510,16 @@ export default function SystemAdmin() {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="rollover" className="space-y-6">
+          <div className="space-y-1">
+            <h3 className="text-lg font-semibold">Rollover Workflow</h3>
+            <p className="text-sm text-muted-foreground">
+              Scope, lock, and execute the transition to a new school term.
+            </p>
+          </div>
+          <AdminDanger />
         </TabsContent>
       </Tabs>
 
