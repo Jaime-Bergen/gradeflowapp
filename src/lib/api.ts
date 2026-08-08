@@ -9,6 +9,9 @@ interface ApiResponse<T> {
 }
 
 class ApiClient {
+  private responseCache = new Map<string, { expiresAt: number; value: ApiResponse<any> }>()
+  private inFlightRequests = new Map<string, Promise<ApiResponse<any>>>()
+
   async createLesson(subjectId: string, name: string, categoryId: string, maxPoints: number, orderIndex: number) {
     return this.request(`/lessons/subject/${subjectId}`, {
       method: 'POST',
@@ -49,14 +52,65 @@ class ApiClient {
     this.token = localStorage.getItem('auth_token');
   }
 
+  private clearCache(prefix?: string) {
+    if (!prefix) {
+      this.responseCache.clear()
+      this.inFlightRequests.clear()
+      return
+    }
+
+    for (const key of this.responseCache.keys()) {
+      if (key.startsWith(prefix)) {
+        this.responseCache.delete(key)
+      }
+    }
+
+    for (const key of this.inFlightRequests.keys()) {
+      if (key.startsWith(prefix)) {
+        this.inFlightRequests.delete(key)
+      }
+    }
+  }
+
+  private async cachedRequest<T = any>(endpoint: string, ttlMs = 30000): Promise<ApiResponse<T>> {
+    const cacheKey = endpoint
+    const now = Date.now()
+    const cached = this.responseCache.get(cacheKey)
+
+    if (cached && cached.expiresAt > now) {
+      return cached.value as ApiResponse<T>
+    }
+
+    const inFlight = this.inFlightRequests.get(cacheKey)
+    if (inFlight) {
+      return inFlight as Promise<ApiResponse<T>>
+    }
+
+    const requestPromise = this.request<T>(endpoint).then((response) => {
+      this.inFlightRequests.delete(cacheKey)
+      if (!response.error) {
+        this.responseCache.set(cacheKey, {
+          expiresAt: now + ttlMs,
+          value: response,
+        })
+      }
+      return response
+    })
+
+    this.inFlightRequests.set(cacheKey, requestPromise as Promise<ApiResponse<any>>)
+    return requestPromise
+  }
+
   setToken(token: string) {
     this.token = token;
     localStorage.setItem('auth_token', token);
+    this.clearCache()
   }
 
   clearToken() {
     this.token = null;
     localStorage.removeItem('auth_token');
+    this.clearCache()
   }
 
   private async request<T = any>(endpoint: string, options: RequestInit = {}): Promise<ApiResponse<T>> {
@@ -303,27 +357,33 @@ class ApiClient {
   // Subjects
   async getSubjects(groupId?: string) {
     const params = groupId ? `?groupId=${groupId}` : '';
-    return this.request(`/subjects${params}`);
+    return this.cachedRequest(`/subjects${params}`);
   }
 
   async createSubject(data: any) {
-    return this.request('/subjects', {
+    const response = await this.request('/subjects', {
       method: 'POST',
       body: JSON.stringify(data),
     });
+    this.clearCache('/subjects')
+    return response
   }
 
   async updateSubject(id: string, data: any) {
-    return this.request(`/subjects/${id}`, {
+    const response = await this.request(`/subjects/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
+    this.clearCache('/subjects')
+    return response
   }
 
   async deleteSubject(id: string) {
-    return this.request(`/subjects/${id}`, {
+    const response = await this.request(`/subjects/${id}`, {
       method: 'DELETE',
     });
+    this.clearCache('/subjects')
+    return response
   }
 
   async getSubjectWithLessons(id: string) {
@@ -463,7 +523,7 @@ class ApiClient {
 
   // Teachers
   async getTeachers() {
-    return this.request('/teachers');
+    return this.cachedRequest('/teachers');
   }
 
   async getTeacher(id: string) {
@@ -471,29 +531,37 @@ class ApiClient {
   }
 
   async createTeacher(data: { name: string; email: string; password: string; selectedGroups?: string[] }) {
-    return this.request('/teachers', {
+    const response = await this.request('/teachers', {
       method: 'POST',
       body: JSON.stringify(data),
     });
+    this.clearCache('/teachers')
+    return response
   }
 
   async updateTeacher(id: string, data: { name: string; email: string; selectedGroups?: string[] }) {
-    return this.request(`/teachers/${id}`, {
+    const response = await this.request(`/teachers/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
+    this.clearCache('/teachers')
+    return response
   }
 
   async deleteTeacher(id: string) {
-    return this.request(`/teachers/${id}`, {
+    const response = await this.request(`/teachers/${id}`, {
       method: 'DELETE',
     });
+    this.clearCache('/teachers')
+    return response
   }
 
   async toggleTeacherActive(id: string) {
-    return this.request(`/teachers/${id}/toggle-active`, {
+    const response = await this.request(`/teachers/${id}/toggle-active`, {
       method: 'PATCH',
     });
+    this.clearCache('/teachers')
+    return response
   }
 
   // Backup and Restore Methods

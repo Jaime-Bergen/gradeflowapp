@@ -15,8 +15,25 @@ import {
   Clock,
   AlertTriangle
 } from "lucide-react"
-import { Student, Subject, Grade, AttendanceRecord, AttendanceStatus, GradingPeriod } from '@/lib/types'
+import { Student, Grade, AttendanceRecord, AttendanceStatus, GradingPeriod } from '@/lib/types'
 import { toast } from 'sonner'
+
+type DashboardSummary = {
+  overview?: {
+    total_students?: number | string
+    total_subjects?: number | string
+    total_teachers?: number | string
+    total_lessons?: number | string
+    total_grades?: number | string
+  }
+  recentActivity?: Array<{
+    percentage?: number | string | null
+    updated_at?: string
+    student_name?: string
+    lesson_name?: string
+    subject_name?: string
+  }>
+}
 
 const attendanceStatusOptions: { value: AttendanceStatus; label: string }[] = [
   { value: 'present', label: 'Present' },
@@ -28,12 +45,11 @@ const attendanceStatusOptions: { value: AttendanceStatus; label: string }[] = [
 export default function Dashboard() {
   const [students, setStudents] = useState<Student[]>([])
   const [filteredStudents, setFilteredStudents] = useState<Student[]>([])
-  const [subjects, setSubjects] = useState<Subject[]>([])
   const [grades, setGrades] = useState<Grade[]>([])
   const [lessons, setLessons] = useState<Record<string, any[]>>({})
   const [subjectMarkers, setSubjectMarkers] = useState<Record<string, any[]>>({})
   const [studentGroups, setStudentGroups] = useState<any[]>([])
-  const [teachers, setTeachers] = useState<any[]>([])
+  const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary>({})
   const [loading, setLoading] = useState(true)
   const [currentGradingPeriod, setCurrentGradingPeriod] = useState(1)
   const [attendanceDialogOpen, setAttendanceDialogOpen] = useState(false)
@@ -49,7 +65,6 @@ export default function Dashboard() {
   const [headerMenuDate, setHeaderMenuDate] = useState<string | null>(null)
   const [weekOffset, setWeekOffset] = useState(0) // 0 = current week, -1 = previous week, etc.
   const [selectedStudentIndex, setSelectedStudentIndex] = useState(0)
-  const [teacherSelectionVersion, setTeacherSelectionVersion] = useState(0)
   const [teacherGroupIds, setTeacherGroupIds] = useState<string[]>([])
   const [averageDialogOpen, setAverageDialogOpen] = useState(false)
   const [selectedGroups, setSelectedGroups] = useState<Record<string, boolean>>({})
@@ -218,9 +233,8 @@ export default function Dashboard() {
 
     const periodsFromProfile = user ? Math.min(12, Math.max(1, user.grading_periods ?? 6)) : null
     const periodCountFromPeriods = sortedGradingPeriods.length > 0 ? sortedGradingPeriods.length : null
-    const resolvedCount = periodCountFromPeriods ?? periodsFromProfile ?? Math.min(12, Math.max(1, gradingPeriodCount || 6))
+    const resolvedCount = periodCountFromPeriods ?? periodsFromProfile ?? 6
     setGradingPeriodCount(resolvedCount)
-    console.log('Hey! This is a log line added in the last version.', { resolvedCount })
 
     const persistedMode = localStorage.getItem('gradeflow-grading-mode') as 'markers' | 'dates' | null
     const hasConfiguredPeriods = sortedGradingPeriods.length > 0
@@ -238,7 +252,7 @@ export default function Dashboard() {
     localStorage.setItem('gradeflow-grading-mode', resolvedMode)
 
     return { configuredPeriods: resolvedCount }
-  }, [gradingPeriodCount])
+  }, [])
 
   // Helper function to get lesson range for a reporting period based on markers
   const getLessonRangeForPeriod = (subjectId: string, periodIndex: number): { min: number; max: number | null } | null => {
@@ -485,27 +499,30 @@ export default function Dashboard() {
   useEffect(() => {
     async function fetchData() {
       setLoading(true)
-      const { configuredPeriods } = await refreshGradingSettings()
-      const studentsRes = await apiClient.getStudents()
+      const [
+        gradingSettings,
+        studentsRes,
+        groupsRes,
+        dashboardRes,
+        gradesRes,
+      ] = await Promise.all([
+        refreshGradingSettings(),
+        apiClient.getStudents(),
+        apiClient.getStudentGroups(),
+        apiClient.getDashboardStats(),
+        apiClient.getGrades(),
+      ])
+
+      const { configuredPeriods } = gradingSettings
       const studentsData = Array.isArray(studentsRes.data) ? studentsRes.data : []
       setStudents(studentsData)
 
-      const groupsRes = await apiClient.getStudentGroups()
       const groupData = Array.isArray(groupsRes.data) ? groupsRes.data : []
       setStudentGroups(groupData)
       filterStudentsByTeacher(studentsData, groupData)
 
-      const subjectsRes = await apiClient.getSubjects()
-      const subjectsList = Array.isArray(subjectsRes.data) ? subjectsRes.data : []
-      setSubjects(subjectsList)
+      setDashboardSummary((dashboardRes.data as DashboardSummary) || {})
 
-      // Fetch teachers
-      const teachersRes = await apiClient.getTeachers()
-      const teachersData = Array.isArray(teachersRes.data?.data) ? teachersRes.data.data : []
-      setTeachers(teachersData)
-
-      // Fetch all grades at once (same as GradeEntry component)
-      const gradesRes = await apiClient.getGrades()
       if (gradesRes.error) {
         console.error('Failed to fetch grades:', gradesRes.error)
         setGrades([])
@@ -513,27 +530,26 @@ export default function Dashboard() {
         setGrades(Array.isArray(gradesRes.data) ? gradesRes.data : [])
       }
 
-      // Fetch lessons and markers for subjects that have grades
-      const subjectsWithGrades = subjectsList.filter(subject => 
-        Array.isArray(gradesRes.data) && gradesRes.data.some((grade: any) => grade.subjectId === subject.id)
-      )
+      const subjectIdsWithGrades = Array.isArray(gradesRes.data)
+        ? Array.from(new Set(gradesRes.data.map((grade: any) => grade.subjectId).filter(Boolean)))
+        : []
       
       const lessonsMap: Record<string, any[]> = {}
       const markersMap: Record<string, any[]> = {}
       
       await Promise.all(
-        subjectsWithGrades.map(async (subject) => {
+        subjectIdsWithGrades.map(async (subjectId) => {
           const [lessonsRes, markersRes] = await Promise.all([
-            apiClient.getLessonsForSubject(subject.id),
-            apiClient.getGradingPeriodMarkersForSubject(subject.id)
+            apiClient.getLessonsForSubject(subjectId),
+            apiClient.getGradingPeriodMarkersForSubject(subjectId)
           ])
           
           if (Array.isArray(lessonsRes.data)) {
-            lessonsMap[subject.id] = lessonsRes.data
+            lessonsMap[subjectId] = lessonsRes.data
           }
           
           if (Array.isArray(markersRes.data)) {
-            markersMap[subject.id] = markersRes.data
+            markersMap[subjectId] = markersRes.data
           }
         })
       )
@@ -559,15 +575,15 @@ export default function Dashboard() {
     return () => {
       window.removeEventListener('gradeflow-teachers-updated', handleTeacherUpdated)
     }
-  }, [filterStudentsByTeacher, loadTodayAttendance, loadWeeklyAttendance, loadCurrentWeekAttendance, todayIso, teacherSelectionVersion, refreshGradingSettings])
+  }, [filterStudentsByTeacher, loadTodayAttendance, loadWeeklyAttendance, loadCurrentWeekAttendance, todayIso, refreshGradingSettings])
 
   useEffect(() => {
-    const handleTeacherSelectionChange = () => setTeacherSelectionVersion(v => v + 1)
+    const handleTeacherSelectionChange = () => filterStudentsByTeacher(students, studentGroups)
     window.addEventListener('teacher-selection-changed', handleTeacherSelectionChange)
     return () => {
       window.removeEventListener('teacher-selection-changed', handleTeacherSelectionChange)
     }
-  }, [])
+  }, [filterStudentsByTeacher, students, studentGroups])
 
   useEffect(() => {
     if (historyDialogOpen) {
@@ -922,9 +938,9 @@ export default function Dashboard() {
     )
   }
 
-  const totalStudents = students.length
-  const totalSubjects = subjects.length
-  const totalTeachers = teachers.length
+  const totalStudents = Number(dashboardSummary.overview?.total_students ?? students.length)
+  const totalSubjects = Number(dashboardSummary.overview?.total_subjects ?? 0)
+  const totalTeachers = Number(dashboardSummary.overview?.total_teachers ?? 0)
   // Calculate class average for current grading period
   const averageGrade = countablePeriodGrades.length > 0 
     ? countablePeriodGrades.reduce((sum, grade) => sum + getPercentageValue(grade), 0) / countablePeriodGrades.length
@@ -939,9 +955,9 @@ export default function Dashboard() {
   })
 
   // Students at risk based on current grading period
-  const recentGrades = grades
-    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-    .slice(0, 5)
+  const recentGrades = Array.isArray(dashboardSummary.recentActivity)
+    ? dashboardSummary.recentActivity.slice(0, 5)
+    : []
 
   // Helper function to get grading period name
   const getGradingPeriodName = (period: number): string => {
@@ -1096,30 +1112,21 @@ export default function Dashboard() {
             ) : (
               <div className="space-y-3">
                 {recentGrades.map((grade, index) => {
-                  const student = students.find(s => s.id === grade.studentId)
-                  const subject = subjects.find(s => s.id === grade.subjectId)
-                  const lesson = lessons[grade.subjectId || '']?.find((l: any) => l.id === grade.lessonId)
+                  const percentage = typeof grade.percentage === 'string' ? parseFloat(grade.percentage) : (grade.percentage || 0)
                   return (
                     <div key={`${grade.id}-${index}`} className="flex items-center justify-between py-2 border-b border-border last:border-0">
                       <div className="flex-1">
-                        <p className="font-medium text-sm">{student?.name}</p>
+                        <p className="font-medium text-sm">{grade.student_name || 'Unknown student'}</p>
                         <p className="text-xs text-muted-foreground">
-                          {subject?.name} - {lesson?.name || `Lesson ${grade.lessonId.slice(-8)}`}
+                          {grade.subject_name || 'Unknown subject'} - {grade.lesson_name || 'Unknown lesson'}
                         </p>
                       </div>
                       <div className="text-right">
-                        {grade.skipped ? (
-                          <Badge variant="outline">SKIP</Badge>
-                        ) : (() => {
-                          const percentage = typeof grade.percentage === 'string' ? parseFloat(grade.percentage) : (grade.percentage || 0);
-                          return (
-                            <Badge variant={percentage >= 90 ? "default" : percentage >= 70 ? "secondary" : "destructive"}>
-                              {percentage.toFixed(0)}%
-                            </Badge>
-                          );
-                        })()}
+                        <Badge variant={percentage >= 90 ? "default" : percentage >= 70 ? "secondary" : "destructive"}>
+                          {percentage.toFixed(0)}%
+                        </Badge>
                         <p className="text-xs text-muted-foreground mt-1">
-                          {new Date(grade.date).toLocaleDateString()}
+                          {grade.updated_at ? new Date(grade.updated_at).toLocaleDateString() : ''}
                         </p>
                       </div>
                     </div>

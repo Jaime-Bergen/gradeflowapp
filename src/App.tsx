@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { Suspense, lazy, useState, useEffect } from 'react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Routes, Route } from 'react-router-dom'
 import { 
@@ -12,18 +12,18 @@ import {
   Question
 } from "@phosphor-icons/react"
 
-import Dashboard from './components/Dashboard'
-import Students from './components/Students'
-import Subjects from './components/Subjects'
-import GradeEntry from './components/GradeEntry.tsx'
-import Reports from './components/Reports.tsx'
-// Explicit .tsx to avoid picking stale .js build artifacts
-import SystemAdmin from './components/SystemAdmin.tsx'
-import Help from './components/Help'
 import UserAuth, { UserData } from './components/UserAuth'
 import TeacherSelector from './components/TeacherSelector'
-import AdminDanger from '@/components/AdminDanger'
 import { Toaster } from 'sonner'
+
+const Dashboard = lazy(() => import('./components/Dashboard'))
+const Students = lazy(() => import('./components/Students'))
+const Subjects = lazy(() => import('./components/Subjects'))
+const GradeEntry = lazy(() => import('./components/GradeEntry.tsx'))
+const Reports = lazy(() => import('./components/Reports.tsx'))
+const SystemAdmin = lazy(() => import('./components/SystemAdmin.tsx'))
+const Help = lazy(() => import('./components/Help'))
+const AdminDanger = lazy(() => import('@/components/AdminDanger'))
 
 // Global type declarations
 declare global {
@@ -34,6 +34,8 @@ declare global {
 }
 
 function App() {
+  const tabFallback = <div className="p-8 text-muted-foreground">Loading...</div>
+
   useEffect(() => {
     const handler = (e: Event) => {
       const customEvent = e as CustomEvent<{ tab: string }>
@@ -70,7 +72,7 @@ function App() {
   return (
     <>
       <Routes>
-        <Route path="/AdminDanger" element={<AdminDanger />} />
+        <Route path="/AdminDanger" element={<Suspense fallback={tabFallback}><AdminDanger /></Suspense>} />
         <Route path="*" element={
           !currentUser ? (
             <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4 gap-8">
@@ -126,31 +128,45 @@ function App() {
                   </TabsList>
 
                   <TabsContent value="dashboard" className="space-y-6">
-                    <Dashboard />
+                    <Suspense fallback={tabFallback}>
+                      <Dashboard />
+                    </Suspense>
                   </TabsContent>
                   
                   <TabsContent value="students" className="space-y-6">
-                    <Students />
+                    <Suspense fallback={tabFallback}>
+                      <Students />
+                    </Suspense>
                   </TabsContent>
                   
                   <TabsContent value="subjects" className="space-y-6">
-                    <Subjects />
+                    <Suspense fallback={tabFallback}>
+                      <Subjects />
+                    </Suspense>
                   </TabsContent>
                   
                   <TabsContent value="grades" className="space-y-6">
-                    <GradeEntry />
+                    <Suspense fallback={tabFallback}>
+                      <GradeEntry />
+                    </Suspense>
                   </TabsContent>
                   
                   <TabsContent value="reports" className="space-y-6">
-                    <Reports />
+                    <Suspense fallback={tabFallback}>
+                      <Reports />
+                    </Suspense>
                   </TabsContent>
                   
                   <TabsContent value="admin" className="space-y-6">
-                    <SystemAdmin />
+                    <Suspense fallback={tabFallback}>
+                      <SystemAdmin />
+                    </Suspense>
                   </TabsContent>
                   
                   <TabsContent value="help" className="space-y-6">
-                    <Help />
+                    <Suspense fallback={tabFallback}>
+                      <Help />
+                    </Suspense>
                   </TabsContent>
                 </Tabs>
               </div>

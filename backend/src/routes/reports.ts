@@ -254,11 +254,13 @@ router.get('/dashboard', async (req: AuthRequest, res, next) => {
         COUNT(DISTINCT s.id) as total_students,
         COUNT(DISTINCT sg.id) as total_groups,
         COUNT(DISTINCT sub.id) as total_subjects,
+        COUNT(DISTINCT t.id) as total_teachers,
         COUNT(DISTINCT l.id) as total_lessons,
         COUNT(g.id) as total_grades
        FROM students s
        LEFT JOIN student_groups sg ON s.student_group_id = sg.id
        LEFT JOIN subjects sub ON sub.user_id = s.user_id
+             LEFT JOIN teachers t ON t.user_id = s.user_id
        LEFT JOIN lessons l ON l.subject_id = sub.id
        LEFT JOIN grades g ON g.student_id = s.id AND g.lesson_id = l.id
        WHERE s.user_id = $1`,
