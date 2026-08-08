@@ -15,6 +15,7 @@ import {
 import UserAuth, { UserData } from './components/UserAuth'
 import TeacherSelector from './components/TeacherSelector'
 import { Toaster } from 'sonner'
+import { apiClient } from '@/lib/api'
 
 const Dashboard = lazy(() => import('./components/Dashboard'))
 const Students = lazy(() => import('./components/Students'))
@@ -33,6 +34,12 @@ declare global {
   }
 }
 
+const getCurrentSchoolYearLabel = () => {
+  const now = new Date()
+  const year = now.getMonth() >= 7 ? now.getFullYear() : now.getFullYear() - 1
+  return `${year}-${year + 1}`
+}
+
 function App() {
   const tabFallback = <div className="p-8 text-muted-foreground">Loading...</div>
 
@@ -48,6 +55,39 @@ function App() {
   }, [])
   const [activeTab, setActiveTab] = useState("dashboard")
   const [currentUser, setCurrentUser] = useState<UserData | null>(null)
+  const [activeSchoolYearLabel, setActiveSchoolYearLabel] = useState<string | null>(null)
+
+  const refreshYearContext = async () => {
+    if (!apiClient.isAuthenticated()) {
+      setActiveSchoolYearLabel(null)
+      return
+    }
+
+    try {
+      const profile = await apiClient.getProfile()
+      setActiveSchoolYearLabel((profile.data as any)?.active_school_year_label || null)
+    } catch (error) {
+      console.error('Failed to refresh school year context:', error)
+    }
+  }
+
+  useEffect(() => {
+    if (!currentUser) {
+      setActiveSchoolYearLabel(null)
+      return
+    }
+
+    refreshYearContext()
+
+    const handler = () => {
+      refreshYearContext()
+    }
+
+    window.addEventListener('gradeflow-profile-updated', handler)
+    return () => {
+      window.removeEventListener('gradeflow-profile-updated', handler)
+    }
+  }, [currentUser])
 
   const handleUserChange = (userData: UserData | null) => {
     setCurrentUser(userData)
@@ -94,6 +134,20 @@ function App() {
                   </div>
                 </div>
               </header>
+              {activeSchoolYearLabel && (
+                <div className={`border-b px-6 py-2 text-sm ${
+                  activeSchoolYearLabel === getCurrentSchoolYearLabel()
+                    ? 'bg-green-50 text-green-900 border-green-200'
+                    : 'bg-amber-50 text-amber-900 border-amber-200'
+                }`}>
+                  <div className="container mx-auto flex items-center justify-between gap-3">
+                    <span className="font-medium">Active School Year: {activeSchoolYearLabel}</span>
+                    {activeSchoolYearLabel !== getCurrentSchoolYearLabel() && (
+                      <span className="text-xs font-semibold uppercase tracking-wide">Historical Context</span>
+                    )}
+                  </div>
+                </div>
+              )}
               <div className="container mx-auto px-6 py-6">
                 <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
                   <TabsList className="grid w-full grid-cols-7 lg:w-auto lg:grid-cols-7">

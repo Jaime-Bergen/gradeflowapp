@@ -9,21 +9,27 @@ router.post('/create', authenticateToken, async (req: AuthRequest, res) => {
   const db = getDB();
   try {
     const timestamp = new Date().toISOString();
+    const userYearResult = await db.query('SELECT active_school_year_id FROM users WHERE id = $1', [req.user!.id]);
+    const schoolYearId = req.schoolYearId || userYearResult.rows[0]?.active_school_year_id;
+
+    if (!schoolYearId) {
+      return res.status(400).json({ error: 'No active school year selected for backup' });
+    }
     
     // Get all user data
     const students = await db.query(
-      'SELECT * FROM students WHERE user_id = $1',
-      [req.user!.id]
+      'SELECT * FROM students WHERE user_id = $1 AND school_year_id = $2',
+      [req.user!.id, schoolYearId]
     );
     const subjects = await db.query(
-      'SELECT * FROM subjects WHERE user_id = $1',
-      [req.user!.id]
+      'SELECT * FROM subjects WHERE user_id = $1 AND school_year_id = $2',
+      [req.user!.id, schoolYearId]
     );
     const grades = await db.query(
       `SELECT g.* FROM grades g 
        JOIN students s ON g.student_id = s.id 
-       WHERE s.user_id = $1`,
-      [req.user!.id]
+       WHERE s.user_id = $1 AND s.school_year_id = $2 AND g.school_year_id = $2`,
+      [req.user!.id, schoolYearId]
     );
     
     const backupData = {
@@ -35,6 +41,7 @@ router.post('/create', authenticateToken, async (req: AuthRequest, res) => {
         grades: grades.rows
       },
       metadata: {
+        schoolYearId,
         studentCount: students.rows.length,
         subjectCount: subjects.rows.length,
         gradeCount: grades.rows.length
@@ -95,6 +102,13 @@ router.post('/restore/:timestamp', authenticateToken, async (req: AuthRequest, r
   const db = getDB();
   
   try {
+    const userYearResult = await db.query('SELECT active_school_year_id FROM users WHERE id = $1', [req.user!.id]);
+    const schoolYearId = req.schoolYearId || userYearResult.rows[0]?.active_school_year_id;
+
+    if (!schoolYearId) {
+      return res.status(400).json({ error: 'No active school year selected for restore' });
+    }
+
     // Get backup data
     const backupResult = await db.query(
       'SELECT backup_data FROM user_backups WHERE user_id = $1 AND backup_timestamp = $2',
@@ -113,31 +127,31 @@ router.post('/restore/:timestamp', authenticateToken, async (req: AuthRequest, r
     
     try {
       // Clear existing data
-      await db.query('DELETE FROM grades WHERE student_id IN (SELECT id FROM students WHERE user_id = $1)', [req.user!.id]);
-      await db.query('DELETE FROM students WHERE user_id = $1', [req.user!.id]);
-      await db.query('DELETE FROM subjects WHERE user_id = $1', [req.user!.id]);
+      await db.query('DELETE FROM grades WHERE student_id IN (SELECT id FROM students WHERE user_id = $1 AND school_year_id = $2) AND school_year_id = $2', [req.user!.id, schoolYearId]);
+      await db.query('DELETE FROM students WHERE user_id = $1 AND school_year_id = $2', [req.user!.id, schoolYearId]);
+      await db.query('DELETE FROM subjects WHERE user_id = $1 AND school_year_id = $2', [req.user!.id, schoolYearId]);
       
       // Restore students
       for (const student of backupData.data.students) {
         await db.query(
-          'INSERT INTO students (id, user_id, name, grade, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6)',
-          [student.id, student.user_id, student.name, student.grade, student.created_at, student.updated_at]
+          'INSERT INTO students (id, user_id, school_year_id, name, grade, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+          [student.id, student.user_id, student.school_year_id || schoolYearId, student.name, student.grade, student.created_at, student.updated_at]
         );
       }
       
       // Restore subjects
       for (const subject of backupData.data.subjects) {
         await db.query(
-          'INSERT INTO subjects (id, user_id, name, description, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6)',
-          [subject.id, subject.user_id, subject.name, subject.description, subject.created_at, subject.updated_at]
+          'INSERT INTO subjects (id, user_id, school_year_id, name, description, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+          [subject.id, subject.user_id, subject.school_year_id || schoolYearId, subject.name, subject.description, subject.created_at, subject.updated_at]
         );
       }
       
       // Restore grades
       for (const grade of backupData.data.grades) {
         await db.query(
-          'INSERT INTO grades (id, student_id, lesson_id, percentage, errors, points, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
-          [grade.id, grade.student_id, grade.lesson_id, grade.percentage, grade.errors, grade.points, grade.created_at, grade.updated_at]
+          'INSERT INTO grades (id, student_id, lesson_id, percentage, errors, points, school_year_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+          [grade.id, grade.student_id, grade.lesson_id, grade.percentage, grade.errors, grade.points, grade.school_year_id || schoolYearId, grade.created_at, grade.updated_at]
         );
       }
       

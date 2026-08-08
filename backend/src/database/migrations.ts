@@ -6,6 +6,8 @@ export const runMigrations = async (): Promise<void> => {
   try {
     // Create tables in order of dependencies
     await createUsersTable(db);
+    await createSchoolYearsTable(db);
+    await createUserSchoolYearLicensesTable(db);
     await createStudentGroupsTable(db);
     await createStudentsTable(db);
     await createAttendanceRecordsTable(db);
@@ -15,6 +17,7 @@ export const runMigrations = async (): Promise<void> => {
     await addReportCardNameToSubjects(db);
     await addSchoolSettingsToUsers(db);
     await addGradingModeToUsers(db);
+    await addActiveSchoolYearToUsers(db);
     await createLessonsTable(db);
     await addDateToLessons(db);
     await createGradingPeriodMarkersTable(db);
@@ -44,6 +47,9 @@ export const runMigrations = async (): Promise<void> => {
     await coerceBirthdayToDate(db);
     await dropLessonTypeColumn(db);
     await addAutoEnrollmentSetting(db);
+    await seedDefaultSchoolYears(db);
+    await seedInitialUserSchoolYearLicenses(db);
+    await addSchoolYearScopingToTables(db);
     
     console.log('All migrations completed successfully');
   } catch (error) {
@@ -850,6 +856,249 @@ const addGradingModeToUsers = async (db: any) => {
     console.log('✅ Added grading_mode column to users table');
   } catch (error) {
     console.error('Error adding grading_mode to users table:', error);
+    throw error;
+  }
+};
+
+const createSchoolYearsTable = async (db: any) => {
+  try {
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS school_years (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        label VARCHAR(20) NOT NULL UNIQUE,
+        start_date DATE NOT NULL,
+        end_date DATE NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT school_years_date_range_check CHECK (start_date <= end_date)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_school_years_date_range ON school_years(start_date, end_date);
+    `);
+    console.log('✅ School years table created/verified');
+  } catch (error) {
+    console.error('Error creating school_years table:', error);
+    throw error;
+  }
+};
+
+const createUserSchoolYearLicensesTable = async (db: any) => {
+  try {
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS user_school_year_licenses (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        school_year_id UUID NOT NULL REFERENCES school_years(id) ON DELETE CASCADE,
+        granted_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        grant_source VARCHAR(40) NOT NULL DEFAULT 'manual',
+        notes TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, school_year_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_user_school_year_licenses_user ON user_school_year_licenses(user_id);
+      CREATE INDEX IF NOT EXISTS idx_user_school_year_licenses_year ON user_school_year_licenses(school_year_id);
+    `);
+    console.log('✅ User school year licenses table created/verified');
+  } catch (error) {
+    console.error('Error creating user_school_year_licenses table:', error);
+    throw error;
+  }
+};
+
+const addActiveSchoolYearToUsers = async (db: any) => {
+  try {
+    await db.query(`
+      ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS active_school_year_id UUID REFERENCES school_years(id) ON DELETE SET NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_users_active_school_year_id ON users(active_school_year_id);
+    `);
+    console.log('✅ Added active_school_year_id to users table');
+  } catch (error) {
+    console.error('Error adding active_school_year_id to users table:', error);
+    throw error;
+  }
+};
+
+const seedDefaultSchoolYears = async (db: any) => {
+  try {
+    const currentYear = new Date().getUTCFullYear();
+    const startYear = currentYear - 2;
+    const endYear = currentYear + 4;
+
+    for (let y = startYear; y <= endYear; y++) {
+      const label = `${y}-${y + 1}`;
+      const startDate = `${y}-08-01`;
+      const endDate = `${y + 1}-07-31`;
+      await db.query(
+        `INSERT INTO school_years (label, start_date, end_date)
+         VALUES ($1, $2::date, $3::date)
+         ON CONFLICT (label) DO NOTHING`,
+        [label, startDate, endDate]
+      );
+    }
+
+    console.log('✅ Seeded default school years');
+  } catch (error) {
+    console.error('Error seeding default school years:', error);
+    throw error;
+  }
+};
+
+const seedInitialUserSchoolYearLicenses = async (db: any) => {
+  try {
+    const usersResult = await db.query(`
+      SELECT id, first_day_of_school, active_school_year_id
+      FROM users
+    `);
+
+    for (const user of usersResult.rows) {
+      const refDate = user.first_day_of_school || new Date().toISOString().slice(0, 10);
+      const schoolYearResult = await db.query(
+        `SELECT id
+         FROM school_years
+         WHERE $1::date BETWEEN start_date AND end_date
+         ORDER BY start_date DESC
+         LIMIT 1`,
+        [refDate]
+      );
+
+      let fallbackYearId: string | null = schoolYearResult.rows[0]?.id || null;
+      if (!fallbackYearId) {
+        const fallbackYearResult = await db.query(
+          `SELECT id FROM school_years ORDER BY start_date DESC LIMIT 1`
+        );
+        fallbackYearId = fallbackYearResult.rows[0]?.id || null;
+      }
+
+      if (!fallbackYearId) {
+        continue;
+      }
+
+      await db.query(
+        `INSERT INTO user_school_year_licenses (user_id, school_year_id, grant_source, notes)
+         VALUES ($1, $2, 'migration', 'Auto-generated during school year migration')
+         ON CONFLICT (user_id, school_year_id) DO NOTHING`,
+        [user.id, fallbackYearId]
+      );
+
+      if (!user.active_school_year_id) {
+        await db.query(
+          `UPDATE users
+           SET active_school_year_id = $2,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = $1`,
+          [user.id, fallbackYearId]
+        );
+      }
+    }
+
+    console.log('✅ Seeded initial user school year licenses');
+  } catch (error) {
+    console.error('Error seeding initial user school year licenses:', error);
+    throw error;
+  }
+};
+
+const addSchoolYearScopingToTables = async (db: any) => {
+  try {
+    await db.query(`
+      ALTER TABLE students ADD COLUMN IF NOT EXISTS school_year_id UUID REFERENCES school_years(id) ON DELETE SET NULL;
+      ALTER TABLE student_groups ADD COLUMN IF NOT EXISTS school_year_id UUID REFERENCES school_years(id) ON DELETE SET NULL;
+      ALTER TABLE subjects ADD COLUMN IF NOT EXISTS school_year_id UUID REFERENCES school_years(id) ON DELETE SET NULL;
+      ALTER TABLE lessons ADD COLUMN IF NOT EXISTS school_year_id UUID REFERENCES school_years(id) ON DELETE SET NULL;
+      ALTER TABLE grades ADD COLUMN IF NOT EXISTS school_year_id UUID REFERENCES school_years(id) ON DELETE SET NULL;
+      ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS school_year_id UUID REFERENCES school_years(id) ON DELETE SET NULL;
+      ALTER TABLE grading_periods ADD COLUMN IF NOT EXISTS school_year_id UUID REFERENCES school_years(id) ON DELETE SET NULL;
+      ALTER TABLE grading_period_markers ADD COLUMN IF NOT EXISTS school_year_id UUID REFERENCES school_years(id) ON DELETE SET NULL;
+      ALTER TABLE student_group_links ADD COLUMN IF NOT EXISTS school_year_id UUID REFERENCES school_years(id) ON DELETE SET NULL;
+      ALTER TABLE subject_groups ADD COLUMN IF NOT EXISTS school_year_id UUID REFERENCES school_years(id) ON DELETE SET NULL;
+      ALTER TABLE student_subjects ADD COLUMN IF NOT EXISTS school_year_id UUID REFERENCES school_years(id) ON DELETE SET NULL;
+      ALTER TABLE subject_weights ADD COLUMN IF NOT EXISTS school_year_id UUID REFERENCES school_years(id) ON DELETE SET NULL;
+    `);
+
+    await db.query(`
+      UPDATE students st
+      SET school_year_id = u.active_school_year_id
+      FROM users u
+      WHERE st.user_id = u.id AND st.school_year_id IS NULL;
+
+      UPDATE student_groups sg
+      SET school_year_id = u.active_school_year_id
+      FROM users u
+      WHERE sg.user_id = u.id AND sg.school_year_id IS NULL;
+
+      UPDATE subjects sub
+      SET school_year_id = u.active_school_year_id
+      FROM users u
+      WHERE sub.user_id = u.id AND sub.school_year_id IS NULL;
+
+      UPDATE lessons l
+      SET school_year_id = sub.school_year_id
+      FROM subjects sub
+      WHERE l.subject_id = sub.id AND l.school_year_id IS NULL;
+
+      UPDATE grades g
+      SET school_year_id = st.school_year_id
+      FROM students st
+      WHERE g.student_id = st.id AND g.school_year_id IS NULL;
+
+      UPDATE attendance_records ar
+      SET school_year_id = st.school_year_id
+      FROM students st
+      WHERE ar.student_id = st.id AND ar.school_year_id IS NULL;
+
+      UPDATE grading_periods gp
+      SET school_year_id = u.active_school_year_id
+      FROM users u
+      WHERE gp.user_id = u.id AND gp.school_year_id IS NULL;
+
+      UPDATE grading_period_markers gpm
+      SET school_year_id = sub.school_year_id
+      FROM subjects sub
+      WHERE gpm.subject_id = sub.id AND gpm.school_year_id IS NULL;
+
+      UPDATE student_group_links sgl
+      SET school_year_id = st.school_year_id
+      FROM students st
+      WHERE sgl.student_id = st.id AND sgl.school_year_id IS NULL;
+
+      UPDATE subject_groups sg
+      SET school_year_id = sub.school_year_id
+      FROM subjects sub
+      WHERE sg.subject_id = sub.id AND sg.school_year_id IS NULL;
+
+      UPDATE student_subjects ss
+      SET school_year_id = st.school_year_id
+      FROM students st
+      WHERE ss.student_id = st.id AND ss.school_year_id IS NULL;
+
+      UPDATE subject_weights sw
+      SET school_year_id = sub.school_year_id
+      FROM subjects sub
+      WHERE sw.subject_id = sub.id AND sw.school_year_id IS NULL;
+    `);
+
+    await db.query(`
+      CREATE INDEX IF NOT EXISTS idx_students_user_school_year ON students(user_id, school_year_id);
+      CREATE INDEX IF NOT EXISTS idx_student_groups_user_school_year ON student_groups(user_id, school_year_id);
+      CREATE INDEX IF NOT EXISTS idx_subjects_user_school_year ON subjects(user_id, school_year_id);
+      CREATE INDEX IF NOT EXISTS idx_lessons_subject_school_year ON lessons(subject_id, school_year_id);
+      CREATE INDEX IF NOT EXISTS idx_grades_student_school_year ON grades(student_id, school_year_id);
+      CREATE INDEX IF NOT EXISTS idx_attendance_user_school_year ON attendance_records(user_id, school_year_id);
+      CREATE INDEX IF NOT EXISTS idx_grading_periods_user_school_year ON grading_periods(user_id, school_year_id);
+      CREATE INDEX IF NOT EXISTS idx_markers_subject_school_year ON grading_period_markers(subject_id, school_year_id);
+      CREATE INDEX IF NOT EXISTS idx_student_group_links_student_school_year ON student_group_links(student_id, school_year_id);
+      CREATE INDEX IF NOT EXISTS idx_subject_groups_subject_school_year ON subject_groups(subject_id, school_year_id);
+      CREATE INDEX IF NOT EXISTS idx_student_subjects_student_school_year ON student_subjects(student_id, school_year_id);
+      CREATE INDEX IF NOT EXISTS idx_subject_weights_subject_school_year ON subject_weights(subject_id, school_year_id);
+    `);
+
+    console.log('✅ Added school_year_id scoping to year-based tables');
+  } catch (error) {
+    console.error('Error adding school_year_id scoping:', error);
     throw error;
   }
 };

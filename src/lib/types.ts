@@ -9,6 +9,40 @@ export interface User {
   grading_periods?: number
   grading_mode?: 'dates' | 'markers'
   auto_enroll_subjects?: boolean
+  active_school_year_id?: string | null
+  active_school_year_label?: string | null
+  active_school_year_start_date?: string | null
+  active_school_year_end_date?: string | null
+  licensed_school_years?: LicensedSchoolYear[]
+}
+
+export interface SchoolYear {
+  id: string
+  label: string
+  start_date: string
+  end_date: string
+  created_at?: string
+  updated_at?: string
+}
+
+export interface LicensedSchoolYear extends SchoolYear {
+  license_id: string
+  grant_source?: string
+  licensed_at?: string
+}
+
+export interface UserSchoolYearLicense {
+  id: string
+  user_id: string
+  school_year_id: string
+  grant_source: string
+  notes?: string | null
+  created_at: string
+  updated_at: string
+  label: string
+  start_date: string
+  end_date: string
+  is_active: boolean
 }
 
 export interface Student {

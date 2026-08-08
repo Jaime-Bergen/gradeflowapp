@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { AttendanceRecord, Grade, User } from '@/lib/types'
+import { AttendanceRecord, Grade, SchoolYear, User, UserSchoolYearLicense } from '@/lib/types'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
@@ -72,6 +72,10 @@ class ApiClient {
     }
   }
 
+  private getAuthToken(): string | null {
+    return this.token || localStorage.getItem('auth_token');
+  }
+
   private async cachedRequest<T = any>(endpoint: string, ttlMs = 30000): Promise<ApiResponse<T>> {
     const cacheKey = endpoint
     const now = Date.now()
@@ -114,7 +118,7 @@ class ApiClient {
   }
 
   private async request<T = any>(endpoint: string, options: RequestInit = {}): Promise<ApiResponse<T>> {
-    const token = this.token || localStorage.getItem('auth_token');
+    const token = this.getAuthToken();
     const url = `${this.baseURL}${endpoint}`;
 
     const headers: Record<string, string> = {
@@ -198,12 +202,75 @@ class ApiClient {
     first_day_of_school?: string; 
     grading_periods?: number;
     grading_mode?: 'dates' | 'markers';
-    auto_enroll_subjects?: boolean
+    auto_enroll_subjects?: boolean;
+    active_school_year_id?: string | null
   }) {
     return this.request<User>('/users/profile', {
       method: 'PUT',
       body: JSON.stringify(data),
     });
+  }
+
+  async getLicensedSchoolYears() {
+    return this.request('/users/licensed-years')
+  }
+
+  async setActiveSchoolYear(schoolYearId: string) {
+    return this.request('/users/active-school-year', {
+      method: 'PUT',
+      body: JSON.stringify({ schoolYearId })
+    })
+  }
+
+  async getAdminSchoolYears(adminPasscode: string) {
+    return this.request<SchoolYear[]>('/users/admin/school-years', {
+      headers: {
+        'x-admin-passcode': adminPasscode,
+      },
+    })
+  }
+
+  async createAdminSchoolYear(
+    adminPasscode: string,
+    payload: { label: string; startDate: string; endDate: string }
+  ) {
+    return this.request<SchoolYear>('/users/admin/school-years', {
+      method: 'POST',
+      headers: {
+        'x-admin-passcode': adminPasscode,
+      },
+      body: JSON.stringify(payload),
+    })
+  }
+
+  async getAdminUserLicenses(adminPasscode: string, userId: string) {
+    return this.request<UserSchoolYearLicense[]>(`/users/admin/licenses/${userId}`, {
+      headers: {
+        'x-admin-passcode': adminPasscode,
+      },
+    })
+  }
+
+  async grantAdminUserLicense(
+    adminPasscode: string,
+    payload: { userId: string; schoolYearId: string; notes?: string; setAsActive?: boolean }
+  ) {
+    return this.request('/users/admin/licenses/grant', {
+      method: 'POST',
+      headers: {
+        'x-admin-passcode': adminPasscode,
+      },
+      body: JSON.stringify(payload),
+    })
+  }
+
+  async revokeAdminUserLicense(adminPasscode: string, licenseId: string) {
+    return this.request<{ success: boolean }>(`/users/admin/licenses/${licenseId}`, {
+      method: 'DELETE',
+      headers: {
+        'x-admin-passcode': adminPasscode,
+      },
+    })
   }
 
   async changePassword(data: { currentPassword: string; newPassword: string }) {
@@ -566,10 +633,11 @@ class ApiClient {
 
   // Backup and Restore Methods
   async createSQLBackup() {
+    const token = this.getAuthToken();
     const response = await fetch(`${this.baseURL}/backup/sql`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${this.token}`,
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
       },
     });
 
@@ -581,6 +649,7 @@ class ApiClient {
   }
 
   async restoreFromSQL(file: File, options?: { adminConfirmed?: boolean }) {
+    const token = this.getAuthToken();
     const formData = new FormData();
     formData.append('backupFile', file);
     if (options?.adminConfirmed) {
@@ -590,7 +659,7 @@ class ApiClient {
     const response = await fetch(`${this.baseURL}/restore/sql`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${this.token}`,
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
       },
       body: formData,
     });
@@ -604,6 +673,7 @@ class ApiClient {
   }
 
   async restoreFromJSON(file: File, options: { mergeData?: boolean; updateSettings?: boolean } = {}) {
+    const token = this.getAuthToken();
     const formData = new FormData();
     formData.append('backupFile', file);
     formData.append('mergeData', options.mergeData ? 'true' : 'false');
@@ -612,7 +682,7 @@ class ApiClient {
     const response = await fetch(`${this.baseURL}/restore/json`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${this.token}`,
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
       },
       body: formData,
     });

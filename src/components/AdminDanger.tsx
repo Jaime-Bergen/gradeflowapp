@@ -1,5 +1,4 @@
-
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useApi } from '@/lib/api'
 import { apiClient } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -8,9 +7,11 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { AlertTriangle, Database, Download, Upload } from "lucide-react"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { AlertTriangle, CalendarRange, Database, Download, PlusCircle, Upload } from "lucide-react"
 import { toast } from 'sonner'
 import DataCleaner from './DataCleaner'
+import { SchoolYear, UserSchoolYearLicense } from '@/lib/types'
 // import { apiClient } from '@/lib/api' // Uncomment when backend supports /users
 
 export default function AdminDanger() {
@@ -19,8 +20,32 @@ export default function AdminDanger() {
   const [restoreDialog, setRestoreDialog] = useState(false)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [isRestoring, setIsRestoring] = useState(false)
+  const [users, setUsers] = useState<Array<{ id: string; name: string; email: string }>>([])
+  const [schoolYears, setSchoolYears] = useState<SchoolYear[]>([])
+  const [selectedUserId, setSelectedUserId] = useState('')
+  const [selectedYearId, setSelectedYearId] = useState('')
+  const [licenseNotes, setLicenseNotes] = useState('')
+  const [setAsActive, setSetAsActive] = useState(true)
+  const [licenses, setLicenses] = useState<UserSchoolYearLicense[]>([])
+  const [isLicenseLoading, setIsLicenseLoading] = useState(false)
+  const [newYearLabel, setNewYearLabel] = useState('')
+  const [newYearStart, setNewYearStart] = useState('')
+  const [newYearEnd, setNewYearEnd] = useState('')
 
   const adminPass = import.meta.env.VITE_ADMIN_PASS
+
+  useEffect(() => {
+    if (!entered) return
+    loadLicenseAdminData()
+  }, [entered])
+
+  useEffect(() => {
+    if (!entered || !selectedUserId) {
+      setLicenses([])
+      return
+    }
+    loadUserLicenses(selectedUserId)
+  }, [entered, selectedUserId])
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -90,6 +115,110 @@ export default function AdminDanger() {
       toast.error(`Restore failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
     } finally {
       setIsRestoring(false)
+    }
+  }
+
+  const loadLicenseAdminData = async () => {
+    if (!adminPass) return
+    try {
+      setIsLicenseLoading(true)
+      const [usersRes, yearsRes] = await Promise.all([
+        apiClient.getAllUsers(),
+        apiClient.getAdminSchoolYears(adminPass),
+      ])
+
+      const userRows = Array.isArray(usersRes.data) ? usersRes.data : []
+      const yearRows = Array.isArray(yearsRes.data) ? yearsRes.data : []
+
+      setUsers(userRows.map((u: any) => ({ id: u.id, name: u.name, email: u.email })))
+      setSchoolYears(yearRows)
+
+      if (!selectedUserId && userRows.length > 0) {
+        setSelectedUserId(userRows[0].id)
+      }
+      if (!selectedYearId && yearRows.length > 0) {
+        setSelectedYearId(yearRows[0].id)
+      }
+    } catch (error) {
+      console.error('Failed to load school year license admin data:', error)
+      toast.error('Failed to load school year license data')
+    } finally {
+      setIsLicenseLoading(false)
+    }
+  }
+
+  const loadUserLicenses = async (userId: string) => {
+    if (!adminPass || !userId) return
+    try {
+      setIsLicenseLoading(true)
+      const res = await apiClient.getAdminUserLicenses(adminPass, userId)
+      setLicenses(Array.isArray(res.data) ? res.data : [])
+    } catch (error) {
+      console.error('Failed to load user licenses:', error)
+      toast.error('Failed to load user licenses')
+    } finally {
+      setIsLicenseLoading(false)
+    }
+  }
+
+  const createSchoolYear = async () => {
+    if (!adminPass) return
+    if (!newYearLabel.trim() || !newYearStart || !newYearEnd) {
+      toast.error('Enter year label, start date, and end date')
+      return
+    }
+
+    try {
+      await apiClient.createAdminSchoolYear(adminPass, {
+        label: newYearLabel.trim(),
+        startDate: newYearStart,
+        endDate: newYearEnd,
+      })
+      toast.success('School year created')
+      setNewYearLabel('')
+      setNewYearStart('')
+      setNewYearEnd('')
+      await loadLicenseAdminData()
+    } catch (error) {
+      console.error('Failed to create school year:', error)
+      toast.error('Failed to create school year')
+    }
+  }
+
+  const grantLicense = async () => {
+    if (!adminPass) return
+    if (!selectedUserId || !selectedYearId) {
+      toast.error('Select a user and school year')
+      return
+    }
+
+    try {
+      await apiClient.grantAdminUserLicense(adminPass, {
+        userId: selectedUserId,
+        schoolYearId: selectedYearId,
+        notes: licenseNotes.trim() || undefined,
+        setAsActive,
+      })
+      toast.success('License granted')
+      setLicenseNotes('')
+      await loadUserLicenses(selectedUserId)
+    } catch (error) {
+      console.error('Failed to grant license:', error)
+      toast.error('Failed to grant license')
+    }
+  }
+
+  const revokeLicense = async (licenseId: string) => {
+    if (!adminPass || !selectedUserId) return
+    if (!window.confirm('Revoke this school year license?')) return
+
+    try {
+      await apiClient.revokeAdminUserLicense(adminPass, licenseId)
+      toast.success('License revoked')
+      await loadUserLicenses(selectedUserId)
+    } catch (error) {
+      console.error('Failed to revoke license:', error)
+      toast.error('Failed to revoke license')
     }
   }
 
@@ -186,6 +315,147 @@ export default function AdminDanger() {
                 Restore from SQL
               </Button>
             </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border-destructive">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-destructive">
+            <CalendarRange size={24} />
+            School Year Licenses
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <Alert variant="destructive">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription>
+              <strong>Warning:</strong> Licensing controls access to school year data. Use carefully.
+            </AlertDescription>
+          </Alert>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-3 rounded-md border p-4">
+              <h4 className="font-medium">Create School Year</h4>
+              <div className="space-y-2">
+                <Label htmlFor="new-year-label">Label</Label>
+                <Input
+                  id="new-year-label"
+                  placeholder="2026-2027"
+                  value={newYearLabel}
+                  onChange={(e) => setNewYearLabel(e.target.value)}
+                />
+              </div>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="new-year-start">Start Date</Label>
+                  <Input
+                    id="new-year-start"
+                    type="date"
+                    value={newYearStart}
+                    onChange={(e) => setNewYearStart(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="new-year-end">End Date</Label>
+                  <Input
+                    id="new-year-end"
+                    type="date"
+                    value={newYearEnd}
+                    onChange={(e) => setNewYearEnd(e.target.value)}
+                  />
+                </div>
+              </div>
+              <Button onClick={createSchoolYear} className="w-full" variant="outline">
+                <PlusCircle size={16} className="mr-2" />
+                Create School Year
+              </Button>
+            </div>
+
+            <div className="space-y-3 rounded-md border p-4">
+              <h4 className="font-medium">Grant User License</h4>
+              <div className="space-y-2">
+                <Label>User</Label>
+                <Select value={selectedUserId || undefined} onValueChange={setSelectedUserId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select user" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {users.map((u) => (
+                      <SelectItem key={u.id} value={u.id}>
+                        {u.name} ({u.email})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>School Year</Label>
+                <Select value={selectedYearId || undefined} onValueChange={setSelectedYearId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select school year" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {schoolYears.map((y) => (
+                      <SelectItem key={y.id} value={y.id}>
+                        {y.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="license-notes">Notes</Label>
+                <Input
+                  id="license-notes"
+                  placeholder="Optional reason"
+                  value={licenseNotes}
+                  onChange={(e) => setLicenseNotes(e.target.value)}
+                />
+              </div>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={setAsActive}
+                  onChange={(e) => setSetAsActive(e.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300"
+                />
+                Set as active year for this user
+              </label>
+              <Button onClick={grantLicense} className="w-full">
+                Grant License
+              </Button>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <h4 className="font-medium">User Licenses</h4>
+            {!selectedUserId ? (
+              <p className="text-sm text-muted-foreground">Select a user to view licenses.</p>
+            ) : isLicenseLoading ? (
+              <p className="text-sm text-muted-foreground">Loading licenses...</p>
+            ) : licenses.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No licenses found for selected user.</p>
+            ) : (
+              <div className="space-y-2">
+                {licenses.map((license) => (
+                  <div key={license.id} className="flex items-center justify-between rounded-md border p-3">
+                    <div>
+                      <div className="font-medium text-sm">{license.label}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {new Date(license.start_date).toLocaleDateString()} - {new Date(license.end_date).toLocaleDateString()}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        Source: {license.grant_source}{license.is_active ? ' • Active' : ''}
+                      </div>
+                    </div>
+                    <Button variant="destructive" size="sm" onClick={() => revokeLicense(license.id)}>
+                      Revoke
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>

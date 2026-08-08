@@ -9,6 +9,7 @@ const router = express.Router();
 router.get('/', async (req: AuthRequest, res, next) => {
   try {
     const db = getDB();
+    const schoolYearId = req.schoolYearId;
 
     // Fetch all grades for the user
     const result = await db.query(
@@ -24,9 +25,9 @@ router.get('/', async (req: AuthRequest, res, next) => {
        JOIN lessons l ON g.lesson_id = l.id
        LEFT JOIN grade_category_types gct ON l.category_id = gct.id
        JOIN subjects sub ON l.subject_id = sub.id
-       WHERE s.user_id = $1
+       WHERE s.user_id = $1 AND s.school_year_id = $2
        ORDER BY sub.name, s.name, l.order_index`,
-      [req.userId]
+      [req.userId, schoolYearId]
     );
 
     // Transform the data to match frontend interface
@@ -56,13 +57,15 @@ router.get('/student/:studentId/subject/:subjectId', async (req: AuthRequest, re
   try {
     const { studentId, subjectId } = req.params;
     const db = getDB();
+    const schoolYearId = req.schoolYearId;
     
     // Verify student and subject belong to user
     const verifyResult = await db.query(
       `SELECT s.id as student_id, sub.id as subject_id 
        FROM students s, subjects sub
-       WHERE s.id = $1 AND sub.id = $2 AND s.user_id = $3 AND sub.user_id = $3`,
-      [studentId, subjectId, req.userId]
+       WHERE s.id = $1 AND sub.id = $2 AND s.user_id = $3 AND sub.user_id = $3
+       AND s.school_year_id = $4 AND sub.school_year_id = $4`,
+      [studentId, subjectId, req.userId, schoolYearId]
     );
     
     if (verifyResult.rows.length === 0) {
@@ -74,9 +77,9 @@ router.get('/student/:studentId/subject/:subjectId', async (req: AuthRequest, re
        FROM grades g
        JOIN lessons l ON g.lesson_id = l.id
        LEFT JOIN grade_category_types gct ON l.category_id = gct.id
-       WHERE g.student_id = $1 AND l.subject_id = $2
+       WHERE g.student_id = $1 AND l.subject_id = $2 AND g.school_year_id = $3 AND l.school_year_id = $3
        ORDER BY l.order_index`,
-      [studentId, subjectId]
+      [studentId, subjectId, schoolYearId]
     );
     
     res.json(result.rows);
@@ -90,11 +93,12 @@ router.get('/subject/:subjectId', async (req: AuthRequest, res, next) => {
   try {
     const { subjectId } = req.params;
     const db = getDB();
+    const schoolYearId = req.schoolYearId;
     
     // Verify subject belongs to user
     const subjectCheck = await db.query(
-      'SELECT id FROM subjects WHERE id = $1 AND user_id = $2',
-      [subjectId, req.userId]
+      'SELECT id FROM subjects WHERE id = $1 AND user_id = $2 AND school_year_id = $3',
+      [subjectId, req.userId, schoolYearId]
     );
     
     if (subjectCheck.rows.length === 0) {
@@ -111,9 +115,9 @@ router.get('/subject/:subjectId', async (req: AuthRequest, res, next) => {
        CROSS JOIN lessons l
        LEFT JOIN grade_category_types gct ON l.category_id = gct.id
        LEFT JOIN grades g ON s.id = g.student_id AND l.id = g.lesson_id
-       WHERE l.subject_id = $1 AND s.user_id = $2
+       WHERE l.subject_id = $1 AND s.user_id = $2 AND s.school_year_id = $3 AND l.school_year_id = $3
        ORDER BY s.name, l.order_index`,
-      [subjectId, req.userId]
+      [subjectId, req.userId, schoolYearId]
     );
     
     // Group by student
@@ -153,14 +157,16 @@ router.put('/student/:studentId/lesson/:lessonId', validateRequest(schemas.grade
     const { studentId, lessonId } = req.params;
     const { percentage, errors, points } = req.body;
     const db = getDB();
+    const schoolYearId = req.schoolYearId;
     
     // Verify student and lesson belong to user
     const verifyResult = await db.query(
       `SELECT s.id as student_id, l.id as lesson_id, l.points as lesson_points
        FROM students s, lessons l, subjects sub
        WHERE s.id = $1 AND l.id = $2 AND l.subject_id = sub.id 
-       AND s.user_id = $3 AND sub.user_id = $3`,
-      [studentId, lessonId, req.userId]
+       AND s.user_id = $3 AND sub.user_id = $3
+       AND s.school_year_id = $4 AND l.school_year_id = $4 AND sub.school_year_id = $4`,
+      [studentId, lessonId, req.userId, schoolYearId]
     );
     
     if (verifyResult.rows.length === 0) {
@@ -187,16 +193,17 @@ router.put('/student/:studentId/lesson/:lessonId', validateRequest(schemas.grade
     
     // Upsert the grade
     const result = await db.query(
-      `INSERT INTO grades (student_id, lesson_id, percentage, errors, points)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO grades (student_id, lesson_id, percentage, errors, points, school_year_id)
+       VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (student_id, lesson_id)
        DO UPDATE SET 
          percentage = $3, 
          errors = $4, 
          points = $5,
+         school_year_id = $6,
          updated_at = CURRENT_TIMESTAMP
        RETURNING *`,
-      [studentId, lessonId, finalPercentage, finalErrors, finalPoints]
+      [studentId, lessonId, finalPercentage, finalErrors, finalPoints, schoolYearId]
     );
     
     res.json(result.rows[0]);
@@ -210,14 +217,16 @@ router.delete('/student/:studentId/lesson/:lessonId', async (req: AuthRequest, r
   try {
     const { studentId, lessonId } = req.params;
     const db = getDB();
+    const schoolYearId = req.schoolYearId;
     
     // Verify student and lesson belong to user
     const verifyResult = await db.query(
       `SELECT s.id as student_id, l.id as lesson_id
        FROM students s, lessons l, subjects sub
        WHERE s.id = $1 AND l.id = $2 AND l.subject_id = sub.id 
-       AND s.user_id = $3 AND sub.user_id = $3`,
-      [studentId, lessonId, req.userId]
+       AND s.user_id = $3 AND sub.user_id = $3
+       AND s.school_year_id = $4 AND l.school_year_id = $4 AND sub.school_year_id = $4`,
+      [studentId, lessonId, req.userId, schoolYearId]
     );
     
     if (verifyResult.rows.length === 0) {
@@ -225,8 +234,8 @@ router.delete('/student/:studentId/lesson/:lessonId', async (req: AuthRequest, r
     }
     
     const result = await db.query(
-      'DELETE FROM grades WHERE student_id = $1 AND lesson_id = $2 RETURNING id',
-      [studentId, lessonId]
+      'DELETE FROM grades WHERE student_id = $1 AND lesson_id = $2 AND school_year_id = $3 RETURNING id',
+      [studentId, lessonId, schoolYearId]
     );
     
     if (result.rows.length === 0) {
@@ -244,11 +253,12 @@ router.get('/subject/:subjectId/stats', async (req: AuthRequest, res, next) => {
   try {
     const { subjectId } = req.params;
     const db = getDB();
+    const schoolYearId = req.schoolYearId;
     
     // Verify subject belongs to user
     const subjectCheck = await db.query(
-      'SELECT id, name FROM subjects WHERE id = $1 AND user_id = $2',
-      [subjectId, req.userId]
+      'SELECT id, name FROM subjects WHERE id = $1 AND user_id = $2 AND school_year_id = $3',
+      [subjectId, req.userId, schoolYearId]
     );
     
     if (subjectCheck.rows.length === 0) {
@@ -267,8 +277,8 @@ router.get('/subject/:subjectId/stats', async (req: AuthRequest, res, next) => {
        FROM students s
        CROSS JOIN lessons l
        LEFT JOIN grades g ON s.id = g.student_id AND l.id = g.lesson_id
-       WHERE l.subject_id = $1 AND s.user_id = $2`,
-      [subjectId, req.userId]
+       WHERE l.subject_id = $1 AND s.user_id = $2 AND s.school_year_id = $3 AND l.school_year_id = $3`,
+      [subjectId, req.userId, schoolYearId]
     );
     
     // Get lesson type breakdown
@@ -280,10 +290,10 @@ router.get('/subject/:subjectId/stats', async (req: AuthRequest, res, next) => {
        FROM lessons l
        LEFT JOIN grade_category_types gct ON l.category_id = gct.id
        LEFT JOIN grades g ON l.id = g.lesson_id
-       WHERE l.subject_id = $1
+       WHERE l.subject_id = $1 AND l.school_year_id = $2
        GROUP BY gct.name
        ORDER BY gct.name`,
-      [subjectId]
+      [subjectId, schoolYearId]
     );
     
     // Get student performance summary
@@ -296,10 +306,10 @@ router.get('/subject/:subjectId/stats', async (req: AuthRequest, res, next) => {
        FROM students s
        LEFT JOIN grades g ON s.id = g.student_id
        LEFT JOIN lessons l ON g.lesson_id = l.id
-       WHERE s.user_id = $1 AND (l.subject_id = $2 OR l.subject_id IS NULL)
+       WHERE s.user_id = $1 AND s.school_year_id = $3 AND (l.subject_id = $2 OR l.subject_id IS NULL)
        GROUP BY s.id, s.name
        ORDER BY s.name`,
-      [req.userId, subjectId]
+      [req.userId, subjectId, schoolYearId]
     );
     
     res.json({
@@ -319,6 +329,7 @@ router.patch('/subject/:subjectId/lessons/points', async (req: AuthRequest, res,
     const { subjectId } = req.params;
     const { lessonId, points } = req.body;
     const db = getDB();
+    const schoolYearId = req.schoolYearId;
     
     if (!lessonId || !points || points < 1) {
       return res.status(400).json({ error: 'Valid lessonId and points are required' });
@@ -328,8 +339,8 @@ router.patch('/subject/:subjectId/lessons/points', async (req: AuthRequest, res,
     const lessonCheck = await db.query(
       `SELECT l.id FROM lessons l
        JOIN subjects s ON l.subject_id = s.id
-       WHERE l.id = $1 AND s.id = $2 AND s.user_id = $3`,
-      [lessonId, subjectId, req.userId]
+       WHERE l.id = $1 AND s.id = $2 AND s.user_id = $3 AND s.school_year_id = $4 AND l.school_year_id = $4`,
+      [lessonId, subjectId, req.userId, schoolYearId]
     );
     
     if (lessonCheck.rows.length === 0) {
@@ -338,8 +349,8 @@ router.patch('/subject/:subjectId/lessons/points', async (req: AuthRequest, res,
     
     // Update lesson points
     await db.query(
-      'UPDATE lessons SET points = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
-      [points, lessonId]
+      'UPDATE lessons SET points = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND school_year_id = $3',
+      [points, lessonId, schoolYearId]
     );
     
     // Recalculate all percentages for grades on this lesson
@@ -348,8 +359,8 @@ router.patch('/subject/:subjectId/lessons/points', async (req: AuthRequest, res,
         percentage = ROUND(((points - errors) / points::DECIMAL) * 1000) / 10,
         points = $1,
         updated_at = CURRENT_TIMESTAMP
-       WHERE lesson_id = $2 AND errors IS NOT NULL`,
-      [points, lessonId]
+         WHERE lesson_id = $2 AND school_year_id = $3 AND errors IS NOT NULL`,
+        [points, lessonId, schoolYearId]
     );
     
     res.json({ message: 'Lesson points updated and grades recalculated' });

@@ -24,7 +24,7 @@ import utilsRoutes from './routes/utils';
 import teachersRoutes from './routes/teachers';
 import attendanceRoutes from './routes/attendance';
 import { errorHandler } from './middleware/errorHandler';
-import { authenticateToken } from './middleware/auth';
+import { authenticateToken, resolveSchoolYearContext } from './middleware/auth';
 
 dotenv.config();
 
@@ -96,17 +96,17 @@ app.use('/api/auth', authRoutes);
 
 // Protected routes
 app.use('/api/users', authenticateToken, userRoutes);
-app.use('/api/students', authenticateToken, studentRoutes);
-app.use('/api/subjects', authenticateToken, subjectRoutes);
-app.use('/api/grades', authenticateToken, gradeRoutes);
+app.use('/api/students', authenticateToken, resolveSchoolYearContext, studentRoutes);
+app.use('/api/subjects', authenticateToken, resolveSchoolYearContext, subjectRoutes);
+app.use('/api/grades', authenticateToken, resolveSchoolYearContext, gradeRoutes);
 app.use('/api/grade-category-types', authenticateToken, gradeCategoryTypesRoutes);
-app.use('/api/reports', authenticateToken, reportRoutes);
-app.use('/api/lessons', authenticateToken, lessonsRoutes);
-app.use('/api/grading-period-markers', authenticateToken, gradingPeriodMarkersRoutes);
-app.use('/api/grading-periods', authenticateToken, gradingPeriodsRoutes);
+app.use('/api/reports', authenticateToken, resolveSchoolYearContext, reportRoutes);
+app.use('/api/lessons', authenticateToken, resolveSchoolYearContext, lessonsRoutes);
+app.use('/api/grading-period-markers', authenticateToken, resolveSchoolYearContext, gradingPeriodMarkersRoutes);
+app.use('/api/grading-periods', authenticateToken, resolveSchoolYearContext, gradingPeriodsRoutes);
 app.use('/api/feedback', authenticateToken, feedbackRoutes);
 app.use('/api/teachers', authenticateToken, teachersRoutes);
-app.use('/api/attendance', authenticateToken, attendanceRoutes);
+app.use('/api/attendance', authenticateToken, resolveSchoolYearContext, attendanceRoutes);
 app.use('/api/utils', utilsRoutes);
 app.use('/api/metadata', metadataRoutes);
 app.use('/api/backups', backupRoutes);

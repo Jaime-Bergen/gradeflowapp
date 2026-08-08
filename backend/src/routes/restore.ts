@@ -140,31 +140,45 @@ router.post('/restore/sql', authenticateToken, upload.single('backupFile'), asyn
 router.post('/restore/json', authenticateToken, upload.single('backupFile'), async (req: RestoreRequest, res) => {
   const db = getDB();
   let client: PoolClient | null = null;
-  
+
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No backup file provided' });
     }
 
-    // Parse the backup file
     const backupData = JSON.parse(req.file.buffer.toString());
-    
-    // Validate backup format
     if (!validateBackupFormat(backupData)) {
       return res.status(400).json({ error: 'Invalid backup file format' });
     }
 
+    const payload = backupData?.data && typeof backupData.data === 'object' ? backupData.data : backupData;
     const userId = req.userId!;
+    const nowIso = new Date().toISOString();
+    const toArray = (val: any) => (Array.isArray(val) ? val : []);
+
+    const userYearResult = await db.query('SELECT active_school_year_id FROM users WHERE id = $1', [userId]);
+    const schoolYearId = req.schoolYearId || userYearResult.rows[0]?.active_school_year_id;
+    if (!schoolYearId) {
+      return res.status(400).json({ error: 'No active school year selected for restore' });
+    }
+
+    const licenseResult = await db.query(
+      `SELECT 1 FROM user_school_year_licenses WHERE user_id = $1 AND school_year_id = $2 LIMIT 1`,
+      [userId, schoolYearId]
+    );
+    if (licenseResult.rows.length === 0) {
+      return res.status(403).json({ error: 'You do not have a license for the active school year' });
+    }
+
     const restoreOptions = {
       mergeData: req.body.mergeData === 'true',
       updateSettings: req.body.updateSettings === 'true'
     };
 
-    // Get database client and start transaction
     client = await db.connect();
     await client.query('BEGIN');
 
-    let restoredCounts = {
+    const restoredCounts = {
       students: 0,
       subjects: 0,
       grades: 0,
@@ -174,210 +188,217 @@ router.post('/restore/json', authenticateToken, upload.single('backupFile'), asy
       settingsUpdated: false
     };
 
-    // Restore students
-    if (backupData.students && Array.isArray(backupData.students)) {
-      for (const student of backupData.students) {
-        if (restoreOptions.mergeData) {
-          // Check if student exists
-          const existing = await client.query(
-            'SELECT id FROM students WHERE email = $1 AND user_id = $2',
-            [student.email, userId]
-          );
-          
-          if (existing.rows.length === 0) {
-            await client.query(
-              'INSERT INTO students (name, email, grade_level, user_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6)',
-              [student.name, student.email, student.grade_level, userId, student.created_at || new Date().toISOString(), student.updated_at || new Date().toISOString()]
-            );
-            restoredCounts.students++;
-          }
-        } else {
-          await client.query(
-            'INSERT INTO students (name, email, grade_level, user_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6)',
-            [student.name, student.email, student.grade_level, userId, student.created_at || new Date().toISOString(), student.updated_at || new Date().toISOString()]
-          );
-          restoredCounts.students++;
+    const studentMap = new Map<string, string>();
+    const subjectMap = new Map<string, string>();
+    const lessonMap = new Map<string, string>();
+
+    for (const student of toArray(payload.students)) {
+      const studentName = student.name || student.full_name || student.student_name;
+      if (!studentName) continue;
+
+      const studentBirthday = student.birthday || student.birthdate || null;
+      const studentGrade = student.grade || student.grade_level || null;
+
+      if (restoreOptions.mergeData) {
+        const existing = await client.query(
+          `SELECT id FROM students
+           WHERE user_id = $1 AND school_year_id = $2 AND name = $3
+             AND COALESCE(birthday::text, '') = COALESCE($4::text, '')
+           LIMIT 1`,
+          [userId, schoolYearId, studentName, studentBirthday]
+        );
+        if (existing.rows.length > 0) {
+          if (student.id) studentMap.set(String(student.id), existing.rows[0].id);
+          continue;
         }
       }
+
+      const inserted = await client.query(
+        `INSERT INTO students (id, user_id, school_year_id, name, grade, birthday, created_at, updated_at)
+         VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3, $4, $5, $6::date, $7, $8)
+         RETURNING id`,
+        [student.id || null, userId, schoolYearId, studentName, studentGrade, studentBirthday, student.created_at || nowIso, student.updated_at || nowIso]
+      );
+
+      if (student.id) studentMap.set(String(student.id), inserted.rows[0].id);
+      restoredCounts.students++;
     }
 
-    // Restore subjects
-    if (backupData.subjects && Array.isArray(backupData.subjects)) {
-      for (const subject of backupData.subjects) {
-        if (restoreOptions.mergeData) {
-          const existing = await client.query(
-            'SELECT id FROM subjects WHERE name = $1 AND user_id = $2',
-            [subject.name, userId]
-          );
-          
-          if (existing.rows.length === 0) {
-            await client.query(
-              'INSERT INTO subjects (name, description, color, user_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6)',
-              [subject.name, subject.description, subject.color, userId, subject.created_at || new Date().toISOString(), subject.updated_at || new Date().toISOString()]
-            );
-            restoredCounts.subjects++;
-          }
-        } else {
-          await client.query(
-            'INSERT INTO subjects (name, description, color, user_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6)',
-            [subject.name, subject.description, subject.color, userId, subject.created_at || new Date().toISOString(), subject.updated_at || new Date().toISOString()]
-          );
-          restoredCounts.subjects++;
+    for (const subject of toArray(payload.subjects)) {
+      const subjectName = subject.name || subject.subject_name;
+      if (!subjectName) continue;
+
+      if (restoreOptions.mergeData) {
+        const existing = await client.query(
+          `SELECT id FROM subjects WHERE user_id = $1 AND school_year_id = $2 AND name = $3 LIMIT 1`,
+          [userId, schoolYearId, subjectName]
+        );
+        if (existing.rows.length > 0) {
+          if (subject.id) subjectMap.set(String(subject.id), existing.rows[0].id);
+          continue;
         }
       }
+
+      const inserted = await client.query(
+        `INSERT INTO subjects (id, user_id, school_year_id, name, report_card_name, description, created_at, updated_at)
+         VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3, $4, $5, $6, $7, $8)
+         RETURNING id`,
+        [subject.id || null, userId, schoolYearId, subjectName, subject.report_card_name || subjectName, subject.description || null, subject.created_at || nowIso, subject.updated_at || nowIso]
+      );
+
+      if (subject.id) subjectMap.set(String(subject.id), inserted.rows[0].id);
+      restoredCounts.subjects++;
     }
 
-    // Get ID mappings for foreign key relationships
-    const studentMap = new Map();
-    const subjectMap = new Map();
-    
-    // Map original student IDs to new IDs
-    const studentsResult = await client.query('SELECT id, name, email FROM students WHERE user_id = $1', [userId]);
-    for (const student of studentsResult.rows) {
-      const originalStudent = backupData.students?.find((s: any) => s.name === student.name && s.email === student.email);
-      if (originalStudent) {
-        studentMap.set(originalStudent.id, student.id);
+    for (const category of toArray(payload.gradeCategoryTypes)) {
+      if (!category?.name) continue;
+      if (restoreOptions.mergeData) {
+        const existing = await client.query(
+          'SELECT id FROM grade_category_types WHERE name = $1 AND user_id = $2 LIMIT 1',
+          [category.name, userId]
+        );
+        if (existing.rows.length > 0) continue;
       }
+
+      await client.query(
+        `INSERT INTO grade_category_types (user_id, name, description, is_default, is_active, color, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          userId,
+          category.name,
+          category.description || null,
+          category.is_default ?? false,
+          category.is_active ?? true,
+          category.color || null,
+          category.created_at || nowIso,
+          category.updated_at || nowIso,
+        ]
+      );
+      restoredCounts.gradeCategoryTypes++;
     }
 
-    // Map original subject IDs to new IDs
-    const subjectsResult = await client.query('SELECT id, name FROM subjects WHERE user_id = $1', [userId]);
-    for (const subject of subjectsResult.rows) {
-      const originalSubject = backupData.subjects?.find((s: any) => s.name === subject.name);
-      if (originalSubject) {
-        subjectMap.set(originalSubject.id, subject.id);
+    for (const group of toArray(payload.studentGroups)) {
+      if (!group?.name) continue;
+      if (restoreOptions.mergeData) {
+        const existing = await client.query(
+          'SELECT id FROM student_groups WHERE name = $1 AND user_id = $2 AND school_year_id = $3 LIMIT 1',
+          [group.name, userId, schoolYearId]
+        );
+        if (existing.rows.length > 0) continue;
       }
+
+      await client.query(
+        `INSERT INTO student_groups (user_id, school_year_id, name, description, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [userId, schoolYearId, group.name, group.description || null, group.created_at || nowIso, group.updated_at || nowIso]
+      );
+      restoredCounts.studentGroups++;
     }
 
-    // Restore lessons
-    if (backupData.lessons && Array.isArray(backupData.lessons)) {
-      for (const lesson of backupData.lessons) {
-        const newSubjectId = subjectMap.get(lesson.subject_id || lesson.subjectId);
-        if (newSubjectId) {
-          if (restoreOptions.mergeData) {
-            const existing = await client.query(
-              'SELECT id FROM lessons WHERE title = $1 AND subject_id = $2',
-              [lesson.title, newSubjectId]
-            );
-            
-            if (existing.rows.length === 0) {
-              await client.query(
-                'INSERT INTO lessons (title, description, subject_id, user_id, lesson_date, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-                [lesson.title, lesson.description, newSubjectId, userId, lesson.lesson_date, lesson.created_at || new Date().toISOString(), lesson.updated_at || new Date().toISOString()]
-              );
-              restoredCounts.lessons++;
-            }
-          } else {
-            await client.query(
-              'INSERT INTO lessons (title, description, subject_id, user_id, lesson_date, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-              [lesson.title, lesson.description, newSubjectId, userId, lesson.lesson_date, lesson.created_at || new Date().toISOString(), lesson.updated_at || new Date().toISOString()]
-            );
-            restoredCounts.lessons++;
-          }
+    for (const lesson of toArray(payload.lessons)) {
+      const sourceSubjectId = lesson.subject_id || lesson.subjectId;
+      const newSubjectId = subjectMap.get(String(sourceSubjectId)) || sourceSubjectId;
+      const lessonName = lesson.name || lesson.title;
+      if (!newSubjectId || !lessonName) continue;
+
+      if (restoreOptions.mergeData) {
+        const existing = await client.query(
+          `SELECT id FROM lessons WHERE subject_id = $1 AND school_year_id = $2 AND name = $3 LIMIT 1`,
+          [newSubjectId, schoolYearId, lessonName]
+        );
+        if (existing.rows.length > 0) {
+          if (lesson.id) lessonMap.set(String(lesson.id), existing.rows[0].id);
+          continue;
         }
       }
+
+      const inserted = await client.query(
+        `INSERT INTO lessons (id, subject_id, school_year_id, name, category_id, points, order_index, date, created_at, updated_at)
+         VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3, $4, $5, COALESCE($6, 100), COALESCE($7, 1), $8::date, $9, $10)
+         RETURNING id`,
+        [
+          lesson.id || null,
+          newSubjectId,
+          schoolYearId,
+          lessonName,
+          lesson.category_id || lesson.categoryId || null,
+          lesson.points || lesson.maxPoints || null,
+          lesson.order_index || lesson.orderIndex || null,
+          lesson.date || lesson.lesson_date || null,
+          lesson.created_at || nowIso,
+          lesson.updated_at || nowIso,
+        ]
+      );
+
+      if (lesson.id) lessonMap.set(String(lesson.id), inserted.rows[0].id);
+      restoredCounts.lessons++;
     }
 
-    // Restore grade category types
-    if (backupData.gradeCategoryTypes && Array.isArray(backupData.gradeCategoryTypes)) {
-      for (const category of backupData.gradeCategoryTypes) {
-        if (restoreOptions.mergeData) {
-          const existing = await client.query(
-            'SELECT id FROM grade_category_types WHERE name = $1 AND user_id = $2',
-            [category.name, userId]
-          );
-          
-          if (existing.rows.length === 0) {
-            await client.query(
-              'INSERT INTO grade_category_types (name, weight, user_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5)',
-              [category.name, category.weight, userId, category.created_at || new Date().toISOString(), category.updated_at || new Date().toISOString()]
-            );
-            restoredCounts.gradeCategoryTypes++;
-          }
-        } else {
-          await client.query(
-            'INSERT INTO grade_category_types (name, weight, user_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5)',
-            [category.name, category.weight, userId, category.created_at || new Date().toISOString(), category.updated_at || new Date().toISOString()]
-          );
-          restoredCounts.gradeCategoryTypes++;
-        }
+    for (const grade of toArray(payload.grades)) {
+      const sourceStudentId = grade.student_id || grade.studentId;
+      const sourceLessonId = grade.lesson_id || grade.lessonId;
+      const newStudentId = studentMap.get(String(sourceStudentId)) || sourceStudentId;
+      const newLessonId = lessonMap.get(String(sourceLessonId)) || sourceLessonId;
+      if (!newStudentId || !newLessonId) continue;
+
+      const lessonCheck = await client.query(
+        `SELECT 1
+         FROM lessons l
+         JOIN subjects s ON l.subject_id = s.id
+         WHERE l.id = $1 AND l.school_year_id = $2 AND s.user_id = $3 AND s.school_year_id = $2
+         LIMIT 1`,
+        [newLessonId, schoolYearId, userId]
+      );
+      if (lessonCheck.rows.length === 0) continue;
+
+      if (restoreOptions.mergeData) {
+        const existing = await client.query(
+          'SELECT id FROM grades WHERE student_id = $1 AND lesson_id = $2 LIMIT 1',
+          [newStudentId, newLessonId]
+        );
+        if (existing.rows.length > 0) continue;
       }
+
+      await client.query(
+        `INSERT INTO grades (id, student_id, lesson_id, percentage, errors, points, school_year_id, created_at, updated_at)
+         VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3, $4, $5, $6, $7, $8, $9)
+         ON CONFLICT (student_id, lesson_id)
+         DO UPDATE SET
+           percentage = EXCLUDED.percentage,
+           errors = EXCLUDED.errors,
+           points = EXCLUDED.points,
+           school_year_id = EXCLUDED.school_year_id,
+           updated_at = EXCLUDED.updated_at`,
+        [
+          grade.id || null,
+          newStudentId,
+          newLessonId,
+          grade.percentage ?? grade.grade_value ?? null,
+          grade.errors ?? null,
+          grade.points ?? grade.max_points ?? null,
+          schoolYearId,
+          grade.created_at || nowIso,
+          grade.updated_at || nowIso,
+        ]
+      );
+      restoredCounts.grades++;
     }
 
-    // Restore student groups
-    if (backupData.studentGroups && Array.isArray(backupData.studentGroups)) {
-      for (const group of backupData.studentGroups) {
-        if (restoreOptions.mergeData) {
-          const existing = await client.query(
-            'SELECT id FROM student_groups WHERE name = $1 AND user_id = $2',
-            [group.name, userId]
-          );
-          
-          if (existing.rows.length === 0) {
-            await client.query(
-              'INSERT INTO student_groups (name, description, color, user_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6)',
-              [group.name, group.description, group.color, userId, group.created_at || new Date().toISOString(), group.updated_at || new Date().toISOString()]
-            );
-            restoredCounts.studentGroups++;
-          }
-        } else {
-          await client.query(
-            'INSERT INTO student_groups (name, description, color, user_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6)',
-            [group.name, group.description, group.color, userId, group.created_at || new Date().toISOString(), group.updated_at || new Date().toISOString()]
-          );
-          restoredCounts.studentGroups++;
-        }
-      }
-    }
-
-    // Restore grades (must be last due to foreign key dependencies)
-    if (backupData.grades && Array.isArray(backupData.grades)) {
-      for (const grade of backupData.grades) {
-        const newStudentId = studentMap.get(grade.student_id);
-        const newSubjectId = subjectMap.get(grade.subject_id);
-        
-        if (newStudentId && newSubjectId) {
-          if (restoreOptions.mergeData) {
-            const existing = await client.query(
-              'SELECT id FROM grades WHERE student_id = $1 AND subject_id = $2 AND assignment_name = $3',
-              [newStudentId, newSubjectId, grade.assignment_name]
-            );
-            
-            if (existing.rows.length === 0) {
-              await client.query(
-                'INSERT INTO grades (student_id, subject_id, assignment_name, grade_value, max_points, category, date_assigned, date_due, notes, user_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)',
-                [newStudentId, newSubjectId, grade.assignment_name, grade.grade_value, grade.max_points, grade.category, grade.date_assigned, grade.date_due, grade.notes, userId, grade.created_at || new Date().toISOString(), grade.updated_at || new Date().toISOString()]
-              );
-              restoredCounts.grades++;
-            }
-          } else {
-            await client.query(
-              'INSERT INTO grades (student_id, subject_id, assignment_name, grade_value, max_points, category, date_assigned, date_due, notes, user_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)',
-              [newStudentId, newSubjectId, grade.assignment_name, grade.grade_value, grade.max_points, grade.category, grade.date_assigned, grade.date_due, grade.notes, userId, grade.created_at || new Date().toISOString(), grade.updated_at || new Date().toISOString()]
-            );
-            restoredCounts.grades++;
-          }
-        }
-      }
-    }
-
-    // Restore school settings
-    if (restoreOptions.updateSettings && backupData.schoolSettings) {
-      const settings = backupData.schoolSettings;
+    if (restoreOptions.updateSettings && payload.schoolSettings) {
+      const settings = payload.schoolSettings;
       await client.query(
         'UPDATE users SET school_name = $1, first_day_of_school = $2, grading_periods = $3, updated_at = $4 WHERE id = $5',
         [
           settings.schoolName || null,
           settings.firstDayOfSchool || null,
           settings.gradingPeriods || 6,
-          new Date().toISOString(),
+          nowIso,
           userId
         ]
       );
       restoredCounts.settingsUpdated = true;
     }
 
-    // Commit transaction
     await client.query('COMMIT');
 
     res.json({
@@ -385,18 +406,18 @@ router.post('/restore/json', authenticateToken, upload.single('backupFile'), asy
       message: 'Data restored successfully',
       restored: restoredCounts,
       metadata: {
-        exportedAt: backupData.exportedAt,
-        exportedBy: backupData.exportedBy,
-        version: backupData.version
+        exportedAt: backupData.exportedAt || backupData.timestamp || null,
+        exportedBy: backupData.exportedBy || null,
+        version: backupData.version || 'unknown',
+        schoolYearId,
       }
     });
-
   } catch (error) {
     if (client) {
       await client.query('ROLLBACK');
     }
     console.error('JSON restore failed:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to restore data',
       details: error instanceof Error ? error.message : 'Unknown error'
     });
@@ -413,15 +434,17 @@ function validateBackupFormat(data: any): boolean {
     return false;
   }
 
+  const payload = data?.data && typeof data.data === 'object' ? data.data : data;
+
   // Check for required structure
   const hasValidStructure = (
-    Array.isArray(data.students) ||
-    Array.isArray(data.subjects) ||
-    Array.isArray(data.grades) ||
-    Array.isArray(data.lessons) ||
-    Array.isArray(data.gradeCategoryTypes) ||
-    Array.isArray(data.studentGroups) ||
-    data.schoolSettings
+    Array.isArray(payload.students) ||
+    Array.isArray(payload.subjects) ||
+    Array.isArray(payload.grades) ||
+    Array.isArray(payload.lessons) ||
+    Array.isArray(payload.gradeCategoryTypes) ||
+    Array.isArray(payload.studentGroups) ||
+    payload.schoolSettings
   );
 
   return hasValidStructure;

@@ -31,7 +31,7 @@ import {
 import { toast } from 'sonner'
 import { v4 as uuidv4 } from 'uuid'
 import { apiClient } from '@/lib/api'
-import { Student, Subject, Grade, GradingPeriod } from '@/lib/types'
+import { Student, Subject, Grade, GradingPeriod, SchoolYear } from '@/lib/types'
 
 export default function SystemAdmin() {
   const [students, setStudents] = useState<Student[]>([])
@@ -48,8 +48,10 @@ export default function SystemAdmin() {
     firstDayOfSchool: '',
     gradingPeriods: 6,
     gradingMode: 'dates' as 'dates' | 'markers',
-    autoEnrollSubjects: true
+    autoEnrollSubjects: true,
+    activeSchoolYearId: ''
   })
+  const [licensedSchoolYears, setLicensedSchoolYears] = useState<SchoolYear[]>([])
   const [passwordChange, setPasswordChange] = useState({
     currentPassword: '',
     newPassword: '',
@@ -167,6 +169,10 @@ export default function SystemAdmin() {
       setGradingPeriods(sortedPeriods)
       setGradingPeriodsDirty(false)
 
+      const licensedYearsRes = await apiClient.getLicensedSchoolYears()
+      const licensedYears = Array.isArray(licensedYearsRes.data) ? licensedYearsRes.data : []
+      setLicensedSchoolYears(licensedYears as SchoolYear[])
+
       // Load settings from Users
       await loadSettings()
 
@@ -215,7 +221,8 @@ export default function SystemAdmin() {
             if (persisted === 'markers' || persisted === 'dates') return persisted
             return gradingPeriods.length > 0 ? 'dates' : 'markers'
           })(),
-          autoEnrollSubjects: user.auto_enroll_subjects ?? true
+          autoEnrollSubjects: user.auto_enroll_subjects ?? true,
+          activeSchoolYearId: user.active_school_year_id || ''
         })
       }
     } catch (error) {
@@ -230,7 +237,8 @@ export default function SystemAdmin() {
         first_day_of_school: schoolSettings.firstDayOfSchool,
         grading_periods: schoolSettings.gradingPeriods,
         grading_mode: schoolSettings.gradingMode,
-        auto_enroll_subjects: schoolSettings.autoEnrollSubjects
+        auto_enroll_subjects: schoolSettings.autoEnrollSubjects,
+        active_school_year_id: schoolSettings.activeSchoolYearId || null
       })
       // Persist locally as a fallback when backend doesn't return grading_mode
       localStorage.setItem('gradeflow-grading-mode', schoolSettings.gradingMode)
@@ -1021,6 +1029,28 @@ export default function SystemAdmin() {
                       <SelectItem value="6">6 Periods (Six Weeks)</SelectItem>
                     </SelectContent>
                   </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="activeSchoolYear">Active School Year</Label>
+                  <Select
+                    value={schoolSettings.activeSchoolYearId || undefined}
+                    onValueChange={(value) => setSchoolSettings(prev => ({ ...prev, activeSchoolYearId: value }))}
+                  >
+                    <SelectTrigger id="activeSchoolYear">
+                      <SelectValue placeholder="Select licensed school year" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {licensedSchoolYears.map((year) => (
+                        <SelectItem key={year.id} value={year.id}>
+                          {year.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Only licensed years are available. The selected year becomes your working data context.
+                  </p>
                 </div>
 
                 <div className="space-y-2">

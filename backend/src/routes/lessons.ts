@@ -10,6 +10,7 @@ router.post('/bulk', async (req: AuthRequest, res, next) => {
   try {
     const { subjectId, count, namePrefix = 'Lesson', categoryId, points = 100, date } = req.body;
     const db = getDB();
+    const schoolYearId = req.schoolYearId;
 
     if (!subjectId) {
       return res.status(400).json({ error: 'Subject ID is required' });
@@ -21,8 +22,8 @@ router.post('/bulk', async (req: AuthRequest, res, next) => {
 
     // Verify subject belongs to user
     const subjectCheck = await db.query(
-      'SELECT id FROM subjects WHERE id = $1 AND user_id = $2',
-      [subjectId, req.userId]
+      'SELECT id FROM subjects WHERE id = $1 AND user_id = $2 AND school_year_id = $3',
+      [subjectId, req.userId, schoolYearId]
     );
 
     if (subjectCheck.rows.length === 0) {
@@ -64,8 +65,8 @@ router.post('/bulk', async (req: AuthRequest, res, next) => {
 
     // Get the lesson with the highest order_index to extract its number
     const lastLessonResult = await db.query(
-      'SELECT name, order_index, points FROM lessons WHERE subject_id = $1 ORDER BY order_index DESC LIMIT 1',
-      [subjectId]
+      'SELECT name, order_index, points FROM lessons WHERE subject_id = $1 AND school_year_id = $2 ORDER BY order_index DESC LIMIT 1',
+      [subjectId, schoolYearId]
     );
 
     // Get the max order_index across BOTH lessons and markers to determine where to insert
@@ -73,9 +74,9 @@ router.post('/bulk', async (req: AuthRequest, res, next) => {
       `SELECT COALESCE(MAX(order_index), 0) as max_order FROM (
         SELECT order_index FROM lessons WHERE subject_id = $1
         UNION ALL
-        SELECT order_index FROM grading_period_markers WHERE subject_id = $1
+        SELECT order_index FROM grading_period_markers WHERE subject_id = $1 AND school_year_id = $2
       ) AS combined`,
-      [subjectId]
+      [subjectId, schoolYearId]
     );
 
     let startNumber = 1;
@@ -93,8 +94,8 @@ router.post('/bulk', async (req: AuthRequest, res, next) => {
       } else {
         // If no number found, count lessons to get the next number
         const lessonCountResult = await db.query(
-          'SELECT COUNT(*) as count FROM lessons WHERE subject_id = $1',
-          [subjectId]
+          'SELECT COUNT(*) as count FROM lessons WHERE subject_id = $1 AND school_year_id = $2',
+          [subjectId, schoolYearId]
         );
         startNumber = parseInt(lessonCountResult.rows[0].count) + 1;
       }
@@ -108,8 +109,8 @@ router.post('/bulk', async (req: AuthRequest, res, next) => {
       for (let i = 0; i < count; i++) {
         // First insert the lesson
         const insertResult = await db.query(
-          'INSERT INTO lessons (subject_id, name, category_id, points, order_index, date) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
-          [subjectId, `${namePrefix} ${startNumber + i}`, finalCategoryId, lessonPoints, startOrder + i, date || null]
+          'INSERT INTO lessons (subject_id, school_year_id, name, category_id, points, order_index, date) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id',
+          [subjectId, schoolYearId, `${namePrefix} ${startNumber + i}`, finalCategoryId, lessonPoints, startOrder + i, date || null]
         );
         
         const lessonId = insertResult.rows[0].id;
@@ -139,11 +140,12 @@ router.get('/subject/:subjectId', async (req: AuthRequest, res) => {
   const { subjectId } = req.params;
   const userId = req.userId;
   const db = getDB();
+  const schoolYearId = req.schoolYearId;
   try {
     // First verify that the subject belongs to the authenticated user
     const subjectCheck = await db.query(
-      'SELECT id FROM subjects WHERE id = $1 AND user_id = $2',
-      [subjectId, userId]
+      'SELECT id FROM subjects WHERE id = $1 AND user_id = $2 AND school_year_id = $3',
+      [subjectId, userId, schoolYearId]
     );
     
     if (subjectCheck.rows.length === 0) {
@@ -151,8 +153,8 @@ router.get('/subject/:subjectId', async (req: AuthRequest, res) => {
     }
 
     const { rows: lessons } = await db.query(
-      'SELECT l.*, gct.name as type, gct.color as type_color FROM lessons l LEFT JOIN grade_category_types gct ON l.category_id = gct.id AND gct.user_id = $2 WHERE l.subject_id = $1 ORDER BY l.order_index ASC',
-      [subjectId, userId]
+      'SELECT l.*, gct.name as type, gct.color as type_color FROM lessons l LEFT JOIN grade_category_types gct ON l.category_id = gct.id AND gct.user_id = $2 WHERE l.subject_id = $1 AND l.school_year_id = $3 ORDER BY l.order_index ASC',
+      [subjectId, userId, schoolYearId]
     );
     res.json(lessons);
   } catch (err) {
@@ -165,14 +167,15 @@ router.get('/:lessonId', async (req: AuthRequest, res) => {
   const { lessonId } = req.params;
   const userId = req.userId;
   const db = getDB();
+  const schoolYearId = req.schoolYearId;
   try {
     const { rows } = await db.query(
       `SELECT l.*, gct.name as type, gct.color as type_color 
        FROM lessons l 
        LEFT JOIN grade_category_types gct ON l.category_id = gct.id AND gct.user_id = $2
        LEFT JOIN subjects s ON l.subject_id = s.id
-       WHERE l.id = $1 AND s.user_id = $2`, 
-      [lessonId, userId]
+       WHERE l.id = $1 AND s.user_id = $2 AND l.school_year_id = $3`, 
+      [lessonId, userId, schoolYearId]
     );
     const lesson = rows[0];
     if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
@@ -188,13 +191,14 @@ router.post('/subject/:subjectId', async (req: AuthRequest, res) => {
   const { name, categoryId, maxPoints, orderIndex, date } = req.body;
   const userId = req.userId;
   const db = getDB();
+  const schoolYearId = req.schoolYearId;
   try {
     console.log('➕ Inserting lesson:', { subjectId, name, orderIndex, categoryId, maxPoints });
     
     // First verify that the subject belongs to the authenticated user
     const subjectCheck = await db.query(
-      'SELECT id FROM subjects WHERE id = $1 AND user_id = $2',
-      [subjectId, userId]
+      'SELECT id FROM subjects WHERE id = $1 AND user_id = $2 AND school_year_id = $3',
+      [subjectId, userId, schoolYearId]
     );
     
     if (subjectCheck.rows.length === 0) {
@@ -205,22 +209,22 @@ router.post('/subject/:subjectId', async (req: AuthRequest, res) => {
     
     // Shift order indices of existing lessons and markers at or after this position
     const lessonsShifted = await db.query(
-      'UPDATE lessons SET order_index = order_index + 1 WHERE subject_id = $1 AND order_index >= $2 RETURNING id, name, order_index',
-      [subjectId, orderIndex ?? 1]
+      'UPDATE lessons SET order_index = order_index + 1 WHERE subject_id = $1 AND school_year_id = $3 AND order_index >= $2 RETURNING id, name, order_index',
+      [subjectId, orderIndex ?? 1, schoolYearId]
     );
     
     console.log('📈 Shifted lessons:', lessonsShifted.rows);
     
     const markersShifted = await db.query(
-      'UPDATE grading_period_markers SET order_index = order_index + 1 WHERE subject_id = $1 AND order_index >= $2 RETURNING id, name, order_index',
-      [subjectId, orderIndex ?? 1]
+      'UPDATE grading_period_markers SET order_index = order_index + 1 WHERE subject_id = $1 AND school_year_id = $3 AND order_index >= $2 RETURNING id, name, order_index',
+      [subjectId, orderIndex ?? 1, schoolYearId]
     );
     
     console.log('📈 Shifted markers:', markersShifted.rows);
 
     const { rows } = await db.query(
-      'INSERT INTO lessons (subject_id, name, category_id, points, order_index, date) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
-      [subjectId, name, categoryId, maxPoints, orderIndex ?? 1, date || null]
+      'INSERT INTO lessons (subject_id, school_year_id, name, category_id, points, order_index, date) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
+      [subjectId, schoolYearId, name, categoryId, maxPoints, orderIndex ?? 1, date || null]
     );
     
     console.log('✅ Inserted lesson:', { id: rows[0].id, name: rows[0].name, order_index: rows[0].order_index });
@@ -244,6 +248,7 @@ router.put('/:lessonId', async (req: AuthRequest, res) => {
   const { name, categoryId, maxPoints, points, orderIndex, date } = req.body;
   const userId = req.userId;
   const db = getDB();
+  const schoolYearId = req.schoolYearId;
   
   try {
     // First, get the current lesson data and verify user access
@@ -252,8 +257,8 @@ router.put('/:lessonId', async (req: AuthRequest, res) => {
        FROM lessons l 
        LEFT JOIN grade_category_types gct ON l.category_id = gct.id AND gct.user_id = $2
        LEFT JOIN subjects s ON l.subject_id = s.id
-       WHERE l.id = $1 AND s.user_id = $2`,
-      [lessonId, userId]
+       WHERE l.id = $1 AND s.user_id = $2 AND l.school_year_id = $3`,
+      [lessonId, userId, schoolYearId]
     );
     const currentLesson = currentRows[0];
     
@@ -270,8 +275,8 @@ router.put('/:lessonId', async (req: AuthRequest, res) => {
     const updatedOrderIndex = orderIndex !== undefined ? orderIndex : currentLesson.order_index;
     
     const { rows } = await db.query(
-      'UPDATE lessons SET name = $1, category_id = $2, points = $3, order_index = $4, date = $5 WHERE id = $6 RETURNING *',
-      [updatedName, updatedCategoryId, updatedMaxPoints, updatedOrderIndex, date ?? currentLesson.date ?? null, lessonId]
+      'UPDATE lessons SET name = $1, category_id = $2, points = $3, order_index = $4, date = $5 WHERE id = $6 AND school_year_id = $7 RETURNING *',
+      [updatedName, updatedCategoryId, updatedMaxPoints, updatedOrderIndex, date ?? currentLesson.date ?? null, lessonId, schoolYearId]
     );
     
     // Fetch the updated lesson with category name for response
@@ -292,13 +297,14 @@ router.delete('/:lessonId', async (req: AuthRequest, res) => {
   const { lessonId } = req.params;
   const userId = req.userId;
   const db = getDB();
+  const schoolYearId = req.schoolYearId;
   try {
     // First verify that the lesson belongs to a subject owned by the authenticated user
     const { rows } = await db.query(
       `SELECT l.id, l.subject_id, l.order_index FROM lessons l 
        JOIN subjects s ON l.subject_id = s.id 
-       WHERE l.id = $1 AND s.user_id = $2`,
-      [lessonId, userId]
+       WHERE l.id = $1 AND s.user_id = $2 AND l.school_year_id = $3`,
+      [lessonId, userId, schoolYearId]
     );
     
     if (rows.length === 0) {
@@ -318,9 +324,9 @@ router.delete('/:lessonId', async (req: AuthRequest, res) => {
     const lessonsShifted = await db.query(
       `UPDATE lessons 
        SET order_index = order_index - 1 
-       WHERE subject_id = $1 AND order_index > $2
+       WHERE subject_id = $1 AND school_year_id = $3 AND order_index > $2
        RETURNING id, name, order_index`,
-      [subjectId, deletedOrderIndex]
+      [subjectId, deletedOrderIndex, schoolYearId]
     );
     
     console.log('📉 Shifted lessons:', lessonsShifted.rows);
@@ -329,9 +335,9 @@ router.delete('/:lessonId', async (req: AuthRequest, res) => {
     const markersShifted = await db.query(
       `UPDATE grading_period_markers 
        SET order_index = order_index - 1 
-       WHERE subject_id = $1 AND order_index > $2
+       WHERE subject_id = $1 AND school_year_id = $3 AND order_index > $2
        RETURNING id, name, order_index`,
-      [subjectId, deletedOrderIndex]
+      [subjectId, deletedOrderIndex, schoolYearId]
     );
     
     console.log('📉 Shifted markers:', markersShifted.rows);

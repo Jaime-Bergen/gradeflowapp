@@ -27,7 +27,7 @@ const formatStudentRow = (row: any) => {
 };
 
 // Helper function to auto-enroll student in subjects based on their groups
-const autoEnrollStudentInSubjects = async (studentId: string, userId: string) => {
+const autoEnrollStudentInSubjects = async (studentId: string, userId: string, schoolYearId: string) => {
   try {
     const db = getDB();
     
@@ -45,8 +45,8 @@ const autoEnrollStudentInSubjects = async (studentId: string, userId: string) =>
     const studentGroupsResult = await db.query(`
       SELECT sgl.student_group_id 
       FROM student_group_links sgl 
-      WHERE sgl.student_id = $1
-    `, [studentId]);
+      WHERE sgl.student_id = $1 AND sgl.school_year_id = $2
+    `, [studentId, schoolYearId]);
     
     const studentGroupIds = studentGroupsResult.rows.map(row => row.student_group_id);
     
@@ -60,11 +60,12 @@ const autoEnrollStudentInSubjects = async (studentId: string, userId: string) =>
       FROM subjects s 
       LEFT JOIN subject_groups sg ON s.id = sg.subject_id 
       WHERE s.user_id = $1 
+        AND s.school_year_id = $2
         AND (
-          sg.student_group_id = ANY($2::uuid[]) 
+          sg.student_group_id = ANY($3::uuid[]) 
           OR sg.student_group_id IS NULL
         )
-    `, [userId, studentGroupIds]);
+    `, [userId, schoolYearId, studentGroupIds]);
     
     // Auto-enroll student in all available subjects
     for (const subject of subjectsResult.rows) {
@@ -85,9 +86,10 @@ const autoEnrollStudentInSubjects = async (studentId: string, userId: string) =>
 router.get('/groups', async (req: AuthRequest, res, next) => {
   try {
     const db = getDB();
+    const schoolYearId = req.schoolYearId;
     const result = await db.query(
-      'SELECT * FROM student_groups WHERE user_id = $1 ORDER BY name',
-      [req.userId]
+      'SELECT * FROM student_groups WHERE user_id = $1 AND school_year_id = $2 ORDER BY name',
+      [req.userId, schoolYearId]
     );
     res.json(result.rows);
   } catch (error) {
@@ -100,10 +102,11 @@ router.post('/groups', validateRequest(schemas.studentGroup), async (req: AuthRe
   try {
     const { name, description } = req.body;
     const db = getDB();
+    const schoolYearId = req.schoolYearId;
     
     const result = await db.query(
-      'INSERT INTO student_groups (user_id, name, description) VALUES ($1, $2, $3) RETURNING *',
-      [req.userId, name, description]
+      'INSERT INTO student_groups (user_id, school_year_id, name, description) VALUES ($1, $2, $3, $4) RETURNING *',
+      [req.userId, schoolYearId, name, description]
     );
     
     res.status(201).json(result.rows[0]);
@@ -118,10 +121,11 @@ router.put('/groups/:id', validateRequest(schemas.studentGroup), async (req: Aut
     const { id } = req.params;
     const { name, description } = req.body;
     const db = getDB();
+    const schoolYearId = req.schoolYearId;
     
     const result = await db.query(
-      'UPDATE student_groups SET name = $1, description = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3 AND user_id = $4 RETURNING *',
-      [name, description, id, req.userId]
+      'UPDATE student_groups SET name = $1, description = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3 AND user_id = $4 AND school_year_id = $5 RETURNING *',
+      [name, description, id, req.userId, schoolYearId]
     );
     
     if (result.rows.length === 0) {
@@ -139,10 +143,11 @@ router.delete('/groups/:id', async (req: AuthRequest, res, next) => {
   try {
     const { id } = req.params;
     const db = getDB();
+    const schoolYearId = req.schoolYearId;
     
     const result = await db.query(
-      'DELETE FROM student_groups WHERE id = $1 AND user_id = $2 RETURNING id',
-      [id, req.userId]
+      'DELETE FROM student_groups WHERE id = $1 AND user_id = $2 AND school_year_id = $3 RETURNING id',
+      [id, req.userId, schoolYearId]
     );
     
     if (result.rows.length === 0) {
@@ -160,6 +165,7 @@ router.get('/', async (req: AuthRequest, res, next) => {
   try {
     const { groupId } = req.query;
     const db = getDB();
+    const schoolYearId = req.schoolYearId;
     
     let query = `
       SELECT 
@@ -178,15 +184,16 @@ router.get('/', async (req: AuthRequest, res, next) => {
                STRING_AGG(DISTINCT sg.name, ', ' ORDER BY sg.name) as group_names
         FROM student_group_links sgl
         JOIN student_groups sg ON sgl.student_group_id = sg.id
+        WHERE sgl.school_year_id = $2
         GROUP BY sgl.student_id
       ) groups ON s.id = groups.student_id
-      LEFT JOIN student_subjects ss ON s.id = ss.student_id
-      WHERE s.user_id = $1
+      LEFT JOIN student_subjects ss ON s.id = ss.student_id AND ss.school_year_id = $2
+      WHERE s.user_id = $1 AND s.school_year_id = $2
     `;
-    let params = [req.userId];
+    let params = [req.userId, schoolYearId];
     
     if (groupId) {
-      query += ' AND EXISTS (SELECT 1 FROM student_group_links sgl2 WHERE sgl2.student_id = s.id AND sgl2.student_group_id = $2)';
+      query += ' AND EXISTS (SELECT 1 FROM student_group_links sgl2 WHERE sgl2.student_id = s.id AND sgl2.student_group_id = $3 AND sgl2.school_year_id = $2)';
       params.push(groupId as string);
     }
     
@@ -204,6 +211,7 @@ router.get('/:id', async (req: AuthRequest, res, next) => {
   try {
     const { id } = req.params;
     const db = getDB();
+    const schoolYearId = req.schoolYearId;
     
     const result = await db.query(
       `SELECT 
@@ -218,9 +226,9 @@ router.get('/:id', async (req: AuthRequest, res, next) => {
        FROM students s 
        LEFT JOIN student_group_links sgl ON s.id = sgl.student_id
        LEFT JOIN student_groups sg ON sgl.student_group_id = sg.id
-       WHERE s.id = $1 AND s.user_id = $2
+       WHERE s.id = $1 AND s.user_id = $2 AND s.school_year_id = $3
        GROUP BY s.id`,
-      [id, req.userId]
+      [id, req.userId, schoolYearId]
     );
     
     if (result.rows.length === 0) {
@@ -238,13 +246,14 @@ router.post('/', validateRequest(schemas.student), async (req: AuthRequest, res,
   try {
     const { name, birthday, groupName, groupIds } = req.body;
     const db = getDB();
+    const schoolYearId = req.schoolYearId;
     
     // Create the student first
     const result = await db.query(
-      `INSERT INTO students (user_id, name, birthday)
-       VALUES ($1, $2, $3::date)
+      `INSERT INTO students (user_id, school_year_id, name, birthday)
+       VALUES ($1, $2, $3, $4::date)
        RETURNING id, user_id, name, grade, created_at, updated_at, TO_CHAR(birthday::date, 'YYYY-MM-DD') AS birthday`,
-      [req.userId, name, birthday || null]
+      [req.userId, schoolYearId, name, birthday || null]
     );
     
     const studentId = result.rows[0].id;
@@ -254,8 +263,8 @@ router.post('/', validateRequest(schemas.student), async (req: AuthRequest, res,
       // New format: array of group IDs
       for (const groupId of groupIds) {
         await db.query(
-          'INSERT INTO student_group_links (student_id, student_group_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-          [studentId, groupId]
+          'INSERT INTO student_group_links (student_id, student_group_id, school_year_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
+          [studentId, groupId, schoolYearId]
         );
       }
     } else if (groupName) {
@@ -264,25 +273,25 @@ router.post('/', validateRequest(schemas.student), async (req: AuthRequest, res,
       for (const gName of groupNames) {
         // Ensure the group exists
         let groupRes = await db.query(
-          'SELECT id FROM student_groups WHERE user_id = $1 AND name = $2',
-          [req.userId, gName]
+          'SELECT id FROM student_groups WHERE user_id = $1 AND school_year_id = $2 AND name = $3',
+          [req.userId, schoolYearId, gName]
         );
         if (groupRes.rows.length === 0) {
           groupRes = await db.query(
-            'INSERT INTO student_groups (user_id, name) VALUES ($1, $2) RETURNING id',
-            [req.userId, gName]
+            'INSERT INTO student_groups (user_id, school_year_id, name) VALUES ($1, $2, $3) RETURNING id',
+            [req.userId, schoolYearId, gName]
           );
         }
         // Link student to group
         await db.query(
-          'INSERT INTO student_group_links (student_id, student_group_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-          [studentId, groupRes.rows[0].id]
+          'INSERT INTO student_group_links (student_id, student_group_id, school_year_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
+          [studentId, groupRes.rows[0].id, schoolYearId]
         );
       }
     }
     
     // Auto-enroll student in subjects based on their groups (if setting is enabled)
-    await autoEnrollStudentInSubjects(studentId, req.userId);
+    await autoEnrollStudentInSubjects(studentId, req.userId, schoolYearId);
     
     res.status(201).json(formatStudentRow(result.rows[0]));
   } catch (error) {
@@ -300,6 +309,7 @@ router.post('/bulk-import', async (req: AuthRequest, res, next) => {
     }
 
     const db = getDB();
+    const schoolYearId = req.schoolYearId;
     const results = [];
     const createdGroups = new Set<string>();
 
@@ -319,10 +329,10 @@ router.post('/bulk-import', async (req: AuthRequest, res, next) => {
 
       // Create the student
       const studentResult = await db.query(
-        `INSERT INTO students (user_id, name, birthday)
-         VALUES ($1, $2, $3::date)
+        `INSERT INTO students (user_id, school_year_id, name, birthday)
+         VALUES ($1, $2, $3, $4::date)
          RETURNING id, user_id, name, grade, created_at, updated_at, TO_CHAR(birthday::date, 'YYYY-MM-DD') AS birthday`,
-        [req.userId, studentData.name.trim(), studentData.birthday]
+        [req.userId, schoolYearId, studentData.name.trim(), studentData.birthday]
       );
       
       const student = formatStudentRow(studentResult.rows[0]);
@@ -333,26 +343,26 @@ router.post('/bulk-import', async (req: AuthRequest, res, next) => {
       
       // Check if group exists, create if not
       let groupResult = await db.query(
-        'SELECT id FROM student_groups WHERE user_id = $1 AND name = $2',
-        [req.userId, groupName]
+        'SELECT id FROM student_groups WHERE user_id = $1 AND school_year_id = $2 AND name = $3',
+        [req.userId, schoolYearId, groupName]
       );
       
       if (groupResult.rows.length === 0) {
         groupResult = await db.query(
-          'INSERT INTO student_groups (user_id, name) VALUES ($1, $2) RETURNING id, name',
-          [req.userId, groupName]
+          'INSERT INTO student_groups (user_id, school_year_id, name) VALUES ($1, $2, $3) RETURNING id, name',
+          [req.userId, schoolYearId, groupName]
         );
         createdGroups.add(groupName);
       }
       
       // Link student to group
       await db.query(
-        'INSERT INTO student_group_links (student_id, student_group_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-        [student.id, groupResult.rows[0].id]
+        'INSERT INTO student_group_links (student_id, student_group_id, school_year_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
+        [student.id, groupResult.rows[0].id, schoolYearId]
       );
       
       // Auto-enroll student in subjects based on their groups (if setting is enabled)
-      await autoEnrollStudentInSubjects(student.id, req.userId);
+      await autoEnrollStudentInSubjects(student.id, req.userId, schoolYearId);
     }
 
     const message = `Successfully imported ${results.length} students`;
@@ -376,6 +386,7 @@ router.put('/:id', validateRequest(schemas.student), async (req: AuthRequest, re
     const { id } = req.params;
     const { name, birthday, groupName, groupIds } = req.body;
     const db = getDB();
+    const schoolYearId = req.schoolYearId;
     
     // Update the student record
     const result = await db.query(
@@ -384,8 +395,9 @@ router.put('/:id', validateRequest(schemas.student), async (req: AuthRequest, re
              birthday = $2::date,
              updated_at = CURRENT_TIMESTAMP
        WHERE id = $3 AND user_id = $4
+       AND school_year_id = $5
        RETURNING id, user_id, name, grade, created_at, updated_at, TO_CHAR(birthday::date, 'YYYY-MM-DD') AS birthday`,
-      [name, birthday || null, id, req.userId]
+      [name, birthday || null, id, req.userId, schoolYearId]
     );
     
     if (result.rows.length === 0) {
@@ -403,8 +415,8 @@ router.put('/:id', validateRequest(schemas.student), async (req: AuthRequest, re
       // New format: array of group IDs
       for (const groupId of groupIds) {
         await db.query(
-          'INSERT INTO student_group_links (student_id, student_group_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-          [id, groupId]
+          'INSERT INTO student_group_links (student_id, student_group_id, school_year_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
+          [id, groupId, schoolYearId]
         );
       }
     } else if (groupName) {
@@ -413,19 +425,19 @@ router.put('/:id', validateRequest(schemas.student), async (req: AuthRequest, re
       for (const gName of groupNames) {
         // Ensure the group exists
         let groupRes = await db.query(
-          'SELECT id FROM student_groups WHERE user_id = $1 AND name = $2',
-          [req.userId, gName]
+          'SELECT id FROM student_groups WHERE user_id = $1 AND school_year_id = $2 AND name = $3',
+          [req.userId, schoolYearId, gName]
         );
         if (groupRes.rows.length === 0) {
           groupRes = await db.query(
-            'INSERT INTO student_groups (user_id, name) VALUES ($1, $2) RETURNING id',
-            [req.userId, gName]
+            'INSERT INTO student_groups (user_id, school_year_id, name) VALUES ($1, $2, $3) RETURNING id',
+            [req.userId, schoolYearId, gName]
           );
         }
         // Link student to group
         await db.query(
-          'INSERT INTO student_group_links (student_id, student_group_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-          [id, groupRes.rows[0].id]
+          'INSERT INTO student_group_links (student_id, student_group_id, school_year_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
+          [id, groupRes.rows[0].id, schoolYearId]
         );
       }
     }
@@ -441,10 +453,11 @@ router.delete('/:id', async (req: AuthRequest, res, next) => {
   try {
     const { id } = req.params;
     const db = getDB();
+    const schoolYearId = req.schoolYearId;
     
     const result = await db.query(
-      'DELETE FROM students WHERE id = $1 AND user_id = $2 RETURNING id',
-      [id, req.userId]
+      'DELETE FROM students WHERE id = $1 AND user_id = $2 AND school_year_id = $3 RETURNING id',
+      [id, req.userId, schoolYearId]
     );
     
     if (result.rows.length === 0) {
@@ -463,6 +476,7 @@ router.put('/:id/subjects', async (req: AuthRequest, res, next) => {
     const { id } = req.params;
     const { subjects } = req.body;
     const db = getDB();
+    const schoolYearId = req.schoolYearId;
 
     // Validate subjects
     if (!Array.isArray(subjects)) {
@@ -471,8 +485,8 @@ router.put('/:id/subjects', async (req: AuthRequest, res, next) => {
 
     // Verify all subjects belong to the user
     const subjectCheck = await db.query(
-      'SELECT id FROM subjects WHERE id = ANY($1) AND user_id = $2',
-      [subjects, req.userId]
+      'SELECT id FROM subjects WHERE id = ANY($1) AND user_id = $2 AND school_year_id = $3',
+      [subjects, req.userId, schoolYearId]
     );
 
     if (subjectCheck.rows.length !== subjects.length) {
@@ -480,21 +494,21 @@ router.put('/:id/subjects', async (req: AuthRequest, res, next) => {
     }
 
     // Update the student's subjects
-    await db.query('DELETE FROM student_subjects WHERE student_id = $1', [id]);
+    await db.query('DELETE FROM student_subjects WHERE student_id = $1 AND school_year_id = $2', [id, schoolYearId]);
 
     if (subjects.length > 0) {
-      const insertQuery = `INSERT INTO student_subjects (student_id, subject_id) VALUES ${subjects
-        .map((_, index) => `($1, $${index + 2})`)
+      const insertQuery = `INSERT INTO student_subjects (student_id, subject_id, school_year_id) VALUES ${subjects
+        .map((_, index) => `($1, $${index + 2}, $${subjects.length + 2})`)
         .join(',')}`;
       console.log('Insert Query:', insertQuery);
-      console.log('Query Parameters:', [id, ...subjects]);
-      await db.query(insertQuery, [id, ...subjects]);
+      console.log('Query Parameters:', [id, ...subjects, schoolYearId]);
+      await db.query(insertQuery, [id, ...subjects, schoolYearId]);
     }
 
     // After updating the student's subjects, fetch and return the updated subjects
     const updatedSubjects = await db.query(
-      'SELECT subject_id FROM student_subjects WHERE student_id = $1',
-      [id]
+      'SELECT subject_id FROM student_subjects WHERE student_id = $1 AND school_year_id = $2',
+      [id, schoolYearId]
     );
     res.json({
       message: 'Subjects updated successfully',

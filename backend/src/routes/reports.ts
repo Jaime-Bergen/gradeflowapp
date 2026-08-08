@@ -9,11 +9,12 @@ router.get('/student/:studentId', async (req: AuthRequest, res, next) => {
   try {
     const { studentId } = req.params;
     const db = getDB();
+    const schoolYearId = req.schoolYearId;
     
     // Verify student belongs to user
     const studentCheck = await db.query(
-      'SELECT * FROM students WHERE id = $1 AND user_id = $2',
-      [studentId, req.userId]
+      'SELECT * FROM students WHERE id = $1 AND user_id = $2 AND school_year_id = $3',
+      [studentId, req.userId, schoolYearId]
     );
     
     if (studentCheck.rows.length === 0) {
@@ -27,10 +28,10 @@ router.get('/student/:studentId', async (req: AuthRequest, res, next) => {
       `SELECT DISTINCT s.id, s.name
        FROM subjects s
        JOIN lessons l ON s.id = l.subject_id
-       LEFT JOIN grades g ON l.id = g.lesson_id AND g.student_id = $1
-       WHERE s.user_id = $2
+       LEFT JOIN grades g ON l.id = g.lesson_id AND g.student_id = $1 AND g.school_year_id = $3
+       WHERE s.user_id = $2 AND s.school_year_id = $3 AND l.school_year_id = $3
        ORDER BY s.name`,
-      [studentId, req.userId]
+      [studentId, req.userId, schoolYearId]
     );
     
     const reportData = {
@@ -46,19 +47,19 @@ router.get('/student/:studentId', async (req: AuthRequest, res, next) => {
           g.percentage, g.errors, g.points as grade_points,
           gct.name as lesson_type
          FROM lessons l
-         LEFT JOIN grades g ON l.id = g.lesson_id AND g.student_id = $1
+           LEFT JOIN grades g ON l.id = g.lesson_id AND g.student_id = $1 AND g.school_year_id = $3
          LEFT JOIN grade_category_types gct ON l.category_id = gct.id
-         WHERE l.subject_id = $2
+           WHERE l.subject_id = $2 AND l.school_year_id = $3
          ORDER BY l.order_index`,
-        [studentId, subject.id]
+          [studentId, subject.id, schoolYearId]
       );
       
       // Get weights for this subject using category_id directly
       const weightsResult = await db.query(
         `SELECT category_id, weight
          FROM subject_weights sw
-         WHERE sw.subject_id = $1`,
-        [subject.id]
+         WHERE sw.subject_id = $1 AND sw.school_year_id = $2`,
+        [subject.id, schoolYearId]
       );
       
       // Convert weights to a map for direct lookup by category_id
@@ -127,11 +128,12 @@ router.get('/group/:groupId', async (req: AuthRequest, res, next) => {
   try {
     const { groupId } = req.params;
     const db = getDB();
+    const schoolYearId = req.schoolYearId;
     
     // Verify group belongs to user
     const groupCheck = await db.query(
-      'SELECT * FROM student_groups WHERE id = $1 AND user_id = $2',
-      [groupId, req.userId]
+      'SELECT * FROM student_groups WHERE id = $1 AND user_id = $2 AND school_year_id = $3',
+      [groupId, req.userId, schoolYearId]
     );
     
     if (groupCheck.rows.length === 0) {
@@ -142,14 +144,28 @@ router.get('/group/:groupId', async (req: AuthRequest, res, next) => {
     
     // Get all students in this group
     const studentsResult = await db.query(
-      'SELECT * FROM students WHERE student_group_id = $1 AND user_id = $2 ORDER BY name',
-      [groupId, req.userId]
+      `SELECT s.*
+       FROM students s
+       JOIN student_group_links sgl ON s.id = sgl.student_id
+       WHERE sgl.student_group_id = $1
+         AND s.user_id = $2
+         AND s.school_year_id = $3
+         AND sgl.school_year_id = $3
+       ORDER BY s.name`,
+      [groupId, req.userId, schoolYearId]
     );
     
     // Get all subjects for this group
     const subjectsResult = await db.query(
-      'SELECT * FROM subjects WHERE student_group_id = $1 AND user_id = $2 ORDER BY name',
-      [groupId, req.userId]
+      `SELECT DISTINCT s.*
+       FROM subjects s
+       JOIN subject_groups sg ON s.id = sg.subject_id
+       WHERE sg.student_group_id = $1
+         AND s.user_id = $2
+         AND s.school_year_id = $3
+         AND sg.school_year_id = $3
+       ORDER BY s.name`,
+      [groupId, req.userId, schoolYearId]
     );
     
     const reportData = {
@@ -171,8 +187,9 @@ router.get('/group/:groupId', async (req: AuthRequest, res, next) => {
           `SELECT g.percentage, l.category_id
            FROM grades g
            JOIN lessons l ON g.lesson_id = l.id
-           WHERE g.student_id = $1 AND l.subject_id = $2 AND g.percentage >= 1`,
-          [student.id, subject.id]
+           WHERE g.student_id = $1 AND l.subject_id = $2 AND g.percentage >= 1
+             AND g.school_year_id = $3 AND l.school_year_id = $3`,
+          [student.id, subject.id, schoolYearId]
         );
         
         if (gradesResult.rows.length > 0) {
@@ -180,8 +197,8 @@ router.get('/group/:groupId', async (req: AuthRequest, res, next) => {
           const weightsResult = await db.query(
             `SELECT category_id, weight
              FROM subject_weights sw
-             WHERE sw.subject_id = $1`,
-            [subject.id]
+             WHERE sw.subject_id = $1 AND sw.school_year_id = $2`,
+            [subject.id, schoolYearId]
           );
           
           // Convert weights to a map for direct lookup by category_id
@@ -247,6 +264,7 @@ router.get('/group/:groupId', async (req: AuthRequest, res, next) => {
 router.get('/dashboard', async (req: AuthRequest, res, next) => {
   try {
     const db = getDB();
+    const schoolYearId = req.schoolYearId;
     
     // Get overall statistics
     const overallStats = await db.query(
@@ -258,13 +276,14 @@ router.get('/dashboard', async (req: AuthRequest, res, next) => {
         COUNT(DISTINCT l.id) as total_lessons,
         COUNT(g.id) as total_grades
        FROM students s
-       LEFT JOIN student_groups sg ON s.student_group_id = sg.id
-       LEFT JOIN subjects sub ON sub.user_id = s.user_id
-             LEFT JOIN teachers t ON t.user_id = s.user_id
-       LEFT JOIN lessons l ON l.subject_id = sub.id
-       LEFT JOIN grades g ON g.student_id = s.id AND g.lesson_id = l.id
-       WHERE s.user_id = $1`,
-      [req.userId]
+       LEFT JOIN student_group_links sgl ON s.id = sgl.student_id AND sgl.school_year_id = $2
+       LEFT JOIN student_groups sg ON sgl.student_group_id = sg.id AND sg.school_year_id = $2
+       LEFT JOIN subjects sub ON sub.user_id = s.user_id AND sub.school_year_id = $2
+       LEFT JOIN teachers t ON t.user_id = s.user_id
+       LEFT JOIN lessons l ON l.subject_id = sub.id AND l.school_year_id = $2
+       LEFT JOIN grades g ON g.student_id = s.id AND g.lesson_id = l.id AND g.school_year_id = $2
+       WHERE s.user_id = $1 AND s.school_year_id = $2`,
+      [req.userId, schoolYearId]
     );
     
     // Get recent activity (last 10 grades entered)
@@ -279,9 +298,13 @@ router.get('/dashboard', async (req: AuthRequest, res, next) => {
        JOIN lessons l ON g.lesson_id = l.id
        JOIN subjects sub ON l.subject_id = sub.id
        WHERE s.user_id = $1
+         AND s.school_year_id = $2
+         AND l.school_year_id = $2
+         AND sub.school_year_id = $2
+         AND g.school_year_id = $2
        ORDER BY g.updated_at DESC
        LIMIT 10`,
-      [req.userId]
+      [req.userId, schoolYearId]
     );
     
     // Get subject performance summary
@@ -293,13 +316,13 @@ router.get('/dashboard', async (req: AuthRequest, res, next) => {
         COUNT(g.id) as grade_count,
         AVG(g.percentage) as average_percentage
        FROM subjects sub
-       LEFT JOIN lessons l ON l.subject_id = sub.id
-       LEFT JOIN grades g ON g.lesson_id = l.id AND g.percentage >= 1
-       LEFT JOIN students s ON g.student_id = s.id
-       WHERE sub.user_id = $1
+       LEFT JOIN lessons l ON l.subject_id = sub.id AND l.school_year_id = $2
+       LEFT JOIN grades g ON g.lesson_id = l.id AND g.percentage >= 1 AND g.school_year_id = $2
+       LEFT JOIN students s ON g.student_id = s.id AND s.school_year_id = $2
+       WHERE sub.user_id = $1 AND sub.school_year_id = $2
        GROUP BY sub.id, sub.name
        ORDER BY sub.name`,
-      [req.userId]
+      [req.userId, schoolYearId]
     );
     
     // Get grade distribution
@@ -316,7 +339,7 @@ router.get('/dashboard', async (req: AuthRequest, res, next) => {
         COUNT(*) as count
        FROM grades g
        JOIN students s ON g.student_id = s.id
-       WHERE s.user_id = $1 AND g.percentage IS NOT NULL AND g.percentage >= 1
+       WHERE s.user_id = $1 AND s.school_year_id = $2 AND g.school_year_id = $2 AND g.percentage IS NOT NULL AND g.percentage >= 1
        GROUP BY 
          CASE 
            WHEN percentage >= 90 THEN 'A (90-100%)'
@@ -326,7 +349,7 @@ router.get('/dashboard', async (req: AuthRequest, res, next) => {
            ELSE 'F (Below 60%)'
          END
        ORDER BY MIN(percentage) DESC`,
-      [req.userId]
+      [req.userId, schoolYearId]
     );
     
     res.json({

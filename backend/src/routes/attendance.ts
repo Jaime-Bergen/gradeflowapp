@@ -10,7 +10,8 @@ router.get('/', async (req: AuthRequest, res, next) => {
   try {
     const db = getDB()
     const { date, startDate, endDate } = req.query
-    const params: any[] = [req.userId]
+    const schoolYearId = req.schoolYearId
+    const params: any[] = [req.userId, schoolYearId]
 
     let query = `
       SELECT 
@@ -25,7 +26,7 @@ router.get('/', async (req: AuthRequest, res, next) => {
         s.name as student_name
       FROM attendance_records ar
       JOIN students s ON ar.student_id = s.id
-      WHERE ar.user_id = $1
+      WHERE ar.user_id = $1 AND ar.school_year_id = $2
     `
 
     if (date) {
@@ -51,6 +52,7 @@ router.get('/student/:studentId', async (req: AuthRequest, res, next) => {
     const db = getDB()
     const { studentId } = req.params
     const { limit = '50' } = req.query
+    const schoolYearId = req.schoolYearId
 
     const result = await db.query(
       `SELECT 
@@ -65,10 +67,10 @@ router.get('/student/:studentId', async (req: AuthRequest, res, next) => {
          s.name as student_name
        FROM attendance_records ar
        JOIN students s ON ar.student_id = s.id
-       WHERE ar.user_id = $1 AND ar.student_id = $2
+       WHERE ar.user_id = $1 AND ar.student_id = $2 AND ar.school_year_id = $4
        ORDER BY ar.date DESC
        LIMIT $3`,
-      [req.userId, studentId, parseInt(limit as string, 10)]
+      [req.userId, studentId, parseInt(limit as string, 10), schoolYearId]
     )
 
     res.json(result.rows)
@@ -82,16 +84,17 @@ router.post('/bulk', validateRequest(schemas.attendanceBulk), async (req: AuthRe
   try {
     const db = getDB()
     const { records } = req.body as { records: Array<{ studentId: string; date: string; status: string; notes?: string }> }
+    const schoolYearId = req.schoolYearId
 
     await db.query('BEGIN')
     try {
       for (const record of records) {
         await db.query(
-          `INSERT INTO attendance_records (user_id, student_id, date, status, notes, updated_at)
-           VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
+          `INSERT INTO attendance_records (user_id, student_id, date, status, notes, school_year_id, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)
            ON CONFLICT (user_id, student_id, date)
-           DO UPDATE SET status = EXCLUDED.status, notes = EXCLUDED.notes, updated_at = CURRENT_TIMESTAMP`,
-          [req.userId, record.studentId, record.date, record.status, record.notes ?? null]
+           DO UPDATE SET status = EXCLUDED.status, notes = EXCLUDED.notes, school_year_id = EXCLUDED.school_year_id, updated_at = CURRENT_TIMESTAMP`,
+          [req.userId, record.studentId, record.date, record.status, record.notes ?? null, schoolYearId]
         )
       }
       await db.query('COMMIT')
