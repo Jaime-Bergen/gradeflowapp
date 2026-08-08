@@ -48,6 +48,8 @@ export default function Dashboard() {
   const [grades, setGrades] = useState<Grade[]>([])
   const [lessons, setLessons] = useState<Record<string, any[]>>({})
   const [subjectMarkers, setSubjectMarkers] = useState<Record<string, any[]>>({})
+  const [periodAnalyticsLoading, setPeriodAnalyticsLoading] = useState(false)
+  const [periodAnalyticsReady, setPeriodAnalyticsReady] = useState(false)
   const [studentGroups, setStudentGroups] = useState<any[]>([])
   const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary>({})
   const [loading, setLoading] = useState(true)
@@ -316,6 +318,8 @@ export default function Dashboard() {
     }
 
     // Default to marker-based filtering
+    if (!periodAnalyticsReady) return []
+
     return grades.filter(grade => {
       if (!grade.subjectId) return false
 
@@ -342,6 +346,7 @@ export default function Dashboard() {
   const currentPeriodGrades = getFilteredGradesForPeriod(currentGradingPeriod)
 
   const countablePeriodGrades = useMemo(() => currentPeriodGrades.filter(isCountableGrade), [currentPeriodGrades])
+  const subjectIdsWithGrades = useMemo(() => Array.from(new Set(grades.map(grade => grade.subjectId).filter(Boolean))) as string[], [grades])
 
   const studentsForDialog = useMemo(() => (filteredStudents.length > 0 ? filteredStudents : students), [filteredStudents, students])
 
@@ -499,6 +504,7 @@ export default function Dashboard() {
   useEffect(() => {
     async function fetchData() {
       setLoading(true)
+      setPeriodAnalyticsReady(false)
       const [
         gradingSettings,
         studentsRes,
@@ -530,33 +536,6 @@ export default function Dashboard() {
         setGrades(Array.isArray(gradesRes.data) ? gradesRes.data : [])
       }
 
-      const subjectIdsWithGrades = Array.isArray(gradesRes.data)
-        ? Array.from(new Set(gradesRes.data.map((grade: any) => grade.subjectId).filter(Boolean)))
-        : []
-      
-      const lessonsMap: Record<string, any[]> = {}
-      const markersMap: Record<string, any[]> = {}
-      
-      await Promise.all(
-        subjectIdsWithGrades.map(async (subjectId) => {
-          const [lessonsRes, markersRes] = await Promise.all([
-            apiClient.getLessonsForSubject(subjectId),
-            apiClient.getGradingPeriodMarkersForSubject(subjectId)
-          ])
-          
-          if (Array.isArray(lessonsRes.data)) {
-            lessonsMap[subjectId] = lessonsRes.data
-          }
-          
-          if (Array.isArray(markersRes.data)) {
-            markersMap[subjectId] = markersRes.data
-          }
-        })
-      )
-      
-      setLessons(lessonsMap)
-      setSubjectMarkers(markersMap)
-
       // Set current grading period to 1 by default
       setCurrentGradingPeriod(prev => Math.min(Math.max(1, prev || 1), configuredPeriods))
 
@@ -576,6 +555,75 @@ export default function Dashboard() {
       window.removeEventListener('gradeflow-teachers-updated', handleTeacherUpdated)
     }
   }, [filterStudentsByTeacher, loadTodayAttendance, loadWeeklyAttendance, loadCurrentWeekAttendance, todayIso, refreshGradingSettings])
+
+  useEffect(() => {
+    if (gradingMode === 'dates') {
+      setLessons({})
+      setSubjectMarkers({})
+      setPeriodAnalyticsLoading(false)
+      setPeriodAnalyticsReady(true)
+      return
+    }
+
+    if (subjectIdsWithGrades.length === 0) {
+      setLessons({})
+      setSubjectMarkers({})
+      setPeriodAnalyticsLoading(false)
+      setPeriodAnalyticsReady(true)
+      return
+    }
+
+    let cancelled = false
+
+    const loadPeriodAnalytics = async () => {
+      setPeriodAnalyticsLoading(true)
+      try {
+        const lessonEntries = await Promise.all(
+          subjectIdsWithGrades.map(async (subjectId) => {
+            const [lessonsRes, markersRes] = await Promise.all([
+              apiClient.getLessonsForSubject(subjectId),
+              apiClient.getGradingPeriodMarkersForSubject(subjectId),
+            ])
+
+            return {
+              subjectId,
+              lessons: Array.isArray(lessonsRes.data) ? lessonsRes.data : [],
+              markers: Array.isArray(markersRes.data) ? markersRes.data : [],
+            }
+          })
+        )
+
+        if (cancelled) return
+
+        const nextLessons: Record<string, any[]> = {}
+        const nextMarkers: Record<string, any[]> = {}
+        lessonEntries.forEach(({ subjectId, lessons, markers }) => {
+          nextLessons[subjectId] = lessons
+          nextMarkers[subjectId] = markers
+        })
+
+        setLessons(nextLessons)
+        setSubjectMarkers(nextMarkers)
+        setPeriodAnalyticsReady(true)
+      } catch (error) {
+        if (!cancelled) {
+          console.error('Failed to load dashboard period analytics', error)
+          toast.error('Could not finish loading grading period details')
+        }
+      } finally {
+        if (!cancelled) {
+          setPeriodAnalyticsLoading(false)
+        }
+      }
+    }
+
+    setPeriodAnalyticsReady(false)
+    loadPeriodAnalytics()
+
+    return () => {
+      cancelled = true
+    }
+  }, [gradingMode, subjectIdsWithGrades])
 
   useEffect(() => {
     const handleTeacherSelectionChange = () => filterStudentsByTeacher(students, studentGroups)
@@ -1049,10 +1097,12 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {(typeof averageGrade === 'number' && !isNaN(averageGrade) ? averageGrade : 0).toFixed(1)}%
+              {periodAnalyticsReady
+                ? `${(typeof averageGrade === 'number' && !isNaN(averageGrade) ? averageGrade : 0).toFixed(1)}%`
+                : '...'}
             </div>
             <div className="flex items-center justify-between mt-2">
-              <Progress value={typeof averageGrade === 'number' && !isNaN(averageGrade) ? averageGrade : 0} className="flex-1 mr-2" />
+              <Progress value={periodAnalyticsReady && typeof averageGrade === 'number' && !isNaN(averageGrade) ? averageGrade : 0} className="flex-1 mr-2" />
               <div className="flex items-center gap-1">
                 <button
                   onClick={(e) => {
@@ -1079,9 +1129,12 @@ export default function Dashboard() {
                 </button>
               </div>
             </div>
-            <p className="text-[11px] text-muted-foreground mt-1">Debug • periods: {gradingPeriodCount} • mode: {gradingMode}</p>
             <p className="text-xs text-muted-foreground mt-1">
-              {getGradingPeriodName(currentGradingPeriod)} • {countablePeriodGrades.length} grades
+              {periodAnalyticsReady
+                ? `${getGradingPeriodName(currentGradingPeriod)} • ${countablePeriodGrades.length} grades`
+                : periodAnalyticsLoading
+                  ? 'Loading grading period details...'
+                  : 'Preparing grading period details...'}
             </p>
           </CardContent>
         </Card>
@@ -1092,7 +1145,7 @@ export default function Dashboard() {
             <AlertTriangle className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-destructive">{studentsAtRisk.length}</div>
+            <div className="text-2xl font-bold text-destructive">{periodAnalyticsReady ? studentsAtRisk.length : '...'}</div>
             <p className="text-xs text-muted-foreground">Students below 70%</p>
           </CardContent>
         </Card>
@@ -1412,39 +1465,45 @@ export default function Dashboard() {
               )}
             </div>
             <div className="h-72 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={weeklyGroupAverageData} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                  <XAxis dataKey="label" tickLine={false} axisLine={false} />
-                  <YAxis domain={[0, 100]} allowDecimals={false} tickLine={false} axisLine={false} width={32} />
-                  <Tooltip
-                    formatter={(value: any, name) => {
-                      if (value === null || value === undefined) return ['—', name]
-                      const num = typeof value === 'number' ? value : parseFloat(value)
-                      const display = isNaN(num) ? value : num.toFixed(1)
-                      return [display, name]
-                    }}
-                    labelFormatter={(label) => `Week of ${label}`}
-                  />
-                  {allGroupNames.map((name, idx) => {
-                    if (!selectedGroups[name]) return null
-                    const colors = ['#2563eb', '#22c55e', '#f97316', '#ef4444', '#a855f7', '#0ea5e9', '#84cc16', '#d946ef']
-                    const color = colors[idx % colors.length]
-                    return (
-                      <Line
-                        key={name}
-                        type="monotone"
-                        dataKey={name}
-                        stroke={color}
-                        strokeWidth={2}
-                        dot={{ r: 3, stroke: '#0f172a', fill: color }}
-                        connectNulls
-                        name={name}
-                      />
-                    )
-                  })}
-                </LineChart>
-              </ResponsiveContainer>
+              {periodAnalyticsReady ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={weeklyGroupAverageData} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                    <XAxis dataKey="label" tickLine={false} axisLine={false} />
+                    <YAxis domain={[0, 100]} allowDecimals={false} tickLine={false} axisLine={false} width={32} />
+                    <Tooltip
+                      formatter={(value: any, name) => {
+                        if (value === null || value === undefined) return ['—', name]
+                        const num = typeof value === 'number' ? value : parseFloat(value)
+                        const display = isNaN(num) ? value : num.toFixed(1)
+                        return [display, name]
+                      }}
+                      labelFormatter={(label) => `Week of ${label}`}
+                    />
+                    {allGroupNames.map((name, idx) => {
+                      if (!selectedGroups[name]) return null
+                      const colors = ['#2563eb', '#22c55e', '#f97316', '#ef4444', '#a855f7', '#0ea5e9', '#84cc16', '#d946ef']
+                      const color = colors[idx % colors.length]
+                      return (
+                        <Line
+                          key={name}
+                          type="monotone"
+                          dataKey={name}
+                          stroke={color}
+                          strokeWidth={2}
+                          dot={{ r: 3, stroke: '#0f172a', fill: color }}
+                          connectNulls
+                          name={name}
+                        />
+                      )
+                    })}
+                  </LineChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                  {periodAnalyticsLoading ? 'Loading grading period details...' : 'Preparing grading period details...'}
+                </div>
+              )}
             </div>
           </div>
         </DialogContent>
