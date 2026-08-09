@@ -62,7 +62,8 @@ router.post('/create', authenticateToken, async (req: AuthRequest, res) => {
         timestamp: rows[0].backup_timestamp,
         createdAt: rows[0].created_at,
         ...backupData.metadata
-      }
+      },
+      backupData
     });
   } catch (err) {
     console.error('Error creating backup:', err);

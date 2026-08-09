@@ -114,11 +114,17 @@ export default function Students() {
     const fetchData = async () => {
         try {
             const studentsRes = await apiClient.getStudents();
+            if (studentsRes?.error) {
+                throw new Error(studentsRes.error);
+            }
             const studentsData = Array.isArray(studentsRes.data)
                 ? studentsRes.data
                 : studentsRes.data?.students || [];
             setStudents(normalizeStudentBirthdays(studentsData));
             const groupsRes = await apiClient.getStudentGroups();
+            if (groupsRes?.error) {
+                throw new Error(groupsRes.error);
+            }
             const rawGroups = Array.isArray(groupsRes.data)
                 ? groupsRes.data
                 : groupsRes.data?.groups || [];
@@ -186,7 +192,11 @@ export default function Students() {
             return;
         setIsCreatingGroup(true);
         try {
-            const result = await apiClient.createStudentGroup({ name: newGroupName.trim() });
+            const groupName = newGroupName.trim();
+            const result = await apiClient.createStudentGroup({ name: groupName });
+            if (result?.error) {
+                throw new Error(result.error);
+            }
             await fetchData(); // Refresh groups
             // Add the new group to selected groups
             const newGroupId = result.data?.id || result.data?.group?.id;
@@ -197,7 +207,7 @@ export default function Students() {
             toast.success('Group created successfully');
         }
         catch (error) {
-            toast.error('Failed to create group');
+            toast.error(error instanceof Error ? error.message : 'Failed to create group');
             console.error('Error creating group:', error);
         }
         finally {
@@ -248,6 +258,9 @@ export default function Students() {
     const fetchEnrollmentSubjects = async () => {
         try {
             const subjectsRes = await apiClient.getSubjects();
+            if (subjectsRes?.error) {
+                throw new Error(subjectsRes.error);
+            }
             const subjectsData = Array.isArray(subjectsRes.data)
                 ? subjectsRes.data
                 : subjectsRes.data?.subjects || [];

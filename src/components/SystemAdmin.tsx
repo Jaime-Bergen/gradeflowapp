@@ -48,7 +48,7 @@ export default function SystemAdmin() {
     schoolName: '',
     firstDayOfSchool: '',
     gradingPeriods: 6,
-    gradingMode: 'dates' as 'dates' | 'markers',
+    gradingMode: 'dates' as 'dates',
     autoEnrollSubjects: true,
     activeSchoolYearId: ''
   })
@@ -215,13 +215,7 @@ export default function SystemAdmin() {
           schoolName: user.school_name || '',
           firstDayOfSchool: formattedDate,
           gradingPeriods: user.grading_periods || 6,
-          gradingMode: (() => {
-            const persisted = localStorage.getItem('gradeflow-grading-mode') as 'dates' | 'markers' | null
-            if ((user as any)?.grading_mode === 'markers') return 'markers'
-            if ((user as any)?.grading_mode === 'dates') return 'dates'
-            if (persisted === 'markers' || persisted === 'dates') return persisted
-            return gradingPeriods.length > 0 ? 'dates' : 'markers'
-          })(),
+          gradingMode: 'dates',
           autoEnrollSubjects: user.auto_enroll_subjects ?? true,
           activeSchoolYearId: user.active_school_year_id || ''
         })
@@ -237,13 +231,11 @@ export default function SystemAdmin() {
         school_name: schoolSettings.schoolName,
         first_day_of_school: schoolSettings.firstDayOfSchool,
         grading_periods: schoolSettings.gradingPeriods,
-        grading_mode: schoolSettings.gradingMode,
+        grading_mode: 'dates',
         auto_enroll_subjects: schoolSettings.autoEnrollSubjects,
         active_school_year_id: schoolSettings.activeSchoolYearId || null
       })
-      // Persist locally as a fallback when backend doesn't return grading_mode
-      localStorage.setItem('gradeflow-grading-mode', schoolSettings.gradingMode)
-      window.dispatchEvent(new CustomEvent('gradeflow-profile-updated', { detail: { gradingMode: schoolSettings.gradingMode } }))
+      window.dispatchEvent(new CustomEvent('gradeflow-profile-updated'))
       toast.success('School settings saved successfully')
     } catch (error) {
       console.error('Failed to save settings:', error)
@@ -741,7 +733,7 @@ export default function SystemAdmin() {
           schoolName: userProfile.school_name || schoolSettings.schoolName,
           firstDayOfSchool: userProfile.first_day_of_school || schoolSettings.firstDayOfSchool,
           gradingPeriods: userProfile.grading_periods || schoolSettings.gradingPeriods,
-          gradingMode: (userProfile as any)?.grading_mode === 'markers' ? 'markers' : schoolSettings.gradingMode,
+          gradingMode: 'dates',
           autoEnrollSubjects: userProfile.auto_enroll_subjects ?? true
         },
         
@@ -1058,25 +1050,9 @@ export default function SystemAdmin() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label className="flex items-center justify-between">
-                    <span>Grading Mode</span>
-                    <span className="text-xs text-muted-foreground">Dates vs. Markers</span>
-                  </Label>
-                  <div className="flex items-center justify-between rounded-md border p-3 bg-muted/30">
-                    <div>
-                      <p className="text-sm font-medium">Date-based periods</p>
-                      <p className="text-xs text-muted-foreground">Uses configured start/end dates; marker buttons are hidden.</p>
-                    </div>
-                    <Switch
-                      checked={schoolSettings.gradingMode === 'dates'}
-                      onCheckedChange={(checked) => setSchoolSettings(prev => ({ ...prev, gradingMode: checked ? 'dates' : 'markers' }))}
-                      aria-label="Toggle grading mode"
-                    />
-                  </div>
+                  <Label>Grading Method</Label>
                   <div className="rounded-md border p-3 bg-amber-50 text-amber-900 text-xs">
-                    {schoolSettings.gradingMode === 'dates'
-                      ? 'Reports filter grades by lesson date using the configured grading period dates.'
-                      : 'Marker-based grading stays enabled; grading period dates are ignored for reports.'}
+                    GradeFlow uses date-based grading periods. Reports filter grades by lesson date using the configured grading period ranges.
                   </div>
                 </div>
 

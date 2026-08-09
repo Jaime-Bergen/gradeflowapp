@@ -46,10 +46,6 @@ export default function Dashboard() {
   const [students, setStudents] = useState<Student[]>([])
   const [filteredStudents, setFilteredStudents] = useState<Student[]>([])
   const [grades, setGrades] = useState<Grade[]>([])
-  const [lessons, setLessons] = useState<Record<string, any[]>>({})
-  const [subjectMarkers, setSubjectMarkers] = useState<Record<string, any[]>>({})
-  const [periodAnalyticsLoading, setPeriodAnalyticsLoading] = useState(false)
-  const [periodAnalyticsReady, setPeriodAnalyticsReady] = useState(false)
   const [studentGroups, setStudentGroups] = useState<any[]>([])
   const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary>({})
   const [loading, setLoading] = useState(true)
@@ -71,7 +67,6 @@ export default function Dashboard() {
   const [averageDialogOpen, setAverageDialogOpen] = useState(false)
   const [selectedGroups, setSelectedGroups] = useState<Record<string, boolean>>({})
   const [gradingPeriodCount, setGradingPeriodCount] = useState<number>(6)
-  const [gradingMode, setGradingMode] = useState<'markers' | 'dates'>('markers')
   const [gradingPeriods, setGradingPeriods] = useState<GradingPeriod[]>([])
   const dialogContentRef = useRef<HTMLDivElement | null>(null)
   const formatLocalISO = (d: Date) => {
@@ -238,63 +233,8 @@ export default function Dashboard() {
     const resolvedCount = periodCountFromPeriods ?? periodsFromProfile ?? 6
     setGradingPeriodCount(resolvedCount)
 
-    const persistedMode = localStorage.getItem('gradeflow-grading-mode') as 'markers' | 'dates' | null
-    const hasConfiguredPeriods = sortedGradingPeriods.length > 0
-    const resolvedMode: 'markers' | 'dates' = user?.grading_mode === 'markers'
-      ? 'markers'
-      : user?.grading_mode === 'dates'
-        ? 'dates'
-        : (persistedMode === 'markers' || persistedMode === 'dates')
-          ? persistedMode
-          : hasConfiguredPeriods
-            ? 'dates'
-            : 'markers'
-
-    setGradingMode(resolvedMode)
-    localStorage.setItem('gradeflow-grading-mode', resolvedMode)
-
     return { configuredPeriods: resolvedCount }
   }, [])
-
-  // Helper function to get lesson range for a reporting period based on markers
-  const getLessonRangeForPeriod = (subjectId: string, periodIndex: number): { min: number; max: number | null } | null => {
-    const markers = subjectMarkers[subjectId] || []
-    const sortedMarkers = [...markers].sort((a, b) => ((a as any).order_index || 0) - ((b as any).order_index || 0))
-
-    // No markers defined: treat the whole subject as one open-ended range
-    if (sortedMarkers.length === 0) {
-      return { min: 1, max: null }
-    }
-    
-    // Period 1: From start to first marker (if exists)
-    if (periodIndex === 1) {
-      return {
-        min: 1,
-        max: (sortedMarkers[0] as any).order_index
-      }
-    }
-    
-    // Last period: After last marker to end
-    if (periodIndex > sortedMarkers.length) {
-      return {
-        min: (sortedMarkers[sortedMarkers.length - 1] as any).order_index + 1,
-        max: null // No upper limit
-      }
-    }
-    
-    // Middle periods: Between two markers
-    if (periodIndex > 1 && periodIndex <= sortedMarkers.length) {
-      const startMarkerIndex = periodIndex - 2 // Previous marker
-      const endMarkerIndex = periodIndex - 1   // Current marker
-      
-      return {
-        min: (sortedMarkers[startMarkerIndex] as any).order_index + 1,
-        max: (sortedMarkers[endMarkerIndex] as any).order_index
-      }
-    }
-    
-    return null
-  }
 
       const getDateRangeForPeriod = useCallback((periodIndex: number): { start: string; end: string } | null => {
         if (gradingPeriods.length === 0) return null
@@ -304,49 +244,24 @@ export default function Dashboard() {
         return { start: target.startDate, end: target.endDate }
       }, [gradingPeriods])
 
-  // Helper function to filter grades based on markers for the selected reporting period
+  // Filter grades by lesson date for the selected reporting period.
   const getFilteredGradesForPeriod = (periodIndex: number): Grade[] => {
-    if (gradingMode === 'dates' && gradingPeriods.length > 0) {
-      const dateRange = getDateRangeForPeriod(periodIndex)
-      if (!dateRange) return []
+    if (gradingPeriods.length === 0) return []
 
-      return grades.filter(grade => {
-        if (!grade.date) return false
-        const dateOnly = grade.date.slice(0, 10)
-        return dateOnly >= dateRange.start && dateOnly <= dateRange.end
-      })
-    }
-
-    // Default to marker-based filtering
-    if (!periodAnalyticsReady) return []
+    const dateRange = getDateRangeForPeriod(periodIndex)
+    if (!dateRange) return []
 
     return grades.filter(grade => {
-      if (!grade.subjectId) return false
-
-      const range = getLessonRangeForPeriod(grade.subjectId, periodIndex)
-      if (!range) return false // Skip if no valid range
-
-      // Get the lesson to check its order_index
-      const subjectLessons = lessons[grade.subjectId]
-      if (!subjectLessons) return false
-
-      const lesson = subjectLessons.find(l => l.id === grade.lessonId)
-      if (!lesson) return false
-
-      const lessonOrderIndex = (lesson as any).order_index || (lesson as any).orderIndex || 0
-
-      // Check if lesson is within range
-      if (lessonOrderIndex < range.min) return false
-      if (range.max !== null && lessonOrderIndex > range.max) return false
-
-      return true
+      if (!grade.date) return false
+      const dateOnly = grade.date.slice(0, 10)
+      return dateOnly >= dateRange.start && dateOnly <= dateRange.end
     })
   }
 
   const currentPeriodGrades = getFilteredGradesForPeriod(currentGradingPeriod)
+  const analyticsAvailable = gradingPeriods.length > 0
 
   const countablePeriodGrades = useMemo(() => currentPeriodGrades.filter(isCountableGrade), [currentPeriodGrades])
-  const subjectIdsWithGrades = useMemo(() => Array.from(new Set(grades.map(grade => grade.subjectId).filter(Boolean))) as string[], [grades])
 
   const studentsForDialog = useMemo(() => (filteredStudents.length > 0 ? filteredStudents : students), [filteredStudents, students])
 
@@ -504,7 +419,6 @@ export default function Dashboard() {
   useEffect(() => {
     async function fetchData() {
       setLoading(true)
-      setPeriodAnalyticsReady(false)
       const [
         gradingSettings,
         studentsRes,
@@ -555,75 +469,6 @@ export default function Dashboard() {
       window.removeEventListener('gradeflow-teachers-updated', handleTeacherUpdated)
     }
   }, [filterStudentsByTeacher, loadTodayAttendance, loadWeeklyAttendance, loadCurrentWeekAttendance, todayIso, refreshGradingSettings])
-
-  useEffect(() => {
-    if (gradingMode === 'dates') {
-      setLessons({})
-      setSubjectMarkers({})
-      setPeriodAnalyticsLoading(false)
-      setPeriodAnalyticsReady(true)
-      return
-    }
-
-    if (subjectIdsWithGrades.length === 0) {
-      setLessons({})
-      setSubjectMarkers({})
-      setPeriodAnalyticsLoading(false)
-      setPeriodAnalyticsReady(true)
-      return
-    }
-
-    let cancelled = false
-
-    const loadPeriodAnalytics = async () => {
-      setPeriodAnalyticsLoading(true)
-      try {
-        const lessonEntries = await Promise.all(
-          subjectIdsWithGrades.map(async (subjectId) => {
-            const [lessonsRes, markersRes] = await Promise.all([
-              apiClient.getLessonsForSubject(subjectId),
-              apiClient.getGradingPeriodMarkersForSubject(subjectId),
-            ])
-
-            return {
-              subjectId,
-              lessons: Array.isArray(lessonsRes.data) ? lessonsRes.data : [],
-              markers: Array.isArray(markersRes.data) ? markersRes.data : [],
-            }
-          })
-        )
-
-        if (cancelled) return
-
-        const nextLessons: Record<string, any[]> = {}
-        const nextMarkers: Record<string, any[]> = {}
-        lessonEntries.forEach(({ subjectId, lessons, markers }) => {
-          nextLessons[subjectId] = lessons
-          nextMarkers[subjectId] = markers
-        })
-
-        setLessons(nextLessons)
-        setSubjectMarkers(nextMarkers)
-        setPeriodAnalyticsReady(true)
-      } catch (error) {
-        if (!cancelled) {
-          console.error('Failed to load dashboard period analytics', error)
-          toast.error('Could not finish loading grading period details')
-        }
-      } finally {
-        if (!cancelled) {
-          setPeriodAnalyticsLoading(false)
-        }
-      }
-    }
-
-    setPeriodAnalyticsReady(false)
-    loadPeriodAnalytics()
-
-    return () => {
-      cancelled = true
-    }
-  }, [gradingMode, subjectIdsWithGrades])
 
   useEffect(() => {
     const handleTeacherSelectionChange = () => filterStudentsByTeacher(students, studentGroups)
@@ -1097,12 +942,12 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {periodAnalyticsReady
+              {analyticsAvailable
                 ? `${(typeof averageGrade === 'number' && !isNaN(averageGrade) ? averageGrade : 0).toFixed(1)}%`
-                : '...'}
+                : '---'}
             </div>
             <div className="flex items-center justify-between mt-2">
-              <Progress value={periodAnalyticsReady && typeof averageGrade === 'number' && !isNaN(averageGrade) ? averageGrade : 0} className="flex-1 mr-2" />
+              <Progress value={analyticsAvailable && typeof averageGrade === 'number' && !isNaN(averageGrade) ? averageGrade : 0} className="flex-1 mr-2" />
               <div className="flex items-center gap-1">
                 <button
                   onClick={(e) => {
@@ -1130,11 +975,9 @@ export default function Dashboard() {
               </div>
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              {periodAnalyticsReady
+              {analyticsAvailable
                 ? `${getGradingPeriodName(currentGradingPeriod)} • ${countablePeriodGrades.length} grades`
-                : periodAnalyticsLoading
-                  ? 'Loading grading period details...'
-                  : 'Preparing grading period details...'}
+                : 'Set grading period dates in Admin settings to enable period analytics.'}
             </p>
           </CardContent>
         </Card>
@@ -1145,7 +988,7 @@ export default function Dashboard() {
             <AlertTriangle className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-destructive">{periodAnalyticsReady ? studentsAtRisk.length : '...'}</div>
+            <div className="text-2xl font-bold text-destructive">{analyticsAvailable ? studentsAtRisk.length : '---'}</div>
             <p className="text-xs text-muted-foreground">Students below 70%</p>
           </CardContent>
         </Card>
@@ -1465,7 +1308,7 @@ export default function Dashboard() {
               )}
             </div>
             <div className="h-72 w-full">
-              {periodAnalyticsReady ? (
+              {analyticsAvailable ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={weeklyGroupAverageData} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
@@ -1501,7 +1344,7 @@ export default function Dashboard() {
                 </ResponsiveContainer>
               ) : (
                 <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                  {periodAnalyticsLoading ? 'Loading grading period details...' : 'Preparing grading period details...'}
+                  Set grading period dates in Admin settings to enable this chart.
                 </div>
               )}
             </div>

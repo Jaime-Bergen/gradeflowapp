@@ -25,7 +25,10 @@ class ApiClient {
     });
   }
   
-  async updateLesson(lessonId: string, data: Partial<{ name: string; categoryId: string; points: number; orderIndex: number }>) {
+  async updateLesson(
+    lessonId: string,
+    data: Partial<{ name: string; categoryId: string; points: number; orderIndex: number; date: string | null }>
+  ) {
     return this.request(`/lessons/${lessonId}`, {
       method: 'PUT',
       body: JSON.stringify(data),
@@ -74,6 +77,12 @@ class ApiClient {
 
   private getAuthToken(): string | null {
     return this.token || localStorage.getItem('auth_token');
+  }
+
+  private withSchoolYear(endpoint: string, schoolYearId?: string) {
+    if (!schoolYearId) return endpoint
+    const separator = endpoint.includes('?') ? '&' : '?'
+    return `${endpoint}${separator}schoolYearId=${encodeURIComponent(schoolYearId)}`
   }
 
   private async cachedRequest<T = any>(endpoint: string, ttlMs = 30000): Promise<ApiResponse<T>> {
@@ -273,14 +282,15 @@ class ApiClient {
     })
   }
 
-  async getRolloverScopes() {
-    return this.request<RolloverScope[]>('/rollover/scopes')
+  async getRolloverScopes(schoolYearId?: string) {
+    return this.request<RolloverScope[]>(this.withSchoolYear('/rollover/scopes', schoolYearId))
   }
 
   async createRolloverScope(
-    payload: { name: string; minGrade: number; maxGrade: number; teacherId?: string | null }
+    payload: { name: string; minGrade: number; maxGrade: number; teacherId?: string | null },
+    schoolYearId?: string
   ) {
-    return this.request<RolloverScope>('/rollover/scopes', {
+    return this.request<RolloverScope>(this.withSchoolYear('/rollover/scopes', schoolYearId), {
       method: 'POST',
       body: JSON.stringify(payload),
     })
@@ -296,8 +306,8 @@ class ApiClient {
     })
   }
 
-  async lockRolloverScope(scopeId: string, payload?: { teacherId?: string | null; notes?: string }) {
-    return this.request<RolloverScope>(`/rollover/scopes/${scopeId}/lock`, {
+  async lockRolloverScope(scopeId: string, payload?: { teacherId?: string | null; notes?: string }, schoolYearId?: string) {
+    return this.request<RolloverScope>(this.withSchoolYear(`/rollover/scopes/${scopeId}/lock`, schoolYearId), {
       method: 'POST',
       body: JSON.stringify(payload || {}),
     })
@@ -315,9 +325,10 @@ class ApiClient {
 
   async executeRolloverStudents(
     scopeId: string,
-    payload: { targetSchoolYearId: string; holdBackStudentIds?: string[] }
+    payload: { targetSchoolYearId: string; holdBackStudentIds?: string[] },
+    schoolYearId?: string
   ) {
-    return this.request(`/rollover/scopes/${scopeId}/execute/students`, {
+    return this.request(this.withSchoolYear(`/rollover/scopes/${scopeId}/execute/students`, schoolYearId), {
       method: 'POST',
       body: JSON.stringify(payload),
     })
@@ -325,16 +336,17 @@ class ApiClient {
 
   async executeRolloverSubjects(
     scopeId: string,
-    payload: { targetSchoolYearId: string; subjectIds?: string[] }
+    payload: { targetSchoolYearId: string; subjectIds?: string[] },
+    schoolYearId?: string
   ) {
-    return this.request(`/rollover/scopes/${scopeId}/execute/subjects`, {
+    return this.request(this.withSchoolYear(`/rollover/scopes/${scopeId}/execute/subjects`, schoolYearId), {
       method: 'POST',
       body: JSON.stringify(payload),
     })
   }
 
-  async finalizeRollover(payload: { targetSchoolYearId: string; firstDayOfSchool?: string }) {
-    return this.request('/rollover/finalize', {
+  async finalizeRollover(payload: { targetSchoolYearId: string; firstDayOfSchool?: string }, schoolYearId?: string) {
+    return this.request(this.withSchoolYear('/rollover/finalize', schoolYearId), {
       method: 'POST',
       body: JSON.stringify(payload),
     })
@@ -349,14 +361,6 @@ class ApiClient {
 
   logout() {
     this.clearToken();
-  }
-
-  // Delete current user account and all data
-  async deleteMyAccount(confirmPassword: string) {
-    return this.request<{ message: string }>('/users/account', {
-      method: 'DELETE',
-      body: JSON.stringify({ confirmPassword }),
-    });
   }
 
   // Submit feedback (bug reports and feature requests)
@@ -377,9 +381,10 @@ class ApiClient {
   }
 
   // Students
-  async getStudents(groupId?: string) {
+  async getStudents(groupId?: string, schoolYearId?: string) {
     const params = groupId ? `?groupId=${groupId}` : '';
-    return this.request(`/students${params}`);
+    const endpoint = this.withSchoolYear(`/students${params}`, schoolYearId)
+    return this.request(endpoint);
   }
 
   async createStudent(data: any) {
@@ -410,10 +415,12 @@ class ApiClient {
   }
 
   async bulkImportSubjects(data: { subjects: Array<{ name: string; group?: string; reportCardName?: string }> }) {
-    return this.request('/subjects/bulk-import', {
+    const response = await this.request('/subjects/bulk-import', {
       method: 'POST',
       body: JSON.stringify(data),
     });
+    this.clearCache('/subjects')
+    return response
   }
 
   // Update subjects for a student
@@ -425,8 +432,8 @@ class ApiClient {
   }
 
   // Student Groups
-  async getStudentGroups() {
-    return this.request('/students/groups');
+  async getStudentGroups(schoolYearId?: string) {
+    return this.request(this.withSchoolYear('/students/groups', schoolYearId));
   }
 
   async createStudentGroup(data: any) {
@@ -489,9 +496,10 @@ class ApiClient {
   }
 
   // Subjects
-  async getSubjects(groupId?: string) {
+  async getSubjects(groupId?: string, schoolYearId?: string) {
     const params = groupId ? `?groupId=${groupId}` : '';
-    return this.cachedRequest(`/subjects${params}`);
+    const endpoint = this.withSchoolYear(`/subjects${params}`, schoolYearId)
+    return this.cachedRequest(endpoint);
   }
 
   async createSubject(data: any) {
@@ -708,11 +716,42 @@ class ApiClient {
       },
     });
 
-    if (!response.ok) {
-      throw new Error('Failed to create SQL backup');
+    if (response.ok) {
+      return response;
     }
 
-    return response;
+    // Fallback path for environments where pg_dump is unavailable.
+    const fallbackResponse = await fetch(`${this.baseURL}/backups/create`, {
+      method: 'POST',
+      headers: {
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        'Content-Type': 'application/json',
+      },
+    })
+
+    if (!fallbackResponse.ok) {
+      throw new Error('Failed to create SQL backup')
+    }
+
+    const fallbackPayload = await fallbackResponse.json()
+    const backupData = fallbackPayload?.backupData
+
+    if (!backupData) {
+      throw new Error('Failed to create backup payload')
+    }
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const filename = `gradeflow-backup-${timestamp}.json`
+    const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' })
+
+    return new Response(blob, {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Disposition': `attachment; filename="${filename}"`,
+        'X-Backup-Format': 'json-fallback',
+      },
+    })
   }
 
   async restoreFromSQL(file: File, options?: { adminConfirmed?: boolean }) {

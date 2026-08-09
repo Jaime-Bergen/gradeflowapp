@@ -53,6 +53,7 @@ export default function TermRolloverAssistant() {
   const [isBusy, setIsBusy] = useState(false)
 
   const [licensedYears, setLicensedYears] = useState<SchoolYear[]>([])
+  const [sourceSchoolYearId, setSourceSchoolYearId] = useState('')
   const [targetSchoolYearId, setTargetSchoolYearId] = useState('')
   const [firstDayOfSchool, setFirstDayOfSchool] = useState('')
   const [currentFirstDay, setCurrentFirstDay] = useState<string>('')
@@ -85,28 +86,35 @@ export default function TermRolloverAssistant() {
   useEffect(() => {
     if (activeStep === 0) return
     void loadBaseData()
-  }, [activeStep])
+  }, [activeStep, sourceSchoolYearId])
 
   const loadBaseData = async () => {
     try {
-      const [yearsRes, profileRes, teachersRes, groupsRes, studentsRes, subjectsRes] = await Promise.all([
+      const [yearsRes, profileRes, teachersRes] = await Promise.all([
         apiClient.getLicensedSchoolYears(),
         apiClient.getProfile(),
         apiClient.getTeachers(),
-        apiClient.getStudentGroups(),
-        apiClient.getStudents(),
-        apiClient.getSubjects(),
       ])
 
       const years = Array.isArray(yearsRes.data) ? yearsRes.data : []
       setLicensedYears(years)
-      if (!targetSchoolYearId && years.length > 0) {
-        setTargetSchoolYearId(years[0].id)
-      }
 
       const profile: any = profileRes.data || {}
-      const sourceFirstDay = profile.first_day_of_school
-        ? new Date(profile.first_day_of_school).toISOString().split('T')[0]
+      const activeYearId = profile.active_school_year_id || ''
+      const resolvedSourceYearId = sourceSchoolYearId || activeYearId || years[0]?.id || ''
+
+      if (!sourceSchoolYearId && resolvedSourceYearId) {
+        setSourceSchoolYearId(resolvedSourceYearId)
+      }
+
+      if (!targetSchoolYearId && years.length > 0) {
+        const defaultTarget = years.find((y) => y.id !== resolvedSourceYearId)?.id || years[0].id
+        setTargetSchoolYearId(defaultTarget)
+      }
+
+      const sourceYear = years.find((y) => y.id === resolvedSourceYearId)
+      const sourceFirstDay = sourceYear?.start_date
+        ? new Date(sourceYear.start_date).toISOString().split('T')[0]
         : ''
       setCurrentFirstDay(sourceFirstDay)
 
@@ -121,6 +129,12 @@ export default function TermRolloverAssistant() {
           maxGrade: '',
         }))
       )
+
+      const [groupsRes, studentsRes, subjectsRes] = await Promise.all([
+        apiClient.getStudentGroups(resolvedSourceYearId || undefined),
+        apiClient.getStudents(undefined, resolvedSourceYearId || undefined),
+        apiClient.getSubjects(undefined, resolvedSourceYearId || undefined),
+      ])
 
       const groupRows = Array.isArray(groupsRes.data) ? groupsRes.data : []
       setGroups(groupRows.map((g: any) => ({ id: g.id, name: g.name })))
@@ -152,9 +166,13 @@ export default function TermRolloverAssistant() {
   }
 
   const ensureAutoScope = async (): Promise<string | null> => {
+    if (!sourceSchoolYearId) {
+      throw new Error('Select a source term first')
+    }
+
     if (autoScopeId) return autoScopeId
 
-    const scopesRes = await apiClient.getRolloverScopes()
+    const scopesRes = await apiClient.getRolloverScopes(sourceSchoolYearId)
     const scopes = Array.isArray(scopesRes.data) ? scopesRes.data : []
 
     let scope = scopes.find((s: any) => s.name === AUTO_SCOPE_NAME)
@@ -164,17 +182,21 @@ export default function TermRolloverAssistant() {
         minGrade: 0,
         maxGrade: 20,
         teacherId: null,
-      })
+      }, sourceSchoolYearId)
       if ((created as any).error || !(created as any).data) {
         throw new Error((created as any).error || 'Failed to create internal rollover scope')
       }
       scope = (created as any).data
     }
 
+    if (!scope) {
+      throw new Error('Failed to initialize internal rollover scope')
+    }
+
     if (scope.status !== 'locked') {
       const locked = await apiClient.lockRolloverScope(scope.id, {
         notes: 'Auto-locked for guided term rollover',
-      })
+      }, sourceSchoolYearId)
       if ((locked as any).error) {
         throw new Error((locked as any).error || 'Failed to lock internal rollover scope')
       }
@@ -218,8 +240,16 @@ export default function TermRolloverAssistant() {
   const closeAll = () => setActiveStep(0)
 
   const handleStep1Next = () => {
+    if (!sourceSchoolYearId) {
+      toast.error('Select the source term first')
+      return
+    }
     if (!targetSchoolYearId) {
       toast.error('Select the target term first')
+      return
+    }
+    if (sourceSchoolYearId === targetSchoolYearId) {
+      toast.error('Source and target terms must be different')
       return
     }
     if (!firstDayOfSchool) {
@@ -266,7 +296,7 @@ export default function TermRolloverAssistant() {
       const studentExecute = await apiClient.executeRolloverStudents(scopeId, {
         targetSchoolYearId,
         holdBackStudentIds,
-      })
+      }, sourceSchoolYearId)
       if ((studentExecute as any).error) {
         throw new Error((studentExecute as any).error || 'Failed student rollover step')
       }
@@ -274,7 +304,7 @@ export default function TermRolloverAssistant() {
       const subjectExecute = await apiClient.executeRolloverSubjects(scopeId, {
         targetSchoolYearId,
         subjectIds: cloneSubjectIds,
-      })
+      }, sourceSchoolYearId)
       if ((subjectExecute as any).error) {
         throw new Error((subjectExecute as any).error || 'Failed subject rollover step')
       }
@@ -282,13 +312,13 @@ export default function TermRolloverAssistant() {
       const finalize = await apiClient.finalizeRollover({
         targetSchoolYearId,
         firstDayOfSchool,
-      })
+      }, sourceSchoolYearId)
       if ((finalize as any).error) {
         throw new Error((finalize as any).error || 'Failed final rollover confirmation')
       }
 
       if (removeStudentIds.length > 0 || newStudents.length > 0 || newSubjects.length > 0) {
-        const targetStudentsRes = await apiClient.getStudents()
+        const targetStudentsRes = await apiClient.getStudents(undefined, targetSchoolYearId)
         const targetStudents = Array.isArray(targetStudentsRes.data) ? targetStudentsRes.data : []
 
         const removeByKeys = new Set(
@@ -367,7 +397,23 @@ export default function TermRolloverAssistant() {
 
             <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2">
-                <Label>Target Term</Label>
+                <Label>Source Term (Migrate From)</Label>
+                <Select value={sourceSchoolYearId || undefined} onValueChange={setSourceSchoolYearId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select source term" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {licensedYears.map((y) => (
+                      <SelectItem key={y.id} value={y.id}>
+                        {y.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Target Term (Migrate To)</Label>
                 <Select value={targetSchoolYearId || undefined} onValueChange={setTargetSchoolYearId}>
                   <SelectTrigger>
                     <SelectValue placeholder="Select target term" />
@@ -604,6 +650,7 @@ export default function TermRolloverAssistant() {
               This will roll students and subjects into the selected term, switch active term, then apply your add/remove updates.
             </p>
             <ul className="text-sm space-y-1">
+              <li>Source term: {licensedYears.find((y) => y.id === sourceSchoolYearId)?.label || 'Not selected'}</li>
               <li>Target term: {licensedYears.find((y) => y.id === targetSchoolYearId)?.label || 'Not selected'}</li>
               <li>First day of school: {firstDayOfSchool || 'Not set'}</li>
               <li>Hold-backs: {holdBackStudentIds.length}</li>

@@ -62,6 +62,36 @@ export default function GradeEntry() {
     return local.toISOString().slice(0, 10)
   }
 
+  const shiftISODate = (isoDate: string, days: number) => {
+    const date = new Date(`${isoDate}T00:00:00`)
+    if (isNaN(date.getTime())) return isoDate
+    date.setDate(date.getDate() + days)
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+  }
+
+  const resolveNewLessonDate = (previousLesson?: Lesson, nextLesson?: Lesson) => {
+    const today = getLocalISODate()
+    let candidate = today
+
+    const prevDate = normalizeDateInput(previousLesson?.date)
+    const nextDate = normalizeDateInput(nextLesson?.date)
+
+    // If the previous lesson is already beyond today, continue from that sequence.
+    if (prevDate && prevDate > today) {
+      candidate = shiftISODate(prevDate, 1)
+    }
+
+    // If the next lesson is before today, backfill just before that sequence.
+    if (nextDate && nextDate < today) {
+      candidate = shiftISODate(nextDate, -1)
+    }
+
+    return candidate
+  }
+
   // Initial data load
   useEffect(() => {
     async function fetchData() {
@@ -800,6 +830,38 @@ export default function GradeEntry() {
     setEditLessonDialog({ open: false, lesson: null, subjectId: null })
   }
 
+  async function deleteLessonFromDialog() {
+    const lesson = editLessonDialog.lesson
+    const subjectId = editLessonDialog.subjectId
+    if (!lesson || !subjectId) return
+
+    if (!window.confirm(`Delete lesson "${lesson.name}"? This will also delete all grades tied to this lesson.`)) {
+      return
+    }
+
+    try {
+      const previousLessons = subjectLessons[subjectId] || []
+      const deletedIndex = previousLessons.findIndex(l => l.id === lesson.id)
+
+      await apiClient.deleteLesson(lesson.id)
+
+      const lessonsRes = await apiClient.getLessonsForSubject(subjectId)
+      const lessonsData = Array.isArray(lessonsRes.data) ? lessonsRes.data : []
+      setSubjectLessons(prev => ({ ...prev, [subjectId]: lessonsData }))
+
+      if (selectedSubjectId === subjectId && selectedLessonId === lesson.id) {
+        const fallbackLesson = lessonsData[Math.min(Math.max(deletedIndex, 0), Math.max(lessonsData.length - 1, 0))]
+        setSelectedLessonId(fallbackLesson?.id || '')
+      }
+
+      closeEditLessonDialog()
+      toast.success('Lesson deleted')
+    } catch (error) {
+      console.error('Failed to delete lesson:', error)
+      toast.error('Failed to delete lesson')
+    }
+  }
+
   // Add lesson function
   async function addLessonAfterSelected() {
     if (!selectedSubjectId) return
@@ -825,6 +887,14 @@ export default function GradeEntry() {
         // Refresh lessons and select the new one
         const lessonsRes = await apiClient.getLessonsForSubject(selectedSubjectId)
         const lessonsData = Array.isArray(lessonsRes.data) ? lessonsRes.data : []
+
+        const firstLesson = lessonsData[0]
+        if (firstLesson) {
+          const suggestedDate = resolveNewLessonDate()
+          await apiClient.updateLesson(firstLesson.id, { date: suggestedDate })
+          firstLesson.date = suggestedDate
+        }
+
         setSubjectLessons(prev => ({ ...prev, [selectedSubjectId]: lessonsData }))
 
         // Select the newly added lesson
@@ -848,6 +918,9 @@ export default function GradeEntry() {
       // Find the index of the selected lesson
       const selectedLessonIndex = currentLessons.findIndex(l => l.id === selectedLessonId)
       const isLastLesson = selectedLessonIndex === currentLessons.length - 1
+      const previousLesson = currentLessons[selectedLessonIndex]
+      const nextLesson = currentLessons[selectedLessonIndex + 1]
+      const suggestedDate = resolveNewLessonDate(previousLesson, nextLesson)
 
       // Determine the name for the new lesson
       let newLessonName: string
@@ -891,6 +964,9 @@ export default function GradeEntry() {
         const newLesson = allLessons.find(l => !currentLessons.some(old => old.id === l.id))
         
         if (newLesson) {
+          await apiClient.updateLesson(newLesson.id, { date: suggestedDate })
+          newLesson.date = suggestedDate
+
           // Create the desired order: insert new lesson after the selected one
           const reorderedLessons = []
           
@@ -935,10 +1011,16 @@ export default function GradeEntry() {
         // Refresh lessons and select the new one
         const lessonsRes = await apiClient.getLessonsForSubject(selectedSubjectId)
         const lessonsData = Array.isArray(lessonsRes.data) ? lessonsRes.data : []
+
+        const newLesson = lessonsData.find(l => !currentLessons.some(old => old.id === l.id))
+        if (newLesson) {
+          await apiClient.updateLesson(newLesson.id, { date: suggestedDate })
+          newLesson.date = suggestedDate
+        }
+
         setSubjectLessons(prev => ({ ...prev, [selectedSubjectId]: lessonsData }))
 
         // Find and select the newly added lesson
-        const newLesson = lessonsData.find(l => !currentLessons.some(old => old.id === l.id))
         if (newLesson) {
           setSelectedLessonId(newLesson.id)
         }
@@ -1312,7 +1394,8 @@ export default function GradeEntry() {
     if (!selectedLesson || !selectedSubjectId) return
 
     try {
-      await apiClient.updateLesson(selectedLessonId, { date: newDate || null })
+      const lessonUpdatePayload: any = { date: newDate || null }
+      await apiClient.updateLesson(selectedLessonId, lessonUpdatePayload)
 
       setSubjectLessons(current => ({
         ...current,
@@ -3094,13 +3177,18 @@ const saveGrade = async (studentId: string) => {
                   <Label htmlFor="edit-lesson-points">Points</Label>
                   <Input id="edit-lesson-points" name="points" type="number" defaultValue={editLessonDialog.lesson.points} onFocus={(e) => e.target.select()} />
                 </div>
-                <div className="flex justify-end gap-2">
+                <div className="flex justify-between gap-2">
+                  <Button type="button" variant="destructive" onClick={deleteLessonFromDialog}>
+                    Delete Lesson
+                  </Button>
+                  <div className="flex gap-2">
                   <Button type="button" variant="outline" onClick={closeEditLessonDialog}>
                     Cancel
                   </Button>
                   <Button type="submit">
                     Save Changes
                   </Button>
+                  </div>
                 </div>
               </div>
             </form>

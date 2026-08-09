@@ -477,42 +477,6 @@ router.put('/change-password', async (req: AuthRequest, res, next) => {
   }
 });
 
-// Delete user account (and all associated data)
-router.delete('/account', async (req: AuthRequest, res, next) => {
-  try {
-    const { confirmPassword } = req.body;
-    const db = getDB();
-    
-    if (!confirmPassword) {
-      return res.status(400).json({ error: 'Password confirmation required' });
-    }
-    
-    // Verify password
-    const userResult = await db.query(
-      'SELECT password_hash FROM users WHERE id = $1',
-      [req.userId]
-    );
-    
-    if (userResult.rows.length === 0) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-    
-    const bcrypt = require('bcryptjs');
-    const passwordMatch = await bcrypt.compare(confirmPassword, userResult.rows[0].password_hash);
-    
-    if (!passwordMatch) {
-      return res.status(401).json({ error: 'Invalid password' });
-    }
-    
-    // Delete user (cascading deletes will handle related data)
-    await db.query('DELETE FROM users WHERE id = $1', [req.userId]);
-    
-    res.json({ message: 'Account deleted successfully' });
-  } catch (error) {
-    next(error);
-  }
-});
-
 // List all users with grade data usage
 router.get('/', async (req: AuthRequest, res, next) => {
   try {

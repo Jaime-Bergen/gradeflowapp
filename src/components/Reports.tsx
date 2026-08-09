@@ -21,7 +21,6 @@ export default function Reports() {
   const [studentGroups, setStudentGroups] = useState<any[]>([])
   const [subjects, setSubjects] = useState<Subject[]>([])
   const [grades, setGrades] = useState<Grade[]>([])
-  const [subjectMarkers, setSubjectMarkers] = useState<Record<string, any[]>>({})
   const [gradingPeriods, setGradingPeriods] = useState<GradingPeriod[]>([])
   const [attendanceStartDate, setAttendanceStartDate] = useState("")
   const [attendanceEndDate, setAttendanceEndDate] = useState("")
@@ -39,7 +38,7 @@ export default function Reports() {
     schoolName: '',
     firstDayOfSchool: '',
     gradingPeriods: 6,
-    gradingMode: 'dates' as 'dates' | 'markers'
+    gradingMode: 'dates' as 'dates'
   })
   const [isGenerating, setIsGenerating] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
@@ -125,36 +124,6 @@ export default function Reports() {
     setFilteredStudents(filtered)
   }, [students, studentGroups])
 
-  // Compute marker validation errors using useMemo to avoid infinite loops
-  const markerErrors = useMemo(() => {
-    if (schoolSettings.gradingMode === 'dates') return [] // date-based mode disables marker validation
-    if (!reportPeriod || subjects.length === 0) return []
-    
-    const periodMatch = reportPeriod.match(/(\d+)$/)
-    const periodIndex = periodMatch ? parseInt(periodMatch[1], 10) : 1
-    
-    const errors: Array<{ subjectId: string; subjectName: string; message: string }> = []
-    const subjectsWithGrades = new Set(grades.map(g => g.subjectId).filter((id): id is string => Boolean(id)))
-    
-    subjectsWithGrades.forEach(subjectId => {
-      const subject = subjects.find(s => s.id === subjectId)
-      if (!subject) return
-      
-      const markers = subjectMarkers[subjectId] || []
-      const requiredMarkers = periodIndex === 1 ? 1 : periodIndex - 1
-      
-      if (markers.length < requiredMarkers) {
-        errors.push({
-          subjectId: subject.id,
-          subjectName: subject.name,
-          message: `${subject.name} needs at least ${requiredMarkers} marker(s) for this reporting period`
-        })
-      }
-    })
-    
-    return errors
-  }, [reportPeriod, subjects.length, grades.length, Object.keys(subjectMarkers).length, schoolSettings.gradingMode])
-
   // Load all data from API
   useEffect(() => {
     loadData()
@@ -165,21 +134,12 @@ export default function Reports() {
     filterDataByTeacherGroups()
   }, [filterDataByTeacherGroups])
 
-  // Ensure a report period is always selected based on the active grading mode
+  // Ensure a report period is always selected.
   useEffect(() => {
-    if (schoolSettings.gradingMode === 'dates') {
-      if (!reportPeriod && gradingPeriods.length > 0) {
-        setReportPeriod(gradingPeriods[0].id)
-      }
-    } else {
-      if (!reportPeriod) {
-        const firstOption = getReportingPeriodOptions(schoolSettings.gradingPeriods)[0]
-        if (firstOption) {
-          setReportPeriod(firstOption.value)
-        }
-      }
+    if (!reportPeriod && gradingPeriods.length > 0) {
+      setReportPeriod(gradingPeriods[0].id)
     }
-  }, [schoolSettings.gradingMode, schoolSettings.gradingPeriods, gradingPeriods, reportPeriod])
+  }, [gradingPeriods, reportPeriod])
 
   // Listen for teacher selection changes
   useEffect(() => {
@@ -229,23 +189,16 @@ export default function Reports() {
       )
       setStudentGroups(uniqueGroups)
 
-      // Load lessons and markers for each subject
+      // Load lessons for each subject
       const subjectsWithLessons = await Promise.all(
         subjectsData.map(async (subject) => {
           try {
-            const [lessonsRes, markersRes] = await Promise.all([
-              apiClient.getLessonsForSubject(subject.id),
-              apiClient.getGradingPeriodMarkersForSubject(subject.id)
-            ])
+            const lessonsRes = await apiClient.getLessonsForSubject(subject.id)
             const lessons = Array.isArray(lessonsRes.data) ? lessonsRes.data : []
-            const markers = Array.isArray(markersRes.data) ? markersRes.data : []
-            
-            // Store markers separately
-            setSubjectMarkers(prev => ({ ...prev, [subject.id]: markers }))
             
             return { ...subject, lessons }
           } catch (error) {
-            console.warn(`Failed to load lessons/markers for subject ${subject.name}:`, error)
+            console.warn(`Failed to load lessons for subject ${subject.name}:`, error)
             return { ...subject, lessons: [] }
           }
         })
@@ -273,42 +226,20 @@ export default function Reports() {
           ? new Date(user.first_day_of_school).toISOString().split('T')[0]
           : ''
 
-        const persistedMode = localStorage.getItem('gradeflow-grading-mode') as 'dates' | 'markers' | null
-        const hasConfiguredPeriods = gradingPeriods.length > 0
-        const resolvedMode: 'dates' | 'markers' = (user as any)?.grading_mode === 'markers'
-          ? 'markers'
-          : (user as any)?.grading_mode === 'dates'
-            ? 'dates'
-            : persistedMode === 'markers' || persistedMode === 'dates'
-              ? persistedMode
-              : hasConfiguredPeriods
-                ? 'dates'
-                : 'markers'
-        
         setSchoolSettings({
           schoolName: user.school_name || 'School Name',
           firstDayOfSchool: formattedDate,
           gradingPeriods: user.grading_periods || 6,
-          gradingMode: resolvedMode
+          gradingMode: 'dates'
         })
-
-        // Persist locally as a fallback when backend omits grading_mode
-        localStorage.setItem('gradeflow-grading-mode', resolvedMode)
 
         const today = new Date().toISOString().split('T')[0]
         setAttendanceStartDate(prev => prev || formattedDate || today)
         setAttendanceEndDate(prev => prev || today)
         
-        // Auto-select current reporting period
-        if (resolvedMode === 'dates' && gradingPeriods.length > 0) {
-          const currentPeriod = getCurrentReportingPeriod(
-            formattedDate, 
-            user.grading_periods || 6
-          )
-          setReportPeriod(prev => prev || currentPeriod)
-        } else if (resolvedMode === 'markers') {
-          const firstOption = getReportingPeriodOptions(user.grading_periods || 6)[0]
-          setReportPeriod(prev => prev || firstOption?.value || 'q1')
+        // Auto-select first configured reporting period.
+        if (gradingPeriods.length > 0) {
+          setReportPeriod(prev => prev || gradingPeriods[0].id)
         }
       }
     } catch (error) {
@@ -389,69 +320,6 @@ export default function Reports() {
     }
   }, [attendanceData, attendanceStartDate, attendanceEndDate])
 
-  // Calculate current reporting period based on today's date and first day of school
-  const getCurrentReportingPeriod = (firstDayOfSchool: string, gradingPeriods: number): string => {
-    if (!firstDayOfSchool) return getReportingPeriodOptions(gradingPeriods)[0]?.value || ''
-    
-    const schoolStart = new Date(firstDayOfSchool)
-    const today = new Date()
-    const daysDiff = Math.floor((today.getTime() - schoolStart.getTime()) / (1000 * 60 * 60 * 24))
-    
-    if (daysDiff < 0) return getReportingPeriodOptions(gradingPeriods)[0]?.value || ''
-    
-    let periodLength: number
-    switch (gradingPeriods) {
-      case 3: // Trimesters
-        periodLength = 120 // ~4 months
-        break
-      case 4: // Quarters  
-        periodLength = 90 // ~3 months
-        break
-      case 6: // Six weeks
-        periodLength = 42 // 6 weeks
-        break
-      default:
-        periodLength = 42
-    }
-    
-    const currentPeriod = Math.floor(daysDiff / periodLength) + 1
-    const maxPeriod = gradingPeriods
-    const safePeriod = Math.min(Math.max(currentPeriod, 1), maxPeriod)
-    
-    const options = getReportingPeriodOptions(gradingPeriods)
-    return options[safePeriod - 1]?.value || options[0]?.value || ''
-  }
-
-  // Generate reporting period options based on grading periods setting
-  const getReportingPeriodOptions = (gradingPeriods: number) => {
-    switch (gradingPeriods) {
-      case 3:
-        return [
-          { value: 't1', label: '1st Trimester' },
-          { value: 't2', label: '2nd Trimester' },
-          { value: 't3', label: '3rd Trimester' }
-        ]
-      case 4:
-        return [
-          { value: 'q1', label: '1st Quarter' },
-          { value: 'q2', label: '2nd Quarter' },
-          { value: 'q3', label: '3rd Quarter' },
-          { value: 'q4', label: '4th Quarter' }
-        ]
-      case 6:
-        return [
-          { value: 'sw1', label: '1st Six Weeks' },
-          { value: 'sw2', label: '2nd Six Weeks' },
-          { value: 'sw3', label: '3rd Six Weeks' },
-          { value: 'sw4', label: '4th Six Weeks' },
-          { value: 'sw5', label: '5th Six Weeks' },
-          { value: 'sw6', label: '6th Six Weeks' }
-        ]
-      default:
-        return [{ value: 'current', label: 'Current Period' }]
-    }
-  }
-
   const goToSettings = () => {
     // Navigate to Admin tab first
     window?.dispatchEvent(new CustomEvent('gradeflow-goto-tab', { detail: { tab: 'admin' } }))
@@ -461,113 +329,32 @@ export default function Reports() {
     }, 100)
   }
 
-  const goToSubjectAndAddMarker = (subjectId: string) => {
-    // Navigate to Subjects tab
-    window?.dispatchEvent(new CustomEvent('gradeflow-goto-tab', { detail: { tab: 'subjects' } }))
-    // After a brief delay, expand the subject and highlight the add marker button
-    setTimeout(() => {
-      window?.dispatchEvent(new CustomEvent('gradeflow-subjects-expand-and-highlight', { 
-        detail: { subjectId, action: 'add-marker' } 
-      }))
-    }, 100)
-  }
-
-  // Get lesson order_index range based on report period and markers
-  const getLessonRangeForPeriod = (subjectId: string, periodIndex: number): { min: number; max: number | null } | null => {
-    const markers = subjectMarkers[subjectId] || []
-    
-    // Sort markers by order_index
-    const sortedMarkers = [...markers].sort((a, b) => 
-      ((a as any).order_index ?? 0) - ((b as any).order_index ?? 0)
-    )
-    
-    // Period 1: From start (1) to first marker
-    if (periodIndex === 1) {
-      if (sortedMarkers.length === 0) {
-        return null // No markers defined
-      }
-      return { 
-        min: 1, 
-        max: (sortedMarkers[0] as any).order_index 
-      }
-    }
-    
-    // Last period: From last marker onwards
-    if (periodIndex > sortedMarkers.length) {
-      if (sortedMarkers.length === 0) {
-        return null // No markers defined
-      }
-      return { 
-        min: (sortedMarkers[sortedMarkers.length - 1] as any).order_index + 1, 
-        max: null // No upper limit
-      }
-    }
-    
-    // Middle periods: Between two markers
-    if (periodIndex > 1 && periodIndex <= sortedMarkers.length) {
-      const startMarkerIndex = periodIndex - 2 // Previous marker
-      const endMarkerIndex = periodIndex - 1   // Current marker
-      
-      return {
-        min: (sortedMarkers[startMarkerIndex] as any).order_index + 1,
-        max: (sortedMarkers[endMarkerIndex] as any).order_index
-      }
-    }
-    
-    return null
-  }
-
-  // Helper function to filter grades based on markers for the selected reporting period
+  // Filter grades by lesson date for the selected reporting period.
   const getFilteredGradesForPeriod = (): Grade[] => {
-    // If grading mode is date-based, use date filtering when periods exist
-    if (schoolSettings.gradingMode === 'dates') {
-      if (gradingPeriods.length === 0) return []
-      const period = gradingPeriods.find(p => p.id === reportPeriod) || gradingPeriods[0]
-      if (!period) return []
+    if (gradingPeriods.length === 0) return []
+    const period = gradingPeriods.find(p => p.id === reportPeriod) || gradingPeriods[0]
+    if (!period) return []
 
-      const start = new Date(period.startDate)
-      const end = new Date(period.endDate)
-
-      return grades.filter(grade => {
-        if (!grade.subjectId) return false
-        const subject = subjects.find(s => s.id === grade.subjectId)
-        if (!subject || !subject.lessons) return false
-        const lesson = subject.lessons.find(l => l.id === grade.lessonId)
-        if (!lesson || !lesson.date) return false
-        const lessonDate = new Date(lesson.date)
-        return lessonDate >= start && lessonDate <= end
-      })
-    }
-
-    // Fallback to marker-based filtering for legacy data
-    if (markerErrors.length > 0) return []
-    const periodMatch = reportPeriod.match(/(\d+)$/)
-    const periodIndex = periodMatch ? parseInt(periodMatch[1], 10) : 1
+    const start = new Date(period.startDate)
+    const end = new Date(period.endDate)
 
     return grades.filter(grade => {
       if (!grade.subjectId) return false
-      const range = getLessonRangeForPeriod(grade.subjectId, periodIndex)
-      if (!range) return false
       const subject = subjects.find(s => s.id === grade.subjectId)
       if (!subject || !subject.lessons) return false
       const lesson = subject.lessons.find(l => l.id === grade.lessonId)
-      if (!lesson) return false
-      const orderIndex = (lesson as any).order_index ?? lesson.orderIndex ?? 0
-      if (range.max === null) {
-        return orderIndex >= range.min
-      }
-      return orderIndex >= range.min && orderIndex <= range.max
+      if (!lesson || !lesson.date) return false
+      const lessonDate = new Date(lesson.date)
+      return lessonDate >= start && lessonDate <= end
     })
   }
 
   const handleReportPeriodChange = (value: string) => {
     setReportPeriod(value)
-    if (schoolSettings.gradingMode === 'dates') {
-      const period = gradingPeriods.find(p => p.id === value)
-      if (period) {
-        setAttendanceStartDate(period.startDate)
-        setAttendanceEndDate(period.endDate)
-      }
+    const period = gradingPeriods.find(p => p.id === value)
+    if (period) {
+      setAttendanceStartDate(period.startDate)
+      setAttendanceEndDate(period.endDate)
     }
   }
 
@@ -583,14 +370,8 @@ export default function Reports() {
         return null
       }
       
-      if (schoolSettings.gradingMode === 'dates' && gradingPeriods.length === 0) {
-        console.warn('Date-based grading mode selected but no grading periods are configured')
-        return null
-      }
-
-      // Check if there are marker validation errors
-      if (schoolSettings.gradingMode === 'markers' && markerErrors.length > 0) {
-        console.warn('Marker validation errors:', markerErrors)
+      if (gradingPeriods.length === 0) {
+        console.warn('No grading periods are configured')
         return null
       }
       
@@ -904,10 +685,8 @@ export default function Reports() {
     reportPeriod, 
     subjects.length, 
     grades.length, 
-    Object.keys(subjectMarkers).length,
     // Create a stable key from subjects with lessons
-    subjects.map(s => `${s.id}:${s.lessons?.length || 0}`).join(','),
-    schoolSettings.gradingMode
+    subjects.map(s => `${s.id}:${s.lessons?.length || 0}`).join(',')
   ])
   
   const previewStudentData = students.find(s => s.id === previewStudent)
@@ -916,9 +695,7 @@ export default function Reports() {
     attendanceEndDate &&
     new Date(attendanceStartDate) > new Date(attendanceEndDate)
   )
-  const selectedPeriod = schoolSettings.gradingMode === 'dates'
-    ? gradingPeriods.find(p => p.id === reportPeriod)
-    : undefined
+  const selectedPeriod = gradingPeriods.find(p => p.id === reportPeriod)
 
   if (isLoading) {
     return (
@@ -1094,47 +871,17 @@ export default function Reports() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {schoolSettings.gradingMode === 'dates' && gradingPeriods.length > 0
-                      ? gradingPeriods.map(period => (
-                          <SelectItem key={period.id} value={period.id}>
-                            {period.name} ({period.startDate} → {period.endDate})
-                          </SelectItem>
-                        ))
-                      : getReportingPeriodOptions(schoolSettings.gradingPeriods).map(option => (
-                          <SelectItem key={option.value} value={option.value}>
-                            {option.label}
-                          </SelectItem>
-                        ))}
+                    {gradingPeriods.map(period => (
+                      <SelectItem key={period.id} value={period.id}>
+                        {period.name} ({period.startDate} → {period.endDate})
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
-                
-                {/* Display marker validation errors (legacy only) */}
-                {schoolSettings.gradingMode === 'markers' && markerErrors.length > 0 && (
-                  <div className="mt-2 p-3 bg-red-50 border border-red-200 rounded-md">
-                    <p className="text-sm font-medium text-red-800 mb-1">⚠️ Missing Grading Period Markers:</p>
-                    <ul className="text-sm text-red-700 space-y-1">
-                      {markerErrors.map((error, idx) => (
-                        <li key={idx} className="flex items-center gap-2">
-                          <span>•</span>
-                          <span>{error.message}</span>
-                          <button
-                            onClick={() => goToSubjectAndAddMarker(error.subjectId)}
-                            className="text-red-800 underline hover:text-red-900 font-medium text-xs"
-                          >
-                            Add Marker →
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                    <p className="text-xs text-red-600 mt-2">
-                      Click "Add Marker →" to go to the Subjects tab and add the required markers.
-                    </p>
-                  </div>
-                )}
 
-                {schoolSettings.gradingMode === 'dates' && gradingPeriods.length === 0 && (
+                {gradingPeriods.length === 0 && (
                   <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-md text-sm text-amber-900">
-                    No grading periods are configured. Add periods in Settings or switch to marker mode.
+                    No grading periods are configured. Add period dates in Settings.
                   </div>
                 )}
               </div>

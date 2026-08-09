@@ -14,6 +14,39 @@ interface RestoreRequest extends AuthRequest {
 
 const router = express.Router();
 
+async function resolvePgDumpBinary(): Promise<string | null> {
+  const fromEnv = process.env.PG_DUMP_PATH
+  if (fromEnv) {
+    try {
+      await fs.access(fromEnv)
+      return fromEnv
+    } catch {
+      // Keep searching if env path is invalid
+    }
+  }
+
+  if (process.platform === 'win32') {
+    const candidates: string[] = []
+    for (let version = 18; version >= 12; version--) {
+      candidates.push(`C:\\Program Files\\PostgreSQL\\${version}\\bin\\pg_dump.exe`)
+    }
+
+    for (const candidate of candidates) {
+      try {
+        await fs.access(candidate)
+        return candidate
+      } catch {
+        // Try next candidate
+      }
+    }
+
+    return null
+  }
+
+  // On non-Windows, assume pg_dump is available via PATH.
+  return 'pg_dump'
+}
+
 // Configure multer for file uploads (JSON and SQL files)
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -32,6 +65,13 @@ const upload = multer({
 // Create full database backup (PostgreSQL dump)
 router.post('/backup/sql', authenticateToken, async (req: AuthRequest, res) => {
   try {
+    const pgDumpBinary = await resolvePgDumpBinary()
+    if (!pgDumpBinary) {
+      return res.status(500).json({
+        error: 'pg_dump is not installed or not found. Set PG_DUMP_PATH or install PostgreSQL command-line tools.',
+      })
+    }
+
     const timestamp = new Date().toISOString().replace(/:/g, '-').split('.')[0];
     const filename = `gradeflow-full-backup-${timestamp}.sql`;
     const tempPath = path.join(__dirname, '../../temp', filename);
@@ -39,7 +79,7 @@ router.post('/backup/sql', authenticateToken, async (req: AuthRequest, res) => {
     // Ensure temp directory exists
     await fs.mkdir(path.dirname(tempPath), { recursive: true });
     
-    const pgDump = spawn('pg_dump', [
+    const pgDump = spawn(pgDumpBinary, [
       process.env.DATABASE_URL!,
       '--clean',
       '--if-exists',
@@ -47,6 +87,12 @@ router.post('/backup/sql', authenticateToken, async (req: AuthRequest, res) => {
       '--no-privileges',
       '--file', tempPath
     ]);
+    let errorOutput = ''
+
+    pgDump.stderr.on('data', (data) => {
+      errorOutput += data.toString()
+    })
+
     let responseHandled = false;
     
     pgDump.on('close', async (code) => {
@@ -59,6 +105,7 @@ router.post('/backup/sql', authenticateToken, async (req: AuthRequest, res) => {
           
           res.setHeader('Content-Type', 'application/sql');
           res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+          res.setHeader('X-Backup-Format', 'sql')
           res.send(fileBuffer);
           
           // Clean up temp file
@@ -68,7 +115,10 @@ router.post('/backup/sql', authenticateToken, async (req: AuthRequest, res) => {
           res.status(500).json({ error: 'Failed to read backup file' });
         }
       } else {
-        res.status(500).json({ error: 'Database backup failed' });
+        res.status(500).json({
+          error: 'Database backup failed',
+          details: errorOutput || `pg_dump exited with code ${code}`,
+        });
       }
     });
     

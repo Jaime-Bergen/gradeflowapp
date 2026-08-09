@@ -89,14 +89,15 @@ function Help() {
         {
             icon: _jsx(FileText, { size: 24, className: "text-orange-600" }),
             title: "5. Add Lessons",
-            description: "Create lessons and assignments for your subjects. Note that all of these steps can be edited later as needed. You can edit lesson type, name, or points. Insert and delete lessons anywhere in the list and move grading period markers up and down using the chevrons.",
+            description: "Create lessons and assignments for your subjects. This step is recommended, not required, because you can also add lessons on the fly from the Grade Entry page.",
             steps: [
                 "Expand a subject in the Subjects tab",
                 "Click 'Add Lesson' or 'Add Lessons' for bulk creation (some teachers prefer to add lessons as they go, others count them all out at the start of the term; both are supported)",
                 "Set lesson name, type, and point value",
-                "Use grading period markers to separate terms"
+                "Set lesson dates so reports include grades in the correct grading period",
+                "If needed, add lessons directly from Grade Entry while grading"
             ],
-            status: "required"
+            status: "recommended"
         },
         {
             icon: _jsx(ChartBar, { size: 24, className: "text-teal-600" }),
@@ -114,8 +115,8 @@ function Help() {
     ];
     const faqData = [
         {
-            question: "How do grading period markers work?",
-            answer: "Grading period markers divide your lessons into terms or quarters. They help calculate grades for specific periods and generate accurate report cards. You can add markers between lessons to indicate the end of a grading period. The 'Number of Grading Periods' setting in Admin > Settings determines how many markers you can add per subject. If you select 6, you will need 5 markers to divide the periods. Report cards will use the grades between these markers based on the period selection on that page."
+            question: "How do grading periods work?",
+            answer: "GradeFlow uses date-based grading periods. In Admin > Settings, define each period's start and end date. Report cards use lesson dates to include the correct grades for the selected period."
         },
         {
             question: "What are grade weights and how do I set them?",
@@ -143,7 +144,7 @@ function Help() {
         },
         {
             question: "How do I change the number of grading periods?",
-            answer: "Go to Admin > Settings and adjust the 'Grading Periods' setting. This affects how many report card periods you can generate and the maximum number of markers per subject."
+            answer: "Go to Admin > Settings and adjust the 'Grading Periods' setting. Then update the grading period date ranges so reports use the right dates for each term."
         },
         {
             question: "What browsers are supported?",

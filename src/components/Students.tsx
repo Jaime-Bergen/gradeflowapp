@@ -132,12 +132,18 @@ export default function Students() {
   const fetchData = async () => {
     try {
       const studentsRes = await apiClient.getStudents();
+      if ((studentsRes as any)?.error) {
+        throw new Error((studentsRes as any).error)
+      }
       const studentsData = Array.isArray(studentsRes.data)
         ? studentsRes.data
         : (studentsRes.data as any)?.students || []
       setStudents(normalizeStudentBirthdays(studentsData))
 
       const groupsRes = await apiClient.getStudentGroups()
+      if ((groupsRes as any)?.error) {
+        throw new Error((groupsRes as any).error)
+      }
       const rawGroups = Array.isArray(groupsRes.data) 
         ? groupsRes.data 
         : (groupsRes.data as any)?.groups || []
@@ -217,7 +223,11 @@ export default function Students() {
 
     setIsCreatingGroup(true)
     try {
-      const result = await apiClient.createStudentGroup({ name: newGroupName.trim() })
+      const groupName = newGroupName.trim()
+      const result = await apiClient.createStudentGroup({ name: groupName })
+      if ((result as any)?.error) {
+        throw new Error((result as any).error)
+      }
       await fetchData() // Refresh groups
       
       // Add the new group to selected groups
@@ -231,7 +241,7 @@ export default function Students() {
       setNewGroupName('')
       toast.success('Group created successfully')
     } catch (error) {
-      toast.error('Failed to create group')
+      toast.error(error instanceof Error ? error.message : 'Failed to create group')
       console.error('Error creating group:', error)
     } finally {
       setIsCreatingGroup(false)
@@ -293,6 +303,9 @@ export default function Students() {
   const fetchEnrollmentSubjects = async () => {
     try {
       const subjectsRes = await apiClient.getSubjects()
+      if ((subjectsRes as any)?.error) {
+        throw new Error((subjectsRes as any).error)
+      }
       const subjectsData = Array.isArray(subjectsRes.data) 
         ? subjectsRes.data 
         : (subjectsRes.data as any)?.subjects || []

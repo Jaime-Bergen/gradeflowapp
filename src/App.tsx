@@ -23,8 +23,8 @@ const Subjects = lazy(() => import('./components/Subjects'))
 const GradeEntry = lazy(() => import('./components/GradeEntry.tsx'))
 const Reports = lazy(() => import('./components/Reports.tsx'))
 const SystemAdmin = lazy(() => import('./components/SystemAdmin.tsx'))
-const Help = lazy(() => import('./components/Help'))
-const AdminDanger = lazy(() => import('@/components/AdminDanger'))
+const Help = lazy(() => import('./components/Help.tsx'))
+const AdminDanger = lazy(() => import('@/components/AdminDanger.tsx'))
 
 // Global type declarations
 declare global {
