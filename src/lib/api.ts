@@ -325,7 +325,7 @@ class ApiClient {
 
   async executeRolloverSubjects(
     scopeId: string,
-    payload: { targetSchoolYearId: string }
+    payload: { targetSchoolYearId: string; subjectIds?: string[] }
   ) {
     return this.request(`/rollover/scopes/${scopeId}/execute/subjects`, {
       method: 'POST',

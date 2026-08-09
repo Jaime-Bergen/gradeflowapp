@@ -514,7 +514,7 @@ router.post('/scopes/:scopeId/execute/subjects', async (req: AuthRequest, res, n
   const db = getDB();
   const schoolYearId = req.schoolYearId;
   const { scopeId } = req.params;
-  const { targetSchoolYearId } = req.body || {};
+  const { targetSchoolYearId, subjectIds = [] } = req.body || {};
 
   if (!targetSchoolYearId) {
     return res.status(400).json({ error: 'targetSchoolYearId is required' });
@@ -601,6 +601,10 @@ router.post('/scopes/:scopeId/execute/subjects', async (req: AuthRequest, res, n
         });
       }
 
+      const requestedSubjectIds = Array.isArray(subjectIds)
+        ? subjectIds.map((id: any) => String(id)).filter((id: string) => id.length > 0)
+        : [];
+
       const sourceSubjectsResult = await db.query(
         `SELECT DISTINCT sub.id, sub.name, sub.report_card_name, sub.description
          FROM student_subjects ss
@@ -609,8 +613,9 @@ router.post('/scopes/:scopeId/execute/subjects', async (req: AuthRequest, res, n
            AND sub.school_year_id = $2
            AND sub.user_id = $1
            AND ss.student_id = ANY($3::uuid[])
+           AND ($4::text[] IS NULL OR array_length($4::text[], 1) = 0 OR sub.id::text = ANY($4::text[]))
          ORDER BY sub.name`,
-        [req.userId, schoolYearId, scopedStudentIds]
+        [req.userId, schoolYearId, scopedStudentIds, requestedSubjectIds.length > 0 ? requestedSubjectIds : null]
       );
 
       const sourceToTargetSubjectMap = new Map<string, string>();

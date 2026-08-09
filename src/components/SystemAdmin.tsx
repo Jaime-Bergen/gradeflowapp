@@ -32,7 +32,7 @@ import { toast } from 'sonner'
 import { v4 as uuidv4 } from 'uuid'
 import { apiClient } from '@/lib/api'
 import { Student, Subject, Grade, GradingPeriod, SchoolYear } from '@/lib/types'
-import RolloverMenu from './RolloverMenu'
+import TermRolloverAssistant from './TermRolloverAssistant'
 
 export default function SystemAdmin() {
   const [students, setStudents] = useState<Student[]>([])
@@ -109,7 +109,6 @@ export default function SystemAdmin() {
     open: false,
     type: 'json' as 'json' | 'sql'
   })
-  const [rolloverDialogOpen, setRolloverDialogOpen] = useState(false)
   const [restoreOptions, setRestoreOptions] = useState({
     mergeData: true,
     updateSettings: false
@@ -878,9 +877,7 @@ export default function SystemAdmin() {
             <TabsTrigger value="teachers">Teachers</TabsTrigger>
             <TabsTrigger value="backups">Backups</TabsTrigger>
           </TabsList>
-          <Button variant="secondary" onClick={() => setRolloverDialogOpen(true)}>
-            Term Rollover
-          </Button>
+          <TermRolloverAssistant />
         </div>
 
         <TabsContent value="overview" className="space-y-6">
@@ -1518,15 +1515,6 @@ export default function SystemAdmin() {
         </TabsContent>
 
       </Tabs>
-
-      <Dialog open={rolloverDialogOpen} onOpenChange={setRolloverDialogOpen}>
-        <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Term Rollover</DialogTitle>
-          </DialogHeader>
-          <RolloverMenu />
-        </DialogContent>
-      </Dialog>
 
       {/* Student Group Dialog */}
       <Dialog open={groupDialog.open} onOpenChange={(open) => !open && closeGroupDialog()}>
