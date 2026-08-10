@@ -31,7 +31,7 @@ import {
 import { toast } from 'sonner'
 import { v4 as uuidv4 } from 'uuid'
 import { apiClient } from '@/lib/api'
-import { Student, Subject, Grade, GradingPeriod, SchoolYear } from '@/lib/types'
+import { Student, Subject, Grade, GradingPeriod } from '@/lib/types'
 import TermRolloverAssistant from './TermRolloverAssistant'
 
 export default function SystemAdmin() {
@@ -49,10 +49,8 @@ export default function SystemAdmin() {
     firstDayOfSchool: '',
     gradingPeriods: 6,
     gradingMode: 'dates' as 'dates',
-    autoEnrollSubjects: true,
-    activeSchoolYearId: ''
+    autoEnrollSubjects: true
   })
-  const [licensedSchoolYears, setLicensedSchoolYears] = useState<SchoolYear[]>([])
   const [passwordChange, setPasswordChange] = useState({
     currentPassword: '',
     newPassword: '',
@@ -170,10 +168,6 @@ export default function SystemAdmin() {
       setGradingPeriods(sortedPeriods)
       setGradingPeriodsDirty(false)
 
-      const licensedYearsRes = await apiClient.getLicensedSchoolYears()
-      const licensedYears = Array.isArray(licensedYearsRes.data) ? licensedYearsRes.data : []
-      setLicensedSchoolYears(licensedYears as SchoolYear[])
-
       // Load settings from Users
       await loadSettings()
 
@@ -216,8 +210,7 @@ export default function SystemAdmin() {
           firstDayOfSchool: formattedDate,
           gradingPeriods: user.grading_periods || 6,
           gradingMode: 'dates',
-          autoEnrollSubjects: user.auto_enroll_subjects ?? true,
-          activeSchoolYearId: user.active_school_year_id || ''
+          autoEnrollSubjects: user.auto_enroll_subjects ?? true
         })
       }
     } catch (error) {
@@ -232,8 +225,7 @@ export default function SystemAdmin() {
         first_day_of_school: schoolSettings.firstDayOfSchool,
         grading_periods: schoolSettings.gradingPeriods,
         grading_mode: 'dates',
-        auto_enroll_subjects: schoolSettings.autoEnrollSubjects,
-        active_school_year_id: schoolSettings.activeSchoolYearId || null
+        auto_enroll_subjects: schoolSettings.autoEnrollSubjects
       })
       window.dispatchEvent(new CustomEvent('gradeflow-profile-updated'))
       toast.success('School settings saved successfully')
@@ -1025,35 +1017,6 @@ export default function SystemAdmin() {
                       <SelectItem value="6">6 Periods (Six Weeks)</SelectItem>
                     </SelectContent>
                   </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="activeSchoolYear">Active School Year</Label>
-                  <Select
-                    value={schoolSettings.activeSchoolYearId || undefined}
-                    onValueChange={(value) => setSchoolSettings(prev => ({ ...prev, activeSchoolYearId: value }))}
-                  >
-                    <SelectTrigger id="activeSchoolYear">
-                      <SelectValue placeholder="Select licensed school year" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {licensedSchoolYears.map((year) => (
-                        <SelectItem key={year.id} value={year.id}>
-                          {year.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">
-                    Only licensed years are available. The selected year becomes your working data context.
-                  </p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Grading Method</Label>
-                  <div className="rounded-md border p-3 bg-amber-50 text-amber-900 text-xs">
-                    GradeFlow uses date-based grading periods. Reports filter grades by lesson date using the configured grading period ranges.
-                  </div>
                 </div>
 
                 <div className="space-y-3">

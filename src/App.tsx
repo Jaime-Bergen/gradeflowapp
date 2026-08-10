@@ -1,5 +1,10 @@
 import { Suspense, lazy, useState, useEffect } from 'react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Routes, Route } from 'react-router-dom'
 import { 
   GraduationCap, 
@@ -14,8 +19,9 @@ import {
 
 import UserAuth, { UserData } from './components/UserAuth'
 import TeacherSelector from './components/TeacherSelector'
-import { Toaster } from 'sonner'
+import { Toaster, toast } from 'sonner'
 import { apiClient } from '@/lib/api'
+import { SchoolYear } from '@/lib/types'
 
 const Dashboard = lazy(() => import('./components/Dashboard'))
 const Students = lazy(() => import('./components/Students'))
@@ -25,6 +31,8 @@ const Reports = lazy(() => import('./components/Reports.tsx'))
 const SystemAdmin = lazy(() => import('./components/SystemAdmin.tsx'))
 const Help = lazy(() => import('./components/Help.tsx'))
 const AdminDanger = lazy(() => import('@/components/AdminDanger.tsx'))
+const PURCHASE_URL = 'https://gradeflowapp.com/purchase'
+const SALES_EMAIL = 'sales@gradeflowapp.com'
 
 // Global type declarations
 declare global {
@@ -38,6 +46,34 @@ const getCurrentSchoolYearLabel = () => {
   const now = new Date()
   const year = now.getMonth() >= 7 ? now.getFullYear() : now.getFullYear() - 1
   return `${year}-${year + 1}`
+}
+
+const getYearContextLabelFromDateRange = (
+  activeSchoolYearId: string,
+  licensedSchoolYears: SchoolYear[]
+) => {
+  const activeYear = licensedSchoolYears.find((year) => year.id === activeSchoolYearId)
+  if (!activeYear?.start_date || !activeYear?.end_date) {
+    return 'Historical Context'
+  }
+
+  const startDate = new Date(activeYear.start_date)
+  const endDate = new Date(activeYear.end_date)
+  const now = new Date()
+
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+    return 'Historical Context'
+  }
+
+  if (now < startDate) {
+    return 'Future Context'
+  }
+
+  if (now > endDate) {
+    return 'Historical Context'
+  }
+
+  return 'Current Context'
 }
 
 function App() {
@@ -56,24 +92,92 @@ function App() {
   const [activeTab, setActiveTab] = useState("dashboard")
   const [currentUser, setCurrentUser] = useState<UserData | null>(null)
   const [activeSchoolYearLabel, setActiveSchoolYearLabel] = useState<string | null>(null)
+  const [activeSchoolYearId, setActiveSchoolYearId] = useState('')
+  const [licensedSchoolYears, setLicensedSchoolYears] = useState<SchoolYear[]>([])
+  const [schoolYearDialogOpen, setSchoolYearDialogOpen] = useState(false)
+  const [noLicenseDialogOpen, setNoLicenseDialogOpen] = useState(false)
+  const [pendingSchoolYearId, setPendingSchoolYearId] = useState('')
+  const [isUpdatingSchoolYear, setIsUpdatingSchoolYear] = useState(false)
 
   const refreshYearContext = async () => {
     if (!apiClient.isAuthenticated()) {
       setActiveSchoolYearLabel(null)
+      setActiveSchoolYearId('')
+      setLicensedSchoolYears([])
+      setNoLicenseDialogOpen(false)
+      setPendingSchoolYearId('')
       return
     }
 
     try {
       const profile = await apiClient.getProfile()
-      setActiveSchoolYearLabel((profile.data as any)?.active_school_year_label || null)
+      if (profile.error) {
+        throw new Error(profile.error)
+      }
+
+      const profileData = (profile.data as any) || {}
+      const resolvedActiveYearId = profileData.active_school_year_id || ''
+      const years = Array.isArray(profileData.licensed_school_years) ? profileData.licensed_school_years : []
+
+      setActiveSchoolYearLabel(profileData.active_school_year_label || null)
+      setActiveSchoolYearId(resolvedActiveYearId)
+      setLicensedSchoolYears(years)
+      setPendingSchoolYearId(resolvedActiveYearId || years[0]?.id || '')
+      setNoLicenseDialogOpen(years.length === 0)
     } catch (error) {
       console.error('Failed to refresh school year context:', error)
+    }
+  }
+
+  const openSchoolYearDialog = () => {
+    if (licensedSchoolYears.length === 0) {
+      setNoLicenseDialogOpen(true)
+      return
+    }
+
+    setPendingSchoolYearId(activeSchoolYearId || licensedSchoolYears[0]?.id || '')
+    setSchoolYearDialogOpen(true)
+  }
+
+  const saveActiveSchoolYear = async () => {
+    if (!pendingSchoolYearId) {
+      toast.error('Select a licensed school year first')
+      return
+    }
+
+    if (pendingSchoolYearId === activeSchoolYearId) {
+      setSchoolYearDialogOpen(false)
+      return
+    }
+
+    try {
+      setIsUpdatingSchoolYear(true)
+      const response = await apiClient.setActiveSchoolYear(pendingSchoolYearId)
+      if (response.error) {
+        throw new Error(response.error)
+      }
+
+      const updated = (response.data as any) || {}
+      setActiveSchoolYearId(updated.active_school_year_id || pendingSchoolYearId)
+      setActiveSchoolYearLabel(updated.active_school_year_label || null)
+      window.dispatchEvent(new CustomEvent('gradeflow-profile-updated'))
+      toast.success('Active school year updated')
+      setSchoolYearDialogOpen(false)
+    } catch (error) {
+      console.error('Failed to set active school year:', error)
+      toast.error('Failed to set active school year')
+    } finally {
+      setIsUpdatingSchoolYear(false)
     }
   }
 
   useEffect(() => {
     if (!currentUser) {
       setActiveSchoolYearLabel(null)
+      setActiveSchoolYearId('')
+      setLicensedSchoolYears([])
+      setNoLicenseDialogOpen(false)
+      setPendingSchoolYearId('')
       return
     }
 
@@ -109,6 +213,8 @@ function App() {
     }
   }
 
+  const schoolYearContextLabel = getYearContextLabelFromDateRange(activeSchoolYearId, licensedSchoolYears)
+
   return (
     <>
       <Routes>
@@ -130,21 +236,43 @@ function App() {
                         <p className="text-sm text-muted-foreground">Streamlined Grade Management</p>
                       </div>
                     </div>
-                    <TeacherSelector onTeacherChange={handleTeacherChange} />
+                    <div className="flex flex-col items-end gap-1">
+                      <TeacherSelector onTeacherChange={handleTeacherChange} />
+                      <button
+                        type="button"
+                        onClick={openSchoolYearDialog}
+                        className="text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
+                      >
+                        Active License: {activeSchoolYearLabel || 'None'}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </header>
-              {activeSchoolYearLabel && (
-                <div className={`border-b px-6 py-2 text-sm ${
-                  activeSchoolYearLabel === getCurrentSchoolYearLabel()
-                    ? 'bg-green-50 text-green-900 border-green-200'
-                    : 'bg-amber-50 text-amber-900 border-amber-200'
-                }`}>
+              <div className="border-b border-red-200 bg-red-50">
+                <div className="container mx-auto px-6 py-2">
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          className="rounded-full border border-red-300 bg-red-100 px-3 py-1 text-xs font-semibold text-red-900 hover:bg-red-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
+                        >
+                          Platform updates underway
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" className="max-w-md p-3 text-xs leading-relaxed">
+                        GradeFlowApp is currently undergoing updates. If you notice unusual behavior or half-finished features, please bear with me. This should all come together in the next few days. Thank you for your understanding. - James
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+              </div>
+              {activeSchoolYearLabel && activeSchoolYearLabel !== getCurrentSchoolYearLabel() && (
+                <div className="border-b px-6 py-2 text-sm bg-amber-50 text-amber-900 border-amber-200">
                   <div className="container mx-auto flex items-center justify-between gap-3">
                     <span className="font-medium">Active School Year: {activeSchoolYearLabel}</span>
-                    {activeSchoolYearLabel !== getCurrentSchoolYearLabel() && (
-                      <span className="text-xs font-semibold uppercase tracking-wide">Historical Context</span>
-                    )}
+                    <span className="text-xs font-semibold uppercase tracking-wide">{schoolYearContextLabel}</span>
                   </div>
                 </div>
               )}
@@ -228,6 +356,88 @@ function App() {
           )
         } />
       </Routes>
+
+      <Dialog open={schoolYearDialogOpen} onOpenChange={setSchoolYearDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Select Active School Year</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="active-school-year-dialog">Licensed School Years</Label>
+              <Select value={pendingSchoolYearId || undefined} onValueChange={setPendingSchoolYearId}>
+                <SelectTrigger id="active-school-year-dialog">
+                  <SelectValue placeholder="Select licensed school year" />
+                </SelectTrigger>
+                <SelectContent>
+                  {licensedSchoolYears.map((year) => (
+                    <SelectItem key={year.id} value={year.id}>
+                      {year.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <p className="text-xs text-muted-foreground">
+              Need access to another school year? Purchase a license at{' '}
+              <a href={PURCHASE_URL} target="_blank" rel="noreferrer" className="underline">
+                gradeflowapp.com/purchase
+              </a>
+              .
+            </p>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="outline" onClick={() => setSchoolYearDialogOpen(false)} disabled={isUpdatingSchoolYear}>
+                Cancel
+              </Button>
+              <Button onClick={saveActiveSchoolYear} disabled={!pendingSchoolYearId || isUpdatingSchoolYear}>
+                {isUpdatingSchoolYear ? 'Saving...' : 'Set Active Year'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={noLicenseDialogOpen} onOpenChange={setNoLicenseDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>No Active License Found</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 text-sm">
+            <p className="text-muted-foreground">
+              Your account does not currently have a licensed school year. You can purchase a license to activate GradeFlow features.
+            </p>
+
+            <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-amber-900">
+              Year-specific features are unavailable until a license is added.
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <Button asChild>
+                <a href={PURCHASE_URL} target="_blank" rel="noreferrer">
+                  Purchase License
+                </a>
+              </Button>
+              <Button variant="outline" asChild>
+                <a href={`mailto:${SALES_EMAIL}`}>
+                  Contact Sales
+                </a>
+              </Button>
+              <Button variant="ghost" onClick={() => { void refreshYearContext() }}>
+                I Purchased, Refresh
+              </Button>
+            </div>
+
+            <p className="text-xs text-muted-foreground">
+              Questions? Email {SALES_EMAIL}
+            </p>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <Toaster />
     </>
   )

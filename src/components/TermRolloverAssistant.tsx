@@ -429,7 +429,7 @@ export default function TermRolloverAssistant() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="term-first-day">First Day Of School</Label>
+                <Label htmlFor="term-first-day">First Day Of School (new term)</Label>
                 <Input
                   id="term-first-day"
                   type="date"
