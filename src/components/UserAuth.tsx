@@ -181,7 +181,12 @@ export default function UserAuth({ onUserChange }: UserAuthProps) {
           // Don't show error to user as account was still created successfully
         }
         
-        toast.success('Account created successfully!')
+        const verificationRequired = Boolean((response.data as any)?.verificationRequired)
+        toast.success(
+          verificationRequired
+            ? 'Account created. Please verify your email before purchasing a license.'
+            : 'Account created successfully!'
+        )
         setShowDialog(false)
         resetForm()
       }
@@ -510,6 +515,9 @@ export default function UserAuth({ onUserChange }: UserAuthProps) {
               </TabsContent>
 
               <TabsContent value="signup" className="space-y-4 mt-4">
+                <p className="text-xs text-muted-foreground">
+                  Sign up with your real email. You will need to verify it before purchasing a license.
+                </p>
                 <form onSubmit={(e) => { e.preventDefault(); signUp(); }}>
                   <div>
                     <Label htmlFor="signup-name">Full Name</Label>

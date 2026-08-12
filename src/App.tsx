@@ -31,7 +31,9 @@ const Reports = lazy(() => import('./components/Reports.tsx'))
 const SystemAdmin = lazy(() => import('./components/SystemAdmin.tsx'))
 const Help = lazy(() => import('./components/Help.tsx'))
 const AdminDanger = lazy(() => import('@/components/AdminDanger.tsx'))
-const PURCHASE_URL = 'https://gradeflowapp.com/purchase'
+const Purchase = lazy(() => import('./components/Purchase.tsx'))
+const VerifyEmail = lazy(() => import('./components/VerifyEmail.tsx'))
+const PURCHASE_URL = '/purchase'
 const SALES_EMAIL = 'sales@gradeflowapp.com'
 
 // Global type declarations
@@ -219,6 +221,8 @@ function App() {
     <>
       <Routes>
         <Route path="/AdminDanger" element={<Suspense fallback={tabFallback}><AdminDanger /></Suspense>} />
+        <Route path="/purchase" element={<Suspense fallback={tabFallback}><Purchase /></Suspense>} />
+        <Route path="/verify-email" element={<Suspense fallback={tabFallback}><VerifyEmail /></Suspense>} />
         <Route path="*" element={
           !currentUser ? (
             <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4 gap-8">

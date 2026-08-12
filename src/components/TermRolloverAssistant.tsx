@@ -46,7 +46,7 @@ type SubjectRow = {
 }
 
 const AUTO_SCOPE_NAME = 'Guided Term Rollover'
-const PURCHASE_URL = 'https://gradeflowapp.com/purchase'
+const PURCHASE_URL = import.meta.env.VITE_PURCHASE_URL || 'https://buy.stripe.com/test_00w9AVfDJ2vR4nx1sy8so00'
 
 export default function TermRolloverAssistant() {
   const [activeStep, setActiveStep] = useState<0 | 1 | 2 | 3 | 4 | 5>(0)

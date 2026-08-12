@@ -201,6 +201,20 @@ class ApiClient {
     });
   }
 
+  async sendVerificationEmail() {
+    return this.request<{message: string}>('/auth/send-verification-email', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    })
+  }
+
+  async verifyEmail(token: string) {
+    return this.request<{message: string}>('/auth/verify-email', {
+      method: 'POST',
+      body: JSON.stringify({ token }),
+    })
+  }
+
   async getProfile() {
     return this.request<User>('/users/profile');
   }
@@ -222,6 +236,10 @@ class ApiClient {
 
   async getLicensedSchoolYears() {
     return this.request('/users/licensed-years')
+  }
+
+  async getAvailableSchoolYears() {
+    return this.request<SchoolYear[]>('/users/school-years')
   }
 
   async setActiveSchoolYear(schoolYearId: string) {
@@ -279,6 +297,20 @@ class ApiClient {
       headers: {
         'x-admin-passcode': adminPasscode,
       },
+    })
+  }
+
+  async createBillingCheckoutSession(payload: { plan: 'full' | 'single'; schoolYearId: string }) {
+    return this.request<{ url: string }>('/billing/checkout-session', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  }
+
+  async claimFreeYearLicense(payload: { schoolYearId: string; schoolName: string; country: string }) {
+    return this.request<{ message: string; activeSchoolYearLabel?: string }>('/billing/claim-free-year', {
+      method: 'POST',
+      body: JSON.stringify(payload),
     })
   }
 

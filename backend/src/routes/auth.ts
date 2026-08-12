@@ -5,10 +5,90 @@ import crypto from 'crypto';
 import nodemailer from 'nodemailer';
 import { getDB } from '../database/connection';
 import { validateRequest, schemas } from '../middleware/validation';
-import { AuthRequest } from '../middleware/auth';
+import { AuthRequest, authenticateToken } from '../middleware/auth';
 import { createDefaultStudentGroups, createDefaultGradeCategoryTypes } from '../database/seedDefaults';
 
 const router = express.Router();
+
+const getFrontendUrl = () => {
+  return (process.env.FRONTEND_URL || 'https://gradeflowapp.com').replace(/\/$/, '')
+}
+
+const createMailerTransport = () => {
+  const smtpPort = parseInt(process.env.SMTP_PORT || '587', 10)
+  const smtpSecure = process.env.SMTP_SECURE
+    ? process.env.SMTP_SECURE.toLowerCase() === 'true'
+    : smtpPort === 465
+
+  return nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port: smtpPort,
+    secure: smtpSecure,
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS,
+    },
+  })
+}
+
+const createEmailVerificationToken = (userId: string, email: string) => {
+  const signOptions: SignOptions = { expiresIn: '72h' }
+  return jwt.sign(
+    {
+      userId,
+      email,
+      purpose: 'email_verification',
+    },
+    process.env.JWT_SECRET!,
+    signOptions
+  )
+}
+
+async function sendVerificationEmail(email: string, name: string, token: string): Promise<void> {
+  try {
+    const transporter = createMailerTransport()
+    const verificationUrl = `${getFrontendUrl()}/verify-email?token=${encodeURIComponent(token)}`
+
+    const mailOptions = {
+      from: `"${process.env.FROM_NAME || 'GradeFlow'}" <${process.env.FROM_EMAIL}>`,
+      to: email,
+      subject: 'Verify your email - GradeFlow',
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #333;">Verify Your Email</h2>
+          <p>Hello ${name},</p>
+          <p>Please verify your email address to activate licensing and purchase access.</p>
+          <p>
+            <a href="${verificationUrl}" style="display:inline-block;background:#2563eb;color:#fff;padding:10px 16px;border-radius:6px;text-decoration:none;">
+              Verify Email Address
+            </a>
+          </p>
+          <p>If the button does not work, use this link:</p>
+          <p><a href="${verificationUrl}">${verificationUrl}</a></p>
+          <hr style="margin: 30px 0; border: none; border-top: 1px solid #ddd;">
+          <p style="color: #666; font-size: 12px;">
+            This email was sent from GradeFlow.
+          </p>
+        </div>
+      `,
+      text: `
+Verify your email - GradeFlow
+
+Hello ${name},
+
+Please verify your email address to activate licensing and purchase access.
+
+Verification link:
+${verificationUrl}
+      `,
+    }
+
+    const info = await transporter.sendMail(mailOptions)
+    console.log(`[EMAIL VERIFY] Email sent to ${email}. Message ID: ${info.messageId}`)
+  } catch (error) {
+    console.error(`[EMAIL VERIFY ERROR] Failed to send email to ${email}:`, error)
+  }
+}
 
 // Register new user
 router.post('/register', validateRequest(schemas.register), async (req, res, next): Promise<void> => {
@@ -35,6 +115,9 @@ router.post('/register', validateRequest(schemas.register), async (req, res, nex
 
     const user = result.rows[0];
 
+    const verificationToken = createEmailVerificationToken(user.id, user.email)
+    await sendVerificationEmail(user.email, user.name, verificationToken)
+
     // Create default student groups and grade categories for new user
     try {
       await createDefaultStudentGroups(user.id);
@@ -60,19 +143,92 @@ router.post('/register', validateRequest(schemas.register), async (req, res, nex
     );
 
     res.status(201).json({
-      message: 'User created successfully',
+      message: 'User created successfully. Please check your email to verify your account.',
       token,
       user: {
         id: user.id,
         email: user.email,
         name: user.name,
-        createdAt: user.created_at
-      }
+        createdAt: user.created_at,
+        email_verified: false
+      },
+      verificationRequired: true
     });
   } catch (error) {
     next(error);
   }
 });
+
+router.post('/send-verification-email', authenticateToken, async (req: AuthRequest, res, next): Promise<void> => {
+  try {
+    const db = getDB()
+    const userResult = await db.query(
+      'SELECT id, email, name, email_verified FROM users WHERE id = $1',
+      [req.userId]
+    )
+
+    if (userResult.rows.length === 0) {
+      res.status(404).json({ error: 'User not found' })
+      return
+    }
+
+    const user = userResult.rows[0]
+
+    if (user.email_verified) {
+      res.json({ message: 'Email is already verified.' })
+      return
+    }
+
+    const verificationToken = createEmailVerificationToken(user.id, user.email)
+    await sendVerificationEmail(user.email, user.name, verificationToken)
+
+    res.json({ message: 'Verification email sent. Please check your inbox.' })
+  } catch (error) {
+    next(error)
+  }
+})
+
+router.post('/verify-email', async (req, res, next): Promise<void> => {
+  try {
+    const { token } = req.body
+    if (!token) {
+      res.status(400).json({ error: 'Verification token is required' })
+      return
+    }
+
+    let decoded: any
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET!)
+    } catch (error) {
+      res.status(400).json({ error: 'Verification link is invalid or has expired' })
+      return
+    }
+
+    if (decoded?.purpose !== 'email_verification' || !decoded?.userId || !decoded?.email) {
+      res.status(400).json({ error: 'Invalid verification token payload' })
+      return
+    }
+
+    const db = getDB()
+    const updateResult = await db.query(
+      `UPDATE users
+       SET email_verified = true,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1 AND email = $2
+       RETURNING id`,
+      [decoded.userId, decoded.email]
+    )
+
+    if (updateResult.rows.length === 0) {
+      res.status(404).json({ error: 'User not found for verification token' })
+      return
+    }
+
+    res.json({ message: 'Email verified successfully.' })
+  } catch (error) {
+    next(error)
+  }
+})
 
 // Login user
 router.post('/login', validateRequest(schemas.login), async (req, res, next): Promise<void> => {
@@ -202,15 +358,7 @@ router.post('/reset-password', validateRequest(schemas.resetPassword), async (re
 async function sendResetEmail(email: string, name: string, newPassword: string): Promise<void> {
   try {
     // Create transporter using environment variables
-    const transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: parseInt(process.env.SMTP_PORT || '587'),
-      secure: false, // true for 465, false for other ports
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
-      },
-    });
+    const transporter = createMailerTransport();
 
     // Email content
     const mailOptions = {

@@ -199,6 +199,21 @@ router.get('/licensed-years', async (req: AuthRequest, res, next) => {
   }
 });
 
+// List all available school years (for purchase selection)
+router.get('/school-years', async (req: AuthRequest, res, next) => {
+  try {
+    const db = getDB();
+    const { rows } = await db.query(
+      `SELECT id, label, start_date, end_date, created_at, updated_at
+       FROM school_years
+       ORDER BY start_date DESC`
+    );
+    res.json(rows);
+  } catch (error) {
+    next(error);
+  }
+});
+
 // Set active school year for current user
 router.put('/active-school-year', async (req: AuthRequest, res, next) => {
   try {

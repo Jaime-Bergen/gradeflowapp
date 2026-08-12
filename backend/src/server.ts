@@ -24,6 +24,7 @@ import utilsRoutes from './routes/utils';
 import teachersRoutes from './routes/teachers';
 import attendanceRoutes from './routes/attendance';
 import rolloverRoutes from './routes/rollover';
+import { billingRoutes, billingWebhookRoutes } from './routes/billing';
 import { errorHandler } from './middleware/errorHandler';
 import { authenticateToken, resolveSchoolYearContext } from './middleware/auth';
 
@@ -83,6 +84,9 @@ if (process.env.NODE_ENV === 'production' || process.env.ENABLE_RATE_LIMIT === '
   app.use(limiter);
 }
 
+// Stripe webhook must read raw body before JSON parser
+app.use('/api/billing/webhooks', billingWebhookRoutes);
+
 // Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
@@ -109,6 +113,7 @@ app.use('/api/feedback', authenticateToken, feedbackRoutes);
 app.use('/api/teachers', authenticateToken, teachersRoutes);
 app.use('/api/attendance', authenticateToken, resolveSchoolYearContext, attendanceRoutes);
 app.use('/api/rollover', authenticateToken, resolveSchoolYearContext, rolloverRoutes);
+app.use('/api/billing', billingRoutes);
 app.use('/api/utils', utilsRoutes);
 app.use('/api/metadata', metadataRoutes);
 app.use('/api/backups', backupRoutes);

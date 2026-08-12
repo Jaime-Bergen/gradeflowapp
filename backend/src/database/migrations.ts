@@ -8,6 +8,7 @@ export const runMigrations = async (): Promise<void> => {
     await createUsersTable(db);
     await createSchoolYearsTable(db);
     await createUserSchoolYearLicensesTable(db);
+    await createFreeSchoolYearClaimsTable(db);
     await createStudentGroupsTable(db);
     await createStudentsTable(db);
     await createAttendanceRecordsTable(db);
@@ -904,6 +905,31 @@ const createUserSchoolYearLicensesTable = async (db: any) => {
     console.log('✅ User school year licenses table created/verified');
   } catch (error) {
     console.error('Error creating user_school_year_licenses table:', error);
+    throw error;
+  }
+};
+
+const createFreeSchoolYearClaimsTable = async (db: any) => {
+  try {
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS free_school_year_claims (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        school_year_id UUID NOT NULL REFERENCES school_years(id) ON DELETE RESTRICT,
+        school_name VARCHAR(255) NOT NULL,
+        country VARCHAR(120) NOT NULL,
+        school_fingerprint VARCHAR(128) NOT NULL UNIQUE,
+        claim_source VARCHAR(40) NOT NULL DEFAULT 'self_service',
+        notes TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_free_claims_user ON free_school_year_claims(user_id);
+      CREATE INDEX IF NOT EXISTS idx_free_claims_year ON free_school_year_claims(school_year_id);
+    `);
+    console.log('✅ Free school year claims table created/verified');
+  } catch (error) {
+    console.error('Error creating free_school_year_claims table:', error);
     throw error;
   }
 };
