@@ -314,6 +314,18 @@ class ApiClient {
     })
   }
 
+  async getBillingCheckoutSessionStatus(sessionId: string) {
+    return this.request<{
+      sessionId: string
+      status: string | null
+      paymentStatus: string | null
+      mode: string | null
+      schoolYearId: string
+      hasLicense: boolean
+      paid: boolean
+    }>(`/billing/checkout-session-status?sessionId=${encodeURIComponent(sessionId)}`)
+  }
+
   async getRolloverScopes(schoolYearId?: string) {
     return this.request<RolloverScope[]>(this.withSchoolYear('/rollover/scopes', schoolYearId))
   }

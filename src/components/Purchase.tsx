@@ -45,6 +45,7 @@ const getPreferredSchoolYearId = (years: SchoolYear[]): string => {
 export default function Purchase() {
   const [accountEmail, setAccountEmail] = useState<string | null>(null)
   const [emailVerified, setEmailVerified] = useState<boolean>(false)
+  const [ownedSchoolYearIds, setOwnedSchoolYearIds] = useState<string[]>([])
   const [isLoadingAccount, setIsLoadingAccount] = useState(true)
   const [availableSchoolYears, setAvailableSchoolYears] = useState<SchoolYear[]>([])
   const [selectedSchoolYearId, setSelectedSchoolYearId] = useState<string>('')
@@ -53,7 +54,55 @@ export default function Purchase() {
   const [isSendingVerification, setIsSendingVerification] = useState(false)
   const [isStartingCheckout, setIsStartingCheckout] = useState<'full' | 'single' | null>(null)
   const [isClaimingFreeYear, setIsClaimingFreeYear] = useState(false)
-  const canPurchase = !isLoadingAccount && !!accountEmail && emailVerified && !!selectedSchoolYearId
+  const [statusMessage, setStatusMessage] = useState<string | null>(null)
+  const [statusType, setStatusType] = useState<'success' | 'info' | null>(null)
+  const [isCheckingCheckoutStatus, setIsCheckingCheckoutStatus] = useState(false)
+
+  const hasAnyOwnedLicense = ownedSchoolYearIds.length > 0
+  const isSelectedYearOwned = selectedSchoolYearId ? ownedSchoolYearIds.includes(selectedSchoolYearId) : false
+  const canPurchase = !isLoadingAccount && !!accountEmail && emailVerified && !!selectedSchoolYearId && !isSelectedYearOwned
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const status = params.get('status')
+    const sessionId = params.get('session_id') || ''
+
+    if (status === 'success' && sessionId) {
+      const checkSession = async () => {
+        try {
+          setIsCheckingCheckoutStatus(true)
+          const response = await apiClient.getBillingCheckoutSessionStatus(sessionId)
+          if (response.error) {
+            setStatusType('info')
+            setStatusMessage('Payment return detected, but we could not verify checkout status yet. Please refresh in a moment.')
+            return
+          }
+
+          const data = response.data
+          if (data?.paid && data?.hasLicense) {
+            setStatusType('success')
+            setStatusMessage('Payment complete and license activated. Use the button below to return to the app.')
+          } else if (data?.paid && !data?.hasLicense) {
+            setStatusType('info')
+            setStatusMessage('Payment completed. Your license is still being applied. Please refresh in a few seconds.')
+          } else {
+            setStatusType('info')
+            setStatusMessage('Checkout was not completed as a paid purchase. No license was added.')
+          }
+        } catch (error) {
+          setStatusType('info')
+          setStatusMessage('Could not verify checkout status yet. Please refresh in a moment.')
+        } finally {
+          setIsCheckingCheckoutStatus(false)
+        }
+      }
+
+      void checkSession()
+    } else if (status === 'cancelled') {
+      setStatusType('info')
+      setStatusMessage('Checkout was cancelled. You can choose another option when you are ready.')
+    }
+  }, [])
 
   useEffect(() => {
     const loadAccount = async () => {
@@ -73,9 +122,17 @@ export default function Purchase() {
         setAccountEmail(data.email || null)
         setEmailVerified(Boolean(data.email_verified))
         setSchoolName((data.school_name || '').trim())
+        const ownedYears = Array.isArray(data.licensed_school_years)
+          ? data.licensed_school_years.map((year: any) => String(year.id))
+          : []
+        setOwnedSchoolYearIds(ownedYears)
         setAvailableSchoolYears(years)
         if (years.length > 0) {
-          setSelectedSchoolYearId(getPreferredSchoolYearId(years))
+          const preferred = getPreferredSchoolYearId(years)
+          const fallbackUnowned = years.find((year) => !ownedYears.includes(String(year.id)))
+          setSelectedSchoolYearId(
+            ownedYears.includes(preferred) ? (fallbackUnowned?.id || preferred) : preferred
+          )
         }
       } catch (error) {
         console.error('Failed to load account for purchase page:', error)
@@ -164,7 +221,10 @@ export default function Purchase() {
       }
 
       toast.success(response.data?.message || 'Free year activated successfully.')
+      setStatusType('success')
+      setStatusMessage('Free year activated successfully. Use the button below to return to the app.')
       window.dispatchEvent(new CustomEvent('gradeflow-profile-updated'))
+      setOwnedSchoolYearIds((prev) => (prev.includes(selectedSchoolYearId) ? prev : [...prev, selectedSchoolYearId]))
     } catch (error) {
       console.error('Failed to claim free year:', error)
       toast.error('Failed to claim free year.')
@@ -190,6 +250,28 @@ export default function Purchase() {
       </header>
 
       <main className="container mx-auto px-6 py-8 space-y-6">
+        {statusMessage && (
+          <Card className={statusType === 'success' ? 'border-emerald-300 bg-emerald-50' : 'border-blue-200 bg-blue-50'}>
+            <CardContent className="pt-6 space-y-3">
+              <p className={statusType === 'success' ? 'text-sm text-emerald-900' : 'text-sm text-blue-900'}>{statusMessage}</p>
+              {isCheckingCheckoutStatus && (
+                <p className="text-xs text-blue-900">Verifying payment status with Stripe...</p>
+              )}
+              <div className="flex flex-wrap gap-2">
+                <Button asChild>
+                  <a href="/">Return To GradeFlow App</a>
+                </Button>
+                <Button variant="outline" onClick={() => {
+                  setStatusMessage(null)
+                  setStatusType(null)
+                }}>
+                  Dismiss
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         <Card className="border-blue-200 bg-blue-50/60">
           <CardContent className="pt-6 space-y-3 text-sm text-blue-900">
             <p className="font-medium">Before You Purchase</p>
@@ -235,30 +317,39 @@ export default function Purchase() {
               {selectedYear && (
                 <p className="text-xs text-blue-800">Selected: {selectedYear.label}</p>
               )}
+              {isSelectedYearOwned && (
+                <p className="text-xs text-amber-800">You already own this school year. Select a different year to purchase or claim free access.</p>
+              )}
             </div>
 
-            <div className="space-y-2 rounded-md border border-blue-200 bg-white/70 p-3">
-              <p className="text-xs uppercase tracking-wide text-blue-700">School identity for free-year eligibility</p>
-              <input
-                type="text"
-                value={schoolName}
-                onChange={(e) => setSchoolName(e.target.value)}
-                placeholder="School name"
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-              />
-              <input
-                type="text"
-                value={schoolCountry}
-                onChange={(e) => setSchoolCountry(e.target.value)}
-                placeholder="Country"
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-              />
-              <p className="text-xs text-blue-800">First year free can be claimed once per school identity.</p>
-            </div>
+            {!hasAnyOwnedLicense && (
+              <div className="space-y-2 rounded-md border border-blue-200 bg-white/70 p-3">
+                <p className="text-xs uppercase tracking-wide text-blue-700">School identity for free-year eligibility</p>
+                <input
+                  type="text"
+                  value={schoolName}
+                  onChange={(e) => setSchoolName(e.target.value)}
+                  placeholder="School name"
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                />
+                <input
+                  type="text"
+                  value={schoolCountry}
+                  onChange={(e) => setSchoolCountry(e.target.value)}
+                  placeholder="Country"
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                />
+                <p className="text-xs text-blue-800">First year free can be claimed once per school identity.</p>
+              </div>
+            )}
 
             {!canPurchase && (
               <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-900 space-y-2">
-                <p>Purchases are locked until you are signed in with a verified email address.</p>
+                <p>
+                  {isSelectedYearOwned
+                    ? 'This year is already licensed on your account. Choose a different school year to continue.'
+                    : 'Purchases are locked until you are signed in with a verified email address.'}
+                </p>
                 {accountEmail && !emailVerified && (
                   <Button size="sm" variant="outline" onClick={resendVerification} disabled={isSendingVerification}>
                     {isSendingVerification ? 'Sending...' : 'Resend Verification Email'}
@@ -273,31 +364,33 @@ export default function Purchase() {
         </Card>
 
         <div className="grid gap-6 md:grid-cols-2">
-          <Card className="border-blue-200 md:col-span-2">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle className="flex items-center gap-2">
-                  <CheckCircle2 size={18} />
-                  First Year Free
-                </CardTitle>
-                <Badge className="bg-blue-100 text-blue-900 hover:bg-blue-100">One Per School</Badge>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <p className="text-sm text-foreground">
-                Claim one free school year for your school identity. Your selected year will activate immediately if eligible.
-              </p>
-              {canPurchase ? (
-                <Button className="w-full" variant="secondary" onClick={() => { void claimFreeYear() }} disabled={isClaimingFreeYear || isStartingCheckout !== null}>
-                  {isClaimingFreeYear ? 'Activating Free Year...' : 'Claim First Year Free'}
-                </Button>
-              ) : (
-                <Button className="w-full" variant="secondary" disabled>
-                  Verify Email + Select Year To Claim
-                </Button>
-              )}
-            </CardContent>
-          </Card>
+          {!hasAnyOwnedLicense && (
+            <Card className="border-blue-200 md:col-span-2">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="flex items-center gap-2">
+                    <CheckCircle2 size={18} />
+                    First Year Free
+                  </CardTitle>
+                  <Badge className="bg-blue-100 text-blue-900 hover:bg-blue-100">One Per School</Badge>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-sm text-foreground">
+                  Claim one free school year for your school identity. Your selected year will activate immediately if eligible.
+                </p>
+                {canPurchase ? (
+                  <Button className="w-full" variant="secondary" onClick={() => { void claimFreeYear() }} disabled={isClaimingFreeYear || isStartingCheckout !== null}>
+                    {isClaimingFreeYear ? 'Activating Free Year...' : 'Claim First Year Free'}
+                  </Button>
+                ) : (
+                  <Button className="w-full" variant="secondary" disabled>
+                    Verify Email + Select Year To Claim
+                  </Button>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
           <Card className="border-emerald-200">
             <CardHeader>
@@ -311,8 +404,8 @@ export default function Purchase() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
-                <p className="text-3xl font-bold text-foreground">$15/mo</p>
-                <p className="text-sm text-muted-foreground">for 9 months, tax exclusive</p>
+                <p className="text-3xl font-bold text-foreground">$135</p>
+                <p className="text-sm text-muted-foreground">one-time for the school year, tax exclusive</p>
               </div>
 
               <ul className="space-y-2 text-sm text-foreground">
@@ -343,8 +436,8 @@ export default function Purchase() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
-                <p className="text-3xl font-bold text-foreground">$8/mo</p>
-                <p className="text-sm text-muted-foreground">for 9 months, tax exclusive</p>
+                <p className="text-3xl font-bold text-foreground">$72</p>
+                <p className="text-sm text-muted-foreground">one-time for the school year, tax exclusive</p>
               </div>
 
               <ul className="space-y-2 text-sm text-foreground">

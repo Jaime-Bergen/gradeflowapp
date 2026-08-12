@@ -1,6 +1,7 @@
 import express from 'express'
 import Stripe from 'stripe'
 import crypto from 'crypto'
+import nodemailer from 'nodemailer'
 import { getDB } from '../database/connection'
 import { AuthRequest, authenticateToken } from '../middleware/auth'
 
@@ -29,6 +30,141 @@ const getRequiredPriceId = (plan: 'full' | 'single') => {
   }
 
   return priceId
+}
+
+const getSalesNotificationEmail = () => {
+  return process.env.SALES_NOTIFICATION_EMAIL || 'sales@gradeflowapp.com'
+}
+
+const createMailerTransport = () => {
+  const smtpPort = parseInt(process.env.SMTP_PORT || '587', 10)
+  const smtpSecure = process.env.SMTP_SECURE
+    ? process.env.SMTP_SECURE.toLowerCase() === 'true'
+    : smtpPort === 465
+
+  return nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port: smtpPort,
+    secure: smtpSecure,
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS,
+    },
+  })
+}
+
+const formatMoneyFromCents = (amount: number | null | undefined, currency: string | null | undefined) => {
+  if (typeof amount !== 'number') return 'Unknown'
+  const code = (currency || 'usd').toUpperCase()
+  try {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: code,
+    }).format(amount / 100)
+  } catch {
+    return `${(amount / 100).toFixed(2)} ${code}`
+  }
+}
+
+const sendSalesPaymentNotification = async (params: {
+  sessionId: string
+  userId: string
+  userEmail: string
+  schoolYearLabel: string
+  plan: string
+  amountTotal: number | null | undefined
+  currency: string | null | undefined
+}) => {
+  try {
+    const to = getSalesNotificationEmail()
+    const transporter = createMailerTransport()
+    const amountDisplay = formatMoneyFromCents(params.amountTotal, params.currency)
+
+    const subject = `New GradeFlow Payment: ${params.plan} (${params.schoolYearLabel})`
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 640px; margin: 0 auto;">
+        <h2 style="color: #111827;">Payment Received</h2>
+        <p>A Stripe payment has been confirmed and a license was granted.</p>
+        <table style="border-collapse: collapse; width: 100%; margin-top: 12px;">
+          <tr><td style="padding: 6px 8px; font-weight: 600;">Amount</td><td style="padding: 6px 8px;">${amountDisplay}</td></tr>
+          <tr><td style="padding: 6px 8px; font-weight: 600;">Plan</td><td style="padding: 6px 8px;">${params.plan}</td></tr>
+          <tr><td style="padding: 6px 8px; font-weight: 600;">School Year</td><td style="padding: 6px 8px;">${params.schoolYearLabel}</td></tr>
+          <tr><td style="padding: 6px 8px; font-weight: 600;">User Email</td><td style="padding: 6px 8px;">${params.userEmail}</td></tr>
+          <tr><td style="padding: 6px 8px; font-weight: 600;">User ID</td><td style="padding: 6px 8px;">${params.userId}</td></tr>
+          <tr><td style="padding: 6px 8px; font-weight: 600;">Stripe Session</td><td style="padding: 6px 8px;">${params.sessionId}</td></tr>
+        </table>
+      </div>
+    `
+
+    const text = [
+      'Payment Received',
+      '',
+      `Amount: ${amountDisplay}`,
+      `Plan: ${params.plan}`,
+      `School Year: ${params.schoolYearLabel}`,
+      `User Email: ${params.userEmail}`,
+      `User ID: ${params.userId}`,
+      `Stripe Session: ${params.sessionId}`,
+    ].join('\n')
+
+    await transporter.sendMail({
+      from: `"${process.env.FROM_NAME || 'GradeFlow'}" <${process.env.FROM_EMAIL}>`,
+      to,
+      subject,
+      html,
+      text,
+    })
+  } catch (error) {
+    console.error('[STRIPE WEBHOOK] Failed to send sales payment notification:', error)
+  }
+}
+
+const sendSalesFreeLicenseNotification = async (params: {
+  userId: string
+  userEmail: string
+  schoolYearLabel: string
+  schoolName: string
+  country: string
+}) => {
+  try {
+    const to = getSalesNotificationEmail()
+    const transporter = createMailerTransport()
+
+    const subject = `New GradeFlow Free License: ${params.schoolYearLabel}`
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 640px; margin: 0 auto;">
+        <h2 style="color: #111827;">Free License Claimed</h2>
+        <p>A first-year free license has been claimed and activated.</p>
+        <table style="border-collapse: collapse; width: 100%; margin-top: 12px;">
+          <tr><td style="padding: 6px 8px; font-weight: 600;">School Year</td><td style="padding: 6px 8px;">${params.schoolYearLabel}</td></tr>
+          <tr><td style="padding: 6px 8px; font-weight: 600;">School Name</td><td style="padding: 6px 8px;">${params.schoolName}</td></tr>
+          <tr><td style="padding: 6px 8px; font-weight: 600;">Country</td><td style="padding: 6px 8px;">${params.country}</td></tr>
+          <tr><td style="padding: 6px 8px; font-weight: 600;">User Email</td><td style="padding: 6px 8px;">${params.userEmail}</td></tr>
+          <tr><td style="padding: 6px 8px; font-weight: 600;">User ID</td><td style="padding: 6px 8px;">${params.userId}</td></tr>
+        </table>
+      </div>
+    `
+
+    const text = [
+      'Free License Claimed',
+      '',
+      `School Year: ${params.schoolYearLabel}`,
+      `School Name: ${params.schoolName}`,
+      `Country: ${params.country}`,
+      `User Email: ${params.userEmail}`,
+      `User ID: ${params.userId}`,
+    ].join('\n')
+
+    await transporter.sendMail({
+      from: `"${process.env.FROM_NAME || 'GradeFlow'}" <${process.env.FROM_EMAIL}>`,
+      to,
+      subject,
+      html,
+      text,
+    })
+  } catch (error) {
+    console.error('[FREE LICENSE] Failed to send sales notification:', error)
+  }
 }
 
 const grantLicense = async (db: any, params: {
@@ -116,12 +252,24 @@ router.post('/checkout-session', authenticateToken, async (req: AuthRequest, res
       return res.status(403).json({ error: 'Email must be verified before purchase' })
     }
 
+    const existingLicense = await db.query(
+      `SELECT 1
+       FROM user_school_year_licenses
+       WHERE user_id = $1 AND school_year_id = $2
+       LIMIT 1`,
+      [req.userId, schoolYearId]
+    )
+
+    if (existingLicense.rows.length > 0) {
+      return res.status(409).json({ error: 'You already own a license for this school year.' })
+    }
+
     const stripe = getStripe()
     const frontendUrl = getFrontendUrl()
     const priceId = getRequiredPriceId(plan)
 
     const session = await stripe.checkout.sessions.create({
-      mode: 'subscription',
+      mode: 'payment',
       customer_email: user.email,
       line_items: [
         {
@@ -140,6 +288,47 @@ router.post('/checkout-session', authenticateToken, async (req: AuthRequest, res
     })
 
     res.json({ url: session.url })
+  } catch (error) {
+    next(error)
+  }
+})
+
+router.get('/checkout-session-status', authenticateToken, async (req: AuthRequest, res, next) => {
+  try {
+    const sessionId = String(req.query.sessionId || '').trim()
+    if (!sessionId) {
+      return res.status(400).json({ error: 'sessionId is required' })
+    }
+
+    const stripe = getStripe()
+    const session = await stripe.checkout.sessions.retrieve(sessionId)
+
+    const metadataUserId = session.metadata?.userId || ''
+    if (!metadataUserId || metadataUserId !== req.userId) {
+      return res.status(403).json({ error: 'This checkout session does not belong to your account' })
+    }
+
+    const schoolYearId = session.metadata?.schoolYearId || ''
+    const db = getDB()
+    const licenseResult = schoolYearId
+      ? await db.query(
+          `SELECT id FROM user_school_year_licenses WHERE user_id = $1 AND school_year_id = $2 LIMIT 1`,
+          [req.userId, schoolYearId]
+        )
+      : { rows: [] }
+
+    const hasLicense = licenseResult.rows.length > 0
+    const paid = session.payment_status === 'paid'
+
+    res.json({
+      sessionId: session.id,
+      status: session.status,
+      paymentStatus: session.payment_status,
+      mode: session.mode,
+      schoolYearId,
+      hasLicense,
+      paid,
+    })
   } catch (error) {
     next(error)
   }
@@ -188,6 +377,18 @@ router.post('/claim-free-year', authenticateToken, async (req: AuthRequest, res,
       return res.status(403).json({ error: 'Email must be verified before claiming free year' })
     }
 
+    const existingLicense = await db.query(
+      `SELECT 1
+       FROM user_school_year_licenses
+       WHERE user_id = $1 AND school_year_id = $2
+       LIMIT 1`,
+      [req.userId, schoolYearId]
+    )
+
+    if (existingLicense.rows.length > 0) {
+      return res.status(409).json({ error: 'This school year is already licensed on your account.' })
+    }
+
     const fingerprint = createSchoolFingerprint(String(schoolName), String(country))
 
     try {
@@ -217,6 +418,14 @@ router.post('/claim-free-year', authenticateToken, async (req: AuthRequest, res,
       schoolYearId,
       grantSource: 'free_trial',
       notes: `First year free claim for ${String(schoolName).trim()} (${String(country).trim()})`,
+    })
+
+    await sendSalesFreeLicenseNotification({
+      userId: req.userId!,
+      userEmail: user.email,
+      schoolYearLabel: schoolYearResult.rows[0].label,
+      schoolName: String(schoolName).trim(),
+      country: String(country).trim(),
     })
 
     res.json({
@@ -251,21 +460,54 @@ webhookRouter.post('/stripe', express.raw({ type: 'application/json' }), async (
   }
 
   try {
-    if (event.type === 'checkout.session.completed') {
+    if (event.type === 'checkout.session.completed' || event.type === 'checkout.session.async_payment_succeeded') {
       const session = event.data.object as Stripe.Checkout.Session
       const userId = session.metadata?.userId
       const schoolYearId = session.metadata?.schoolYearId
+      const schoolYearLabel = session.metadata?.schoolYearLabel || schoolYearId || 'Unknown'
+      const plan = session.metadata?.plan || 'unknown'
+
+      if (session.mode === 'payment' && session.payment_status !== 'paid') {
+        console.log(
+          `[STRIPE WEBHOOK] Session not paid yet, skipping grant session=${session.id} payment_status=${session.payment_status}`
+        )
+        return res.json({ received: true })
+      }
 
       if (!userId || !schoolYearId) {
         console.warn('[STRIPE WEBHOOK] Missing metadata on session:', session.id)
       } else {
         const db = getDB()
+        const note = `Stripe session ${session.id}`
+        const existingSessionGrant = await db.query(
+          `SELECT id
+           FROM user_school_year_licenses
+           WHERE user_id = $1 AND school_year_id = $2 AND notes = $3
+           LIMIT 1`,
+          [userId, schoolYearId, note]
+        )
+
+        if (existingSessionGrant.rows.length > 0) {
+          return res.json({ received: true })
+        }
+
         await grantLicense(db, {
           userId,
           schoolYearId,
           grantSource: 'stripe',
-          notes: `Stripe session ${session.id}`,
+          notes: note,
         })
+
+        await sendSalesPaymentNotification({
+          sessionId: session.id,
+          userId,
+          userEmail: session.customer_details?.email || session.customer_email || 'unknown',
+          schoolYearLabel,
+          plan,
+          amountTotal: session.amount_total,
+          currency: session.currency,
+        })
+
         console.log(`[STRIPE WEBHOOK] License granted user=${userId} schoolYear=${schoolYearId} session=${session.id}`)
       }
     }
