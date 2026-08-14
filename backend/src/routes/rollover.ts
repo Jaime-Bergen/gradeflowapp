@@ -844,10 +844,10 @@ router.post('/scopes/:scopeId/execute/subjects', async (req: AuthRequest, res, n
         ? await db.query(
             `SELECT ss.student_id, ss.subject_id
              FROM student_subjects ss
-             WHERE ss.school_year_id = $2
-               AND ss.student_id = ANY($3::uuid[])
-               AND ($4::text[] IS NULL OR array_length($4::text[], 1) = 0 OR ss.subject_id::text = ANY($4::text[]))`,
-            [req.userId, schoolYearId, scopedStudentIds, requestedSubjectIds.length > 0 ? requestedSubjectIds : null]
+             WHERE ss.school_year_id = $1
+               AND ss.student_id = ANY($2::uuid[])
+               AND ($3::text[] IS NULL OR array_length($3::text[], 1) = 0 OR ss.subject_id::text = ANY($3::text[]))`,
+            [schoolYearId, scopedStudentIds, requestedSubjectIds.length > 0 ? requestedSubjectIds : null]
           )
         : { rows: [] };
 
