@@ -32,3 +32,6 @@ packages
 .devcontainer/
 
 .spark-workbench-id
+
+# TypeScript incremental build cache
+*.tsbuildinfo
