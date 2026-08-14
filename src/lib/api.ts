@@ -370,13 +370,13 @@ class ApiClient {
     })
   }
 
-  async getRolloverScopePreview(scopeId: string, riskThreshold = 80) {
+  async getRolloverScopePreview(scopeId: string, riskThreshold = 70) {
     return this.request<RolloverScopePreview>(`/rollover/scopes/${scopeId}/preview?riskThreshold=${riskThreshold}`)
   }
 
   async executeRolloverStudents(
     scopeId: string,
-    payload: { targetSchoolYearId: string; holdBackStudentIds?: string[] },
+    payload: { targetSchoolYearId: string; holdBackStudentIds?: string[]; overwriteTargetYearData?: boolean },
     schoolYearId?: string
   ) {
     return this.request(this.withSchoolYear(`/rollover/scopes/${scopeId}/execute/students`, schoolYearId), {
@@ -387,7 +387,12 @@ class ApiClient {
 
   async executeRolloverSubjects(
     scopeId: string,
-    payload: { targetSchoolYearId: string; subjectIds?: string[] },
+    payload: {
+      targetSchoolYearId: string
+      subjectIds?: string[]
+      keepLessons?: boolean
+      keepLessonMaxPoints?: boolean
+    },
     schoolYearId?: string
   ) {
     return this.request(this.withSchoolYear(`/rollover/scopes/${scopeId}/execute/subjects`, schoolYearId), {
@@ -597,8 +602,8 @@ class ApiClient {
     });
   }
 
-  async getLessonsForSubject(subjectId: string) {
-    return this.request(`/lessons/subject/${subjectId}`);
+  async getLessonsForSubject(subjectId: string, schoolYearId?: string) {
+    return this.request(this.withSchoolYear(`/lessons/subject/${subjectId}`, schoolYearId));
   }
 
   // Grading Periods (date-based reporting)
@@ -689,8 +694,8 @@ class ApiClient {
   }
 
   // Add getGrades method to apiClient
-  async getGrades() {
-    return this.request('/grades', { method: 'GET' });
+  async getGrades(schoolYearId?: string) {
+    return this.request(this.withSchoolYear('/grades', schoolYearId), { method: 'GET' });
   }
 
   // Attendance

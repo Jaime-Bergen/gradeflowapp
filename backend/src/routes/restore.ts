@@ -241,6 +241,8 @@ router.post('/restore/json', authenticateToken, upload.single('backupFile'), asy
     const studentMap = new Map<string, string>();
     const subjectMap = new Map<string, string>();
     const lessonMap = new Map<string, string>();
+  const categoryMap = new Map<string, string>();
+  const groupMap = new Map<string, string>();
 
     for (const student of toArray(payload.students)) {
       const studentName = student.name || student.full_name || student.student_name;
@@ -264,10 +266,10 @@ router.post('/restore/json', authenticateToken, upload.single('backupFile'), asy
       }
 
       const inserted = await client.query(
-        `INSERT INTO students (id, user_id, school_year_id, name, grade, birthday, created_at, updated_at)
-         VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3, $4, $5, $6::date, $7, $8)
+        `INSERT INTO students (user_id, school_year_id, name, grade, birthday, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5::date, $6, $7)
          RETURNING id`,
-        [student.id || null, userId, schoolYearId, studentName, studentGrade, studentBirthday, student.created_at || nowIso, student.updated_at || nowIso]
+        [userId, schoolYearId, studentName, studentGrade, studentBirthday, student.created_at || nowIso, student.updated_at || nowIso]
       );
 
       if (student.id) studentMap.set(String(student.id), inserted.rows[0].id);
@@ -290,10 +292,10 @@ router.post('/restore/json', authenticateToken, upload.single('backupFile'), asy
       }
 
       const inserted = await client.query(
-        `INSERT INTO subjects (id, user_id, school_year_id, name, report_card_name, description, created_at, updated_at)
-         VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3, $4, $5, $6, $7, $8)
+        `INSERT INTO subjects (user_id, school_year_id, name, report_card_name, description, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING id`,
-        [subject.id || null, userId, schoolYearId, subjectName, subject.report_card_name || subjectName, subject.description || null, subject.created_at || nowIso, subject.updated_at || nowIso]
+        [userId, schoolYearId, subjectName, subject.report_card_name || subjectName, subject.description || null, subject.created_at || nowIso, subject.updated_at || nowIso]
       );
 
       if (subject.id) subjectMap.set(String(subject.id), inserted.rows[0].id);
@@ -302,17 +304,62 @@ router.post('/restore/json', authenticateToken, upload.single('backupFile'), asy
 
     for (const category of toArray(payload.gradeCategoryTypes)) {
       if (!category?.name) continue;
-      if (restoreOptions.mergeData) {
-        const existing = await client.query(
-          'SELECT id FROM grade_category_types WHERE name = $1 AND user_id = $2 LIMIT 1',
-          [category.name, userId]
-        );
-        if (existing.rows.length > 0) continue;
+
+      const existing = await client.query(
+        'SELECT id FROM grade_category_types WHERE name = $1 AND user_id = $2 LIMIT 1',
+        [category.name, userId]
+      );
+
+      if (existing.rows.length > 0) {
+        const existingId = existing.rows[0].id;
+        if (category.id) categoryMap.set(String(category.id), existingId);
+
+        if (!restoreOptions.mergeData) {
+          if (category.is_default) {
+            await client.query(
+              `UPDATE grade_category_types
+               SET is_default = false, updated_at = $2
+               WHERE user_id = $1 AND id != $3`,
+              [userId, nowIso, existingId]
+            );
+          }
+
+          await client.query(
+            `UPDATE grade_category_types
+             SET description = $1,
+                 is_default = $2,
+                 is_active = $3,
+                 color = $4,
+                 updated_at = $5
+             WHERE id = $6 AND user_id = $7`,
+            [
+              category.description || null,
+              category.is_default ?? false,
+              category.is_active ?? true,
+              category.color || null,
+              nowIso,
+              existingId,
+              userId,
+            ]
+          );
+        }
+
+        continue;
       }
 
-      await client.query(
+      if (category.is_default) {
+        await client.query(
+          `UPDATE grade_category_types
+           SET is_default = false, updated_at = $2
+           WHERE user_id = $1`,
+          [userId, nowIso]
+        );
+      }
+
+      const inserted = await client.query(
         `INSERT INTO grade_category_types (user_id, name, description, is_default, is_active, color, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING id`,
         [
           userId,
           category.name,
@@ -324,30 +371,50 @@ router.post('/restore/json', authenticateToken, upload.single('backupFile'), asy
           category.updated_at || nowIso,
         ]
       );
+      if (category.id) categoryMap.set(String(category.id), inserted.rows[0].id);
       restoredCounts.gradeCategoryTypes++;
     }
 
     for (const group of toArray(payload.studentGroups)) {
       if (!group?.name) continue;
-      if (restoreOptions.mergeData) {
-        const existing = await client.query(
-          'SELECT id FROM student_groups WHERE name = $1 AND user_id = $2 AND school_year_id = $3 LIMIT 1',
-          [group.name, userId, schoolYearId]
-        );
-        if (existing.rows.length > 0) continue;
+
+      const existing = await client.query(
+        'SELECT id FROM student_groups WHERE name = $1 AND user_id = $2 AND school_year_id = $3 LIMIT 1',
+        [group.name, userId, schoolYearId]
+      );
+
+      if (existing.rows.length > 0) {
+        const existingId = existing.rows[0].id;
+        if (group.id) groupMap.set(String(group.id), existingId);
+
+        if (!restoreOptions.mergeData) {
+          await client.query(
+            `UPDATE student_groups
+             SET description = $1,
+                 updated_at = $2
+             WHERE id = $3 AND user_id = $4 AND school_year_id = $5`,
+            [group.description || null, nowIso, existingId, userId, schoolYearId]
+          );
+        }
+
+        continue;
       }
 
-      await client.query(
+      const inserted = await client.query(
         `INSERT INTO student_groups (user_id, school_year_id, name, description, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING id`,
         [userId, schoolYearId, group.name, group.description || null, group.created_at || nowIso, group.updated_at || nowIso]
       );
+      if (group.id) groupMap.set(String(group.id), inserted.rows[0].id);
       restoredCounts.studentGroups++;
     }
 
     for (const lesson of toArray(payload.lessons)) {
       const sourceSubjectId = lesson.subject_id || lesson.subjectId;
       const newSubjectId = subjectMap.get(String(sourceSubjectId)) || sourceSubjectId;
+      const sourceCategoryId = lesson.category_id || lesson.categoryId;
+      const newCategoryId = sourceCategoryId ? (categoryMap.get(String(sourceCategoryId)) || null) : null;
       const lessonName = lesson.name || lesson.title;
       if (!newSubjectId || !lessonName) continue;
 
@@ -363,17 +430,16 @@ router.post('/restore/json', authenticateToken, upload.single('backupFile'), asy
       }
 
       const inserted = await client.query(
-        `INSERT INTO lessons (id, subject_id, school_year_id, name, category_id, points, order_index, date, created_at, updated_at)
-         VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3, $4, $5, COALESCE($6, 100), COALESCE($7, 1), $8::date, $9, $10)
+        `INSERT INTO lessons (subject_id, school_year_id, name, category_id, points, order_index, date, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, COALESCE($5, 100), COALESCE($6, 1), $7::date, $8, $9)
          RETURNING id`,
         [
-          lesson.id || null,
           newSubjectId,
           schoolYearId,
           lessonName,
-          lesson.category_id || lesson.categoryId || null,
-          lesson.points || lesson.maxPoints || null,
-          lesson.order_index || lesson.orderIndex || null,
+          newCategoryId,
+          lesson.points ?? lesson.maxPoints ?? null,
+          lesson.order_index ?? lesson.orderIndex ?? null,
           lesson.date || lesson.lesson_date || null,
           lesson.created_at || nowIso,
           lesson.updated_at || nowIso,
@@ -410,8 +476,8 @@ router.post('/restore/json', authenticateToken, upload.single('backupFile'), asy
       }
 
       await client.query(
-        `INSERT INTO grades (id, student_id, lesson_id, percentage, errors, points, school_year_id, created_at, updated_at)
-         VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3, $4, $5, $6, $7, $8, $9)
+        `INSERT INTO grades (student_id, lesson_id, percentage, errors, points, school_year_id, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          ON CONFLICT (student_id, lesson_id)
          DO UPDATE SET
            percentage = EXCLUDED.percentage,
@@ -420,7 +486,6 @@ router.post('/restore/json', authenticateToken, upload.single('backupFile'), asy
            school_year_id = EXCLUDED.school_year_id,
            updated_at = EXCLUDED.updated_at`,
         [
-          grade.id || null,
           newStudentId,
           newLessonId,
           grade.percentage ?? grade.grade_value ?? null,

@@ -29,6 +29,19 @@ const parseAndAdvanceGrade = (grade: string | null | undefined, shouldPromote: b
   return `${prefix}${num + 1}${suffix}`;
 };
 
+const promotePrimaryGradeGroupName = (groupName: string, shouldPromote: boolean): string => {
+  if (!shouldPromote) return groupName;
+
+  const trimmed = String(groupName || '').trim();
+  const match = trimmed.match(/^(grade\s+)(\d+)$/i);
+  if (!match) return trimmed;
+
+  const prefix = match[1];
+  const number = Number(match[2]);
+  if (!Number.isFinite(number)) return trimmed;
+  return `${prefix}${number + 1}`;
+};
+
 router.get('/scopes', async (req: AuthRequest, res, next) => {
   try {
     const db = getDB();
@@ -68,7 +81,10 @@ router.get('/scopes', async (req: AuthRequest, res, next) => {
            FROM students s
            WHERE s.user_id = $1
              AND s.school_year_id = $2
-             AND ${gradeToNumberExpr} BETWEEN $3 AND $4
+              AND (
+                ${gradeToNumberExpr} BETWEEN $3 AND $4
+                OR (${gradeToNumberExpr} IS NULL AND $3 <= 0 AND $4 >= 20)
+              )
          ),
          student_avgs AS (
            SELECT ss.id, AVG(g.percentage) AS avg_percentage
@@ -82,7 +98,7 @@ router.get('/scopes', async (req: AuthRequest, res, next) => {
          )
          SELECT
            (SELECT COUNT(*) FROM scoped_students) AS total_students,
-           COUNT(*) FILTER (WHERE student_avgs.avg_percentage IS NOT NULL AND student_avgs.avg_percentage < 80) AS at_risk_students
+           COUNT(*) FILTER (WHERE student_avgs.avg_percentage IS NOT NULL AND student_avgs.avg_percentage <= 70) AS at_risk_students
          FROM student_avgs`,
         [req.userId, schoolYearId, scope.min_grade, scope.max_grade]
       );
@@ -287,7 +303,7 @@ router.get('/scopes/:scopeId/preview', async (req: AuthRequest, res, next) => {
     const db = getDB();
     const schoolYearId = req.schoolYearId;
     const { scopeId } = req.params;
-    const threshold = Number(req.query.riskThreshold || 80);
+    const threshold = Number(req.query.riskThreshold || 70);
 
     const scopeResult = await db.query(
       `SELECT id, name, min_grade, max_grade, status
@@ -313,7 +329,10 @@ router.get('/scopes/:scopeId/preview', async (req: AuthRequest, res, next) => {
          LEFT JOIN grades g ON g.student_id = s.id AND g.school_year_id = $2
          WHERE s.user_id = $1
            AND s.school_year_id = $2
-           AND ${gradeToNumberExpr} BETWEEN $3 AND $4
+           AND (
+             ${gradeToNumberExpr} BETWEEN $3 AND $4
+             OR (${gradeToNumberExpr} IS NULL AND $3 <= 0 AND $4 >= 20)
+           )
          GROUP BY s.id, s.name, s.grade
        )
        SELECT
@@ -323,7 +342,7 @@ router.get('/scopes/:scopeId/preview', async (req: AuthRequest, res, next) => {
          ROUND(average_percentage::numeric, 1) AS average_percentage,
          CASE
            WHEN average_percentage IS NULL THEN false
-           WHEN average_percentage < $5 THEN true
+           WHEN average_percentage <= $5 THEN true
            ELSE false
          END AS suggested_hold_back
        FROM student_avgs
@@ -345,7 +364,7 @@ router.post('/scopes/:scopeId/execute/students', async (req: AuthRequest, res, n
   const db = getDB();
   const schoolYearId = req.schoolYearId;
   const { scopeId } = req.params;
-  const { targetSchoolYearId, holdBackStudentIds = [] } = req.body || {};
+  const { targetSchoolYearId, holdBackStudentIds = [], overwriteTargetYearData = false } = req.body || {};
 
   if (!targetSchoolYearId) {
     return res.status(400).json({ error: 'targetSchoolYearId is required' });
@@ -384,13 +403,67 @@ router.post('/scopes/:scopeId/execute/students', async (req: AuthRequest, res, n
        FROM students s
        WHERE s.user_id = $1
          AND s.school_year_id = $2
-         AND ${gradeToNumberExpr} BETWEEN $3 AND $4
+         AND (
+           ${gradeToNumberExpr} BETWEEN $3 AND $4
+           OR (${gradeToNumberExpr} IS NULL AND $3 <= 0 AND $4 >= 20)
+         )
        ORDER BY s.name`,
       [req.userId, schoolYearId, scope.min_grade, scope.max_grade]
     );
 
     await db.query('BEGIN');
     try {
+      if (overwriteTargetYearData) {
+        await db.query(
+          `DELETE FROM grades WHERE school_year_id = $1`,
+          [targetSchoolYearId]
+        );
+        await db.query(
+          `DELETE FROM student_subjects WHERE school_year_id = $1`,
+          [targetSchoolYearId]
+        );
+        await db.query(
+          `DELETE FROM subject_groups WHERE school_year_id = $1`,
+          [targetSchoolYearId]
+        );
+        await db.query(
+          `DELETE FROM grading_period_markers WHERE school_year_id = $1`,
+          [targetSchoolYearId]
+        );
+        await db.query(
+          `DELETE FROM subject_weights WHERE school_year_id = $1`,
+          [targetSchoolYearId]
+        );
+        await db.query(
+          `DELETE FROM lessons WHERE school_year_id = $1`,
+          [targetSchoolYearId]
+        );
+        await db.query(
+          `DELETE FROM subjects WHERE user_id = $1 AND school_year_id = $2`,
+          [req.userId, targetSchoolYearId]
+        );
+        await db.query(
+          `DELETE FROM student_group_links WHERE school_year_id = $1`,
+          [targetSchoolYearId]
+        );
+        await db.query(
+          `DELETE FROM students WHERE user_id = $1 AND school_year_id = $2`,
+          [req.userId, targetSchoolYearId]
+        );
+        await db.query(
+          `DELETE FROM student_groups WHERE user_id = $1 AND school_year_id = $2`,
+          [req.userId, targetSchoolYearId]
+        );
+        await db.query(
+          `DELETE FROM grading_periods WHERE user_id = $1 AND school_year_id = $2`,
+          [req.userId, targetSchoolYearId]
+        );
+        await db.query(
+          `DELETE FROM report_preferences WHERE user_id = $1 AND school_year_id = $2`,
+          [req.userId, targetSchoolYearId]
+        );
+      }
+
       let createdStudents = 0;
       let reusedStudents = 0;
       let promotedStudents = 0;
@@ -459,11 +532,13 @@ router.post('/scopes/:scopeId/execute/students', async (req: AuthRequest, res, n
         );
 
         for (const group of sourceGroups.rows) {
+          const targetGroupName = promotePrimaryGradeGroupName(group.name, shouldPromote);
+
           let targetGroup = await db.query(
             `SELECT id FROM student_groups
              WHERE user_id = $1 AND school_year_id = $2 AND name = $3
              LIMIT 1`,
-            [req.userId, targetSchoolYearId, group.name]
+            [req.userId, targetSchoolYearId, targetGroupName]
           );
 
           if (targetGroup.rows.length === 0) {
@@ -471,7 +546,7 @@ router.post('/scopes/:scopeId/execute/students', async (req: AuthRequest, res, n
               `INSERT INTO student_groups (user_id, school_year_id, name)
                VALUES ($1, $2, $3)
                RETURNING id`,
-              [req.userId, targetSchoolYearId, group.name]
+              [req.userId, targetSchoolYearId, targetGroupName]
             );
           }
 
@@ -514,7 +589,12 @@ router.post('/scopes/:scopeId/execute/subjects', async (req: AuthRequest, res, n
   const db = getDB();
   const schoolYearId = req.schoolYearId;
   const { scopeId } = req.params;
-  const { targetSchoolYearId, subjectIds = [] } = req.body || {};
+  const {
+    targetSchoolYearId,
+    subjectIds = [],
+    keepLessons = true,
+    keepLessonMaxPoints = true,
+  } = req.body || {};
 
   if (!targetSchoolYearId) {
     return res.status(400).json({ error: 'targetSchoolYearId is required' });
@@ -551,7 +631,10 @@ router.post('/scopes/:scopeId/execute/subjects', async (req: AuthRequest, res, n
        FROM students s
        WHERE s.user_id = $1
          AND s.school_year_id = $2
-         AND ${gradeToNumberExpr} BETWEEN $3 AND $4`,
+         AND (
+           ${gradeToNumberExpr} BETWEEN $3 AND $4
+           OR (${gradeToNumberExpr} IS NULL AND $3 <= 0 AND $4 >= 20)
+         )`,
       [req.userId, schoolYearId, scope.min_grade, scope.max_grade]
     );
 
@@ -583,39 +666,18 @@ router.post('/scopes/:scopeId/execute/subjects', async (req: AuthRequest, res, n
       }
 
       const scopedStudentIds = scopedStudentsResult.rows.map((s: any) => s.id);
-      if (scopedStudentIds.length === 0) {
-        await db.query('COMMIT');
-        return res.json({
-          scopeId,
-          sourceSchoolYearId: schoolYearId,
-          targetSchoolYearId,
-          counts: {
-            subjectsCreated,
-            subjectsReused,
-            lessonsCreated,
-            weightsUpserted,
-            markersCreated,
-            subjectGroupLinksCreated,
-            enrollmentsCreated,
-          },
-        });
-      }
-
       const requestedSubjectIds = Array.isArray(subjectIds)
         ? subjectIds.map((id: any) => String(id)).filter((id: string) => id.length > 0)
         : [];
 
       const sourceSubjectsResult = await db.query(
-        `SELECT DISTINCT sub.id, sub.name, sub.report_card_name, sub.description
-         FROM student_subjects ss
-         JOIN subjects sub ON sub.id = ss.subject_id
-         WHERE ss.school_year_id = $2
+        `SELECT sub.id, sub.name, sub.report_card_name, sub.description
+         FROM subjects sub
+         WHERE sub.user_id = $1
            AND sub.school_year_id = $2
-           AND sub.user_id = $1
-           AND ss.student_id = ANY($3::uuid[])
-           AND ($4::text[] IS NULL OR array_length($4::text[], 1) = 0 OR sub.id::text = ANY($4::text[]))
+           AND ($3::text[] IS NULL OR array_length($3::text[], 1) = 0 OR sub.id::text = ANY($3::text[]))
          ORDER BY sub.name`,
-        [req.userId, schoolYearId, scopedStudentIds, requestedSubjectIds.length > 0 ? requestedSubjectIds : null]
+        [req.userId, schoolYearId, requestedSubjectIds.length > 0 ? requestedSubjectIds : null]
       );
 
       const sourceToTargetSubjectMap = new Map<string, string>();
@@ -654,41 +716,43 @@ router.post('/scopes/:scopeId/execute/subjects', async (req: AuthRequest, res, n
 
         sourceToTargetSubjectMap.set(String(sourceSubject.id), targetSubjectId);
 
-        const sourceLessons = await db.query(
-          `SELECT name, category_id, points, order_index, date
-           FROM lessons
-           WHERE subject_id = $1 AND school_year_id = $2
-           ORDER BY order_index`,
-          [sourceSubject.id, schoolYearId]
-        );
-
-        for (const lesson of sourceLessons.rows) {
-          const existingLesson = await db.query(
-            `SELECT id
+        if (keepLessons) {
+          const sourceLessons = await db.query(
+            `SELECT name, category_id, points, order_index, date
              FROM lessons
-             WHERE subject_id = $1
-               AND school_year_id = $2
-               AND name = $3
-               AND order_index = $4
-             LIMIT 1`,
-            [targetSubjectId, targetSchoolYearId, lesson.name, lesson.order_index]
+             WHERE subject_id = $1 AND school_year_id = $2
+             ORDER BY order_index`,
+            [sourceSubject.id, schoolYearId]
           );
 
-          if (existingLesson.rows.length === 0) {
-            await db.query(
-              `INSERT INTO lessons (subject_id, school_year_id, name, category_id, points, order_index, date)
-               VALUES ($1, $2, $3, $4, $5, $6, $7::date)`,
-              [
-                targetSubjectId,
-                targetSchoolYearId,
-                lesson.name,
-                lesson.category_id,
-                lesson.points,
-                lesson.order_index,
-                lesson.date || null,
-              ]
+          for (const lesson of sourceLessons.rows) {
+            const existingLesson = await db.query(
+              `SELECT id
+               FROM lessons
+               WHERE subject_id = $1
+                 AND school_year_id = $2
+                 AND name = $3
+                 AND order_index = $4
+               LIMIT 1`,
+              [targetSubjectId, targetSchoolYearId, lesson.name, lesson.order_index]
             );
-            lessonsCreated += 1;
+
+            if (existingLesson.rows.length === 0) {
+              await db.query(
+                `INSERT INTO lessons (subject_id, school_year_id, name, category_id, points, order_index, date)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7::date)`,
+                [
+                  targetSubjectId,
+                  targetSchoolYearId,
+                  lesson.name,
+                  lesson.category_id,
+                  keepLessonMaxPoints ? lesson.points : null,
+                  lesson.order_index,
+                  lesson.date || null,
+                ]
+              );
+              lessonsCreated += 1;
+            }
           }
         }
 
@@ -776,13 +840,16 @@ router.post('/scopes/:scopeId/execute/subjects', async (req: AuthRequest, res, n
         }
       }
 
-      const sourceEnrollments = await db.query(
-        `SELECT ss.student_id, ss.subject_id
-         FROM student_subjects ss
-         WHERE ss.school_year_id = $2
-           AND ss.student_id = ANY($3::uuid[])`,
-        [req.userId, schoolYearId, scopedStudentIds]
-      );
+      const sourceEnrollments = scopedStudentIds.length > 0
+        ? await db.query(
+            `SELECT ss.student_id, ss.subject_id
+             FROM student_subjects ss
+             WHERE ss.school_year_id = $2
+               AND ss.student_id = ANY($3::uuid[])
+               AND ($4::text[] IS NULL OR array_length($4::text[], 1) = 0 OR ss.subject_id::text = ANY($4::text[]))`,
+            [req.userId, schoolYearId, scopedStudentIds, requestedSubjectIds.length > 0 ? requestedSubjectIds : null]
+          )
+        : { rows: [] };
 
       for (const enrollment of sourceEnrollments.rows) {
         const targetStudentId = sourceToTargetStudentMap.get(String(enrollment.student_id));

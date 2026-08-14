@@ -328,7 +328,7 @@ export default function RolloverMenu() {
                     {scope.teacher_name ? ` • ${scope.teacher_name}` : ' • Unassigned'}
                   </div>
                   <div className="text-xs text-muted-foreground">
-                    Students: {scope.total_students || 0} • Suggested hold-backs (&lt;80%): {scope.at_risk_students || 0}
+                    Students: {scope.total_students || 0} • Suggested hold-backs (70% or lower): {scope.at_risk_students || 0}
                   </div>
                 </div>
                 <div className="text-xs font-medium uppercase">{scope.status}</div>

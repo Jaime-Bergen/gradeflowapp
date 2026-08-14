@@ -6,7 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
 import { 
@@ -118,6 +118,19 @@ export default function SystemAdmin() {
   useEffect(() => {
     loadSystemStats()
     loadUserProfile()
+  }, [])
+
+  // Refresh admin datasets when active school year changes elsewhere in the app.
+  useEffect(() => {
+    const handleProfileUpdated = () => {
+      loadSystemStats()
+      loadUserProfile()
+    }
+
+    window.addEventListener('gradeflow-profile-updated', handleProfileUpdated)
+    return () => {
+      window.removeEventListener('gradeflow-profile-updated', handleProfileUpdated)
+    }
   }, [])
 
   // Listen for settings navigation event
@@ -729,12 +742,36 @@ export default function SystemAdmin() {
       // Get user profile for school settings
       const profileRes = await apiClient.getProfile()
       const userProfile = profileRes.data as any || {}
+      const activeSchoolYearId = userProfile.active_school_year_id || null
+
+      if (!activeSchoolYearId) {
+        toast.error('No active school year selected for export')
+        return
+      }
+
+      const [studentsRes, subjectsRes, gradesRes, groupsRes, categoriesRes] = await Promise.all([
+        apiClient.getStudents(undefined, activeSchoolYearId),
+        apiClient.getSubjects(undefined, activeSchoolYearId),
+        apiClient.getGrades(activeSchoolYearId),
+        apiClient.getStudentGroups(activeSchoolYearId),
+        apiClient.getGradeCategoryTypes(),
+      ])
+
+      const exportStudents = Array.isArray(studentsRes.data) ? studentsRes.data : []
+      const exportSubjects = Array.isArray(subjectsRes.data) ? subjectsRes.data : []
+      const exportGrades = Array.isArray(gradesRes.data) ? gradesRes.data : []
+      const exportStudentGroups = Array.isArray(groupsRes.data) ? groupsRes.data : []
+      const exportGradeCategoryTypes = Array.isArray((categoriesRes as any).data?.data)
+        ? (categoriesRes as any).data.data
+        : Array.isArray((categoriesRes as any).data)
+          ? (categoriesRes as any).data
+          : []
       
       // Get lessons for all subjects
       const lessonsData = []
-      for (const subject of subjects) {
+      for (const subject of exportSubjects) {
         try {
-          const lessonsRes = await apiClient.getLessonsForSubject(subject.id)
+          const lessonsRes = await apiClient.getLessonsForSubject(subject.id, activeSchoolYearId)
           const lessons = Array.isArray(lessonsRes.data) ? lessonsRes.data : []
           lessonsData.push(...lessons.map(lesson => ({ ...lesson, subjectId: subject.id })))
         } catch (error) {
@@ -744,14 +781,14 @@ export default function SystemAdmin() {
 
       const data = {
         // Core data
-        students,
-        subjects, 
-        grades,
+        students: exportStudents,
+        subjects: exportSubjects,
+        grades: exportGrades,
         lessons: lessonsData,
         
         // Category and group data
-        gradeCategoryTypes,
-        studentGroups,
+        gradeCategoryTypes: exportGradeCategoryTypes,
+        studentGroups: exportStudentGroups,
         
         // School settings
         schoolSettings: {
@@ -765,6 +802,8 @@ export default function SystemAdmin() {
         // Export metadata
         exportedAt: new Date().toISOString(),
         exportedBy: userProfile.email || 'Unknown',
+        schoolYearId: activeSchoolYearId,
+        schoolYearLabel: userProfile.active_school_year_label || null,
         version: '1.0'
       }
       
@@ -778,7 +817,7 @@ export default function SystemAdmin() {
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
       
-      toast.success(`Exported complete backup with ${students.length} students, ${subjects.length} subjects, ${grades.length} grades, ${lessonsData.length} lessons, ${gradeCategoryTypes.length} categories, and ${studentGroups.length} groups`)
+      toast.success(`Exported complete backup with ${exportStudents.length} students, ${exportSubjects.length} subjects, ${exportGrades.length} grades, ${lessonsData.length} lessons, ${exportGradeCategoryTypes.length} categories, and ${exportStudentGroups.length} groups`)
     } catch (error) {
       console.error('Export failed:', error)
       toast.error('Failed to export data')
@@ -1604,6 +1643,9 @@ export default function SystemAdmin() {
             <DialogTitle>
               Restore Data from JSON Backup
             </DialogTitle>
+            <DialogDescription>
+              Import a GradeFlow JSON backup into the current account and active school year.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">

@@ -70,10 +70,13 @@ export default function TermRolloverAssistant() {
   const [subjects, setSubjects] = useState<SubjectRow[]>([])
   const [cloneSubjectIds, setCloneSubjectIds] = useState<string[]>([])
   const [newSubjects, setNewSubjects] = useState<NewSubjectDraft[]>([])
+  const [keepLessons, setKeepLessons] = useState(true)
+  const [keepLessonMaxPoints, setKeepLessonMaxPoints] = useState(true)
 
   const [newTeacherName, setNewTeacherName] = useState('')
   const [newTeacherEmail, setNewTeacherEmail] = useState('')
   const [newTeacherPassword, setNewTeacherPassword] = useState('')
+  const [overwriteTargetData, setOverwriteTargetData] = useState(false)
 
   const [autoScopeId, setAutoScopeId] = useState('')
 
@@ -397,10 +400,14 @@ export default function TermRolloverAssistant() {
     try {
       setIsBusy(true)
       for (const teacher of teachers) {
+        const selectedGroupNames = groups
+          .filter((group) => teacher.selectedGroups.includes(group.id))
+          .map((group) => group.name)
+
         await apiClient.updateTeacher(teacher.id, {
           name: teacher.name,
           email: teacher.email,
-          selectedGroups: teacher.selectedGroups,
+          selectedGroups: selectedGroupNames,
         })
       }
       toast.success('Teacher assignments saved')
@@ -414,6 +421,11 @@ export default function TermRolloverAssistant() {
   }
 
   const runStep5 = async () => {
+    if (!overwriteTargetData) {
+      toast.error('Please confirm overwrite of target-year data before continuing')
+      return
+    }
+
     try {
       setIsBusy(true)
       const scopeId = await ensureAutoScope()
@@ -426,6 +438,7 @@ export default function TermRolloverAssistant() {
       const studentExecute = await apiClient.executeRolloverStudents(scopeId, {
         targetSchoolYearId,
         holdBackStudentIds,
+        overwriteTargetYearData: true,
       }, sourceSchoolYearId)
       if ((studentExecute as any).error) {
         throw new Error((studentExecute as any).error || 'Failed student rollover step')
@@ -434,6 +447,8 @@ export default function TermRolloverAssistant() {
       const subjectExecute = await apiClient.executeRolloverSubjects(scopeId, {
         targetSchoolYearId,
         subjectIds: cloneSubjectIds,
+        keepLessons,
+        keepLessonMaxPoints,
       }, sourceSchoolYearId)
       if ((subjectExecute as any).error) {
         throw new Error((subjectExecute as any).error || 'Failed subject rollover step')
@@ -482,6 +497,7 @@ export default function TermRolloverAssistant() {
       }
 
       toast.success('New term rollover completed')
+      setOverwriteTargetData(false)
       closeAll()
     } catch (error) {
       console.error('Rollover assistant failed:', error)
@@ -805,6 +821,36 @@ export default function TermRolloverAssistant() {
               </p>
             </div>
 
+            <div className="rounded-md border p-3 space-y-3">
+              <h4 className="font-medium">Imported Subject Options</h4>
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={keepLessons}
+                  onCheckedChange={(checked) => {
+                    const enabled = checked === true
+                    setKeepLessons(enabled)
+                    if (!enabled) {
+                      setKeepLessonMaxPoints(false)
+                    }
+                  }}
+                />
+                <span>Keep lessons when importing subjects</span>
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={keepLessonMaxPoints}
+                  disabled={!keepLessons}
+                  onCheckedChange={(checked) => setKeepLessonMaxPoints(checked === true)}
+                />
+                <span className={!keepLessons ? 'text-muted-foreground' : undefined}>
+                  Keep lesson max points
+                </span>
+              </label>
+              <p className="text-xs text-muted-foreground">
+                If max points are turned off, lessons will still be imported but their point values will be blank.
+              </p>
+            </div>
+
             <div className="rounded-md border p-3 space-y-2">
               <div className="flex items-center justify-between">
                 <h4 className="font-medium">Add New Subjects For Next Term</h4>
@@ -840,6 +886,13 @@ export default function TermRolloverAssistant() {
             <DialogTitle>Step 5: Confirm New Term Rollover</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
+            <Alert>
+              <AlertDescription>
+                Warning: Confirming rollover will overwrite existing target-year students, grades, groups, subjects, lessons,
+                enrollments, markers, and subject settings before copying from the source year.
+              </AlertDescription>
+            </Alert>
+
             <p className="text-sm text-muted-foreground">
               This will roll students and subjects into the selected term, switch active term, then apply your add/remove updates.
             </p>
@@ -851,10 +904,18 @@ export default function TermRolloverAssistant() {
               <li>Remove from next term: {removeStudentIds.length}</li>
               <li>Add students: {newStudents.filter((s) => s.name.trim()).length}</li>
               <li>Add subjects: {newSubjects.filter((s) => s.name.trim()).length}</li>
+              <li>Keep lessons: {keepLessons ? 'Yes' : 'No'}</li>
+              <li>Keep lesson max points: {keepLessons && keepLessonMaxPoints ? 'Yes' : 'No'}</li>
             </ul>
+
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox checked={overwriteTargetData} onCheckedChange={(checked) => setOverwriteTargetData(checked === true)} />
+              <span>I understand this will overwrite existing target-year data.</span>
+            </label>
+
             <div className="flex justify-between gap-2">
               <Button variant="outline" onClick={() => goToStep(4)}>Back</Button>
-              <Button variant="destructive" onClick={runStep5} disabled={isBusy}>
+              <Button variant="destructive" onClick={runStep5} disabled={isBusy || !overwriteTargetData}>
                 {isBusy ? 'Rolling Over...' : 'Confirm Rollover'}
               </Button>
             </div>
