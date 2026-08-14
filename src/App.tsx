@@ -4,7 +4,6 @@ import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Routes, Route } from 'react-router-dom'
 import { 
   GraduationCap, 
@@ -269,25 +268,6 @@ function App() {
                   </div>
                 </div>
               </header>
-              <div className="border-b border-red-200 bg-red-50">
-                <div className="container mx-auto px-6 py-2">
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button
-                          type="button"
-                          className="rounded-full border border-red-300 bg-red-100 px-3 py-1 text-xs font-semibold text-red-900 hover:bg-red-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
-                        >
-                          Platform updates underway
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent side="bottom" className="max-w-md p-3 text-xs leading-relaxed">
-                        GradeFlowApp is currently undergoing updates. If you notice unusual behavior or half-finished features, please bear with me. This should all come together in the next few days. Thank you for your understanding. - James
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                </div>
-              </div>
               {activeSchoolYearLabel && activeSchoolYearLabel !== getCurrentSchoolYearLabel() && (
                 <div className="border-b px-6 py-2 text-sm bg-amber-50 text-amber-900 border-amber-200">
                   <div className="container mx-auto flex items-center justify-between gap-3">
