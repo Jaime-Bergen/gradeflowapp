@@ -404,14 +404,14 @@ export default function Purchase() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
-                <p className="text-3xl font-bold text-foreground">$135</p>
-                <p className="text-sm text-muted-foreground">one-time for the school year, tax exclusive</p>
+                <p className="text-3xl font-bold text-foreground">$135 ($15/mo for 9 months)</p>
+                <p className="text-sm text-muted-foreground">one-time for one school term, tax exclusive</p>
               </div>
 
               <ul className="space-y-2 text-sm text-foreground">
-                <li className="flex items-start gap-2"><CheckCircle2 size={16} className="mt-0.5 text-emerald-600" />Multiple teacher accounts</li>
+                <li className="flex items-start gap-2"><CheckCircle2 size={16} className="mt-0.5 text-emerald-600" />One school account, unlimited teacher accounts</li>
                 <li className="flex items-start gap-2"><CheckCircle2 size={16} className="mt-0.5 text-emerald-600" />Collaboration and teacher assignment tools</li>
-                <li className="flex items-start gap-2"><CheckCircle2 size={16} className="mt-0.5 text-emerald-600" />24-month access window</li>
+                <li className="flex items-start gap-2"><CheckCircle2 size={16} className="mt-0.5 text-emerald-600" />12-month access window</li>
                 <li className="flex items-start gap-2"><CheckCircle2 size={16} className="mt-0.5 text-emerald-600" />Full school-year licensing access</li>
               </ul>
 
@@ -436,14 +436,14 @@ export default function Purchase() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
-                <p className="text-3xl font-bold text-foreground">$72</p>
-                <p className="text-sm text-muted-foreground">one-time for the school year, tax exclusive</p>
+                <p className="text-3xl font-bold text-foreground">$72 ($8/mo for 9 months)</p>
+                <p className="text-sm text-muted-foreground">one-time for one school term, tax exclusive</p>
               </div>
 
               <ul className="space-y-2 text-sm text-foreground">
                 <li className="flex items-start gap-2"><CheckCircle2 size={16} className="mt-0.5 text-blue-600" />Single-teacher mode</li>
                 <li className="flex items-start gap-2"><CheckCircle2 size={16} className="mt-0.5 text-blue-600" />No collaboration features</li>
-                <li className="flex items-start gap-2"><CheckCircle2 size={16} className="mt-0.5 text-blue-600" />Access includes 2026 and 2027</li>
+                <li className="flex items-start gap-2"><CheckCircle2 size={16} className="mt-0.5 text-blue-600" />Access includes 12 months from July</li>
                 <li className="flex items-start gap-2"><CheckCircle2 size={16} className="mt-0.5 text-blue-600" />Adding more teachers in Settings is disabled</li>
               </ul>
 
