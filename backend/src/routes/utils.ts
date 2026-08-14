@@ -9,8 +9,9 @@ const router = express.Router();
 router.post('/fix-defaults', authenticateToken, async (req: AuthRequest, res): Promise<void> => {
   try {
     const userId = req.userId!;
+    const schoolYearId = req.schoolYearId;
     
-    await createDefaultStudentGroups(userId);
+    await createDefaultStudentGroups(userId, schoolYearId);
     await createDefaultGradeCategoryTypes(userId);
     
     res.json({ 

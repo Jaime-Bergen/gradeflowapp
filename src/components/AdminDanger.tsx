@@ -23,6 +23,7 @@ export default function AdminDanger() {
   const [schoolYears, setSchoolYears] = useState<SchoolYear[]>([])
   const [selectedUserId, setSelectedUserId] = useState('')
   const [selectedYearId, setSelectedYearId] = useState('')
+  const [selectedLicenseTier, setSelectedLicenseTier] = useState<'full' | 'single' | 'trial'>('full')
   const [licenseNotes, setLicenseNotes] = useState('')
   const [setAsActive, setSetAsActive] = useState(true)
   const [licenses, setLicenses] = useState<UserSchoolYearLicense[]>([])
@@ -200,6 +201,7 @@ export default function AdminDanger() {
       await apiClient.grantAdminUserLicense(adminPass, {
         userId: selectedUserId,
         schoolYearId: selectedYearId,
+        licenseTier: selectedLicenseTier,
         notes: licenseNotes.trim() || undefined,
         setAsActive,
       })
@@ -406,6 +408,19 @@ export default function AdminDanger() {
                 </Select>
               </div>
               <div className="space-y-2">
+                <Label>License Type</Label>
+                <Select value={selectedLicenseTier} onValueChange={(value: 'full' | 'single' | 'trial') => setSelectedLicenseTier(value)}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select license type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="full">Full (School License)</SelectItem>
+                    <SelectItem value="single">Single Teacher License</SelectItem>
+                    <SelectItem value="trial">Trial License (100 grade cap)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
                 <Label htmlFor="license-notes">Notes</Label>
                 <Input
                   id="license-notes"
@@ -447,7 +462,7 @@ export default function AdminDanger() {
                         {new Date(license.start_date).toLocaleDateString()} - {new Date(license.end_date).toLocaleDateString()}
                       </div>
                       <div className="text-xs text-muted-foreground">
-                        Source: {license.grant_source}{license.is_active ? ' • Active' : ''}
+                        Source: {license.grant_source} • Tier: {license.license_tier || 'full'}{license.is_active ? ' • Active' : ''}
                       </div>
                     </div>
                     <Button variant="destructive" size="sm" onClick={() => revokeLicense(license.id)}>

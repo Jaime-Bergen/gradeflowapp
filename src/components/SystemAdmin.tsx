@@ -58,6 +58,7 @@ export default function SystemAdmin() {
   })
   const [passwordDialog, setPasswordDialog] = useState(false)
   const [userProfile, setUserProfile] = useState<any>(null)
+  const isSingleTeacherLicense = userProfile?.active_license_tier === 'single'
 
   // Teachers state
   const [teachers, setTeachers] = useState<any[]>([])
@@ -276,6 +277,36 @@ export default function SystemAdmin() {
       : uuidv4()
   }
 
+  const getWeeksPerPeriod = () => {
+    if (schoolSettings.gradingPeriods === 3) return 11
+    if (schoolSettings.gradingPeriods === 4) return 8
+    return 6
+  }
+
+  const addWeeksToDate = (isoDate: string, weeks: number) => {
+    const base = new Date(`${isoDate}T00:00:00`)
+    if (isNaN(base.getTime())) return isoDate
+    // Inclusive range: a 6-week period from Monday ends on Sunday of week 6.
+    base.setDate(base.getDate() + (weeks * 7) - 1)
+
+    // Keep periods ending on Friday without ever extending the range.
+    // If the computed end is not Friday, roll back to the previous Friday.
+    const day = base.getDay() // 0 Sun ... 6 Sat
+    const rollbackDays = (day + 2) % 7 // Fri->0, Sat->1, Sun->2, Mon->3 ... Thu->6
+    base.setDate(base.getDate() - rollbackDays)
+
+    return base.toISOString().split('T')[0]
+  }
+
+  const getNextMonday = (isoDate: string) => {
+    const base = new Date(`${isoDate}T00:00:00`)
+    if (isNaN(base.getTime())) return isoDate
+    const day = base.getDay() // 0 Sun ... 6 Sat
+    const daysUntilMonday = day === 1 ? 7 : ((8 - day) % 7)
+    base.setDate(base.getDate() + daysUntilMonday)
+    return base.toISOString().split('T')[0]
+  }
+
   const addGradingPeriod = () => {
     const maxAllowed = schoolSettings.gradingPeriods || 6
     if (gradingPeriods.length >= maxAllowed) {
@@ -285,8 +316,10 @@ export default function SystemAdmin() {
 
     const nextIndex = gradingPeriods.length + 1
     const last = gradingPeriods[gradingPeriods.length - 1]
-    const start = last?.endDate || schoolSettings.firstDayOfSchool || new Date().toISOString().split('T')[0]
-    const end = last?.endDate || start
+    const start = last?.endDate
+      ? getNextMonday(last.endDate)
+      : (schoolSettings.firstDayOfSchool || new Date().toISOString().split('T')[0])
+    const end = addWeeksToDate(start, getWeeksPerPeriod())
     setGradingPeriods(prev => [...prev, {
       id: safeUuid(),
       name: `Period ${nextIndex}`,
@@ -858,7 +891,7 @@ export default function SystemAdmin() {
           <TabsList>
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="settings">Settings</TabsTrigger>
-            <TabsTrigger value="teachers">Teachers</TabsTrigger>
+            {!isSingleTeacherLicense && <TabsTrigger value="teachers">Teachers</TabsTrigger>}
             <TabsTrigger value="backups">Backups</TabsTrigger>
           </TabsList>
           <TermRolloverAssistant />
@@ -1303,7 +1336,7 @@ export default function SystemAdmin() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="teachers" className="space-y-6">
+        {!isSingleTeacherLicense && <TabsContent value="teachers" className="space-y-6">
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-lg font-semibold">Teacher Management</h3>
@@ -1386,7 +1419,7 @@ export default function SystemAdmin() {
               )}
             </CardContent>
           </Card>
-        </TabsContent>
+        </TabsContent>}
 
         <TabsContent value="backups" className="space-y-6">
           <div className="flex items-center justify-between">
@@ -1688,7 +1721,7 @@ export default function SystemAdmin() {
       </Dialog>
 
       {/* Teacher Dialog */}
-      <Dialog open={teacherDialog.open} onOpenChange={(open) => !open && closeTeacherDialog()}>
+      {!isSingleTeacherLicense && <Dialog open={teacherDialog.open} onOpenChange={(open) => !open && closeTeacherDialog()}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>
@@ -1788,7 +1821,7 @@ export default function SystemAdmin() {
             </div>
           </div>
         </DialogContent>
-      </Dialog>
+      </Dialog>}
     </div>
   )
 }

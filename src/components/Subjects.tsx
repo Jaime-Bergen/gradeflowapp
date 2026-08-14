@@ -1440,11 +1440,16 @@ function Subjects() {
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
                     <CardTitle className="text-xl cursor-pointer select-none" onClick={() => toggleLessons(subject.id)}>
-                      {subject.name}
+                      <span>{subject.name}</span>
                       <span className="ml-2 text-xs text-muted-foreground">({subject.lesson_count ?? 0} lessons)</span>
                       <span className="ml-2 text-xs">{showLessons(subject.id) ? '▲' : '▼'}</span>
                     </CardTitle>
                     <div className="flex items-center gap-4 mt-1">
+                      {subject.report_card_name && subject.report_card_name.trim() && (
+                        <Badge variant="secondary" className="text-[11px] font-normal">
+                          {subject.report_card_name.trim()}
+                        </Badge>
+                      )}
                       {subject.group_name && (
                         <div className="flex gap-1 flex-wrap">
                           {subject.group_name.split(',').map((group: string, index: number) => (

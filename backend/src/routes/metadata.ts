@@ -1,11 +1,18 @@
 import express from 'express';
 import { getDB } from '../database/connection';
-import { authenticateToken, AuthRequest } from '../middleware/auth';
+import { AuthRequest } from '../middleware/auth';
 
 const router = express.Router();
 
+const defaultReportPreferences = {
+  groupSubjectOrder: {},
+  subjectPreferences: {},
+  primaryWeightingEnabled: false,
+  primaryWeightPercent: 60,
+};
+
 // Get user metadata
-router.get('/', authenticateToken, async (req: AuthRequest, res) => {
+router.get('/', async (req: AuthRequest, res) => {
   const db = getDB();
   try {
     // Get user metadata
@@ -59,7 +66,7 @@ router.get('/', authenticateToken, async (req: AuthRequest, res) => {
 });
 
 // Get data stats (replaces KV getDataStats)
-router.get('/stats', authenticateToken, async (req: AuthRequest, res) => {
+router.get('/stats', async (req: AuthRequest, res) => {
   const db = getDB();
   try {
     // Get total counts across all users
@@ -90,6 +97,85 @@ router.get('/stats', authenticateToken, async (req: AuthRequest, res) => {
   } catch (err) {
     console.error('Error getting data stats:', err);
     res.status(500).json({ error: 'Failed to get data stats' });
+  }
+});
+
+// Get report preferences for the active/requested school year
+router.get('/report-preferences', async (req: AuthRequest, res) => {
+  const db = getDB();
+
+  if (!req.userId || !req.schoolYearId) {
+    return res.status(401).json({ error: 'Missing user or school year context' });
+  }
+
+  try {
+    const result = await db.query(
+      `SELECT preferences
+       FROM report_preferences
+       WHERE user_id = $1 AND school_year_id = $2
+       LIMIT 1`,
+      [req.userId, req.schoolYearId]
+    );
+
+    const preferences = result.rows[0]?.preferences || defaultReportPreferences;
+    res.json({ preferences });
+  } catch (err) {
+    console.error('Error fetching report preferences:', err);
+    res.status(500).json({ error: 'Failed to fetch report preferences' });
+  }
+});
+
+// Save report preferences for the active/requested school year
+router.put('/report-preferences', async (req: AuthRequest, res) => {
+  const db = getDB();
+
+  if (!req.userId || !req.schoolYearId) {
+    return res.status(401).json({ error: 'Missing user or school year context' });
+  }
+
+  const input = req.body?.preferences;
+  if (!input || typeof input !== 'object') {
+    return res.status(400).json({ error: 'preferences object is required' });
+  }
+
+  const primaryWeight = Number(input.primaryWeightPercent);
+  const rawSubjectPreferences = typeof input.subjectPreferences === 'object' && input.subjectPreferences
+    ? input.subjectPreferences
+    : {};
+
+  const sanitizedSubjectPreferences: Record<string, { displayMode: 'percentage' | 'letter' | 'gpa'; tier: 'primary' | 'secondary' }> = {};
+  Object.entries(rawSubjectPreferences).forEach(([subjectId, value]: [string, any]) => {
+    if (!subjectId || !value || typeof value !== 'object') return;
+    const displayMode = value.displayMode === 'letter' || value.displayMode === 'gpa' ? value.displayMode : 'percentage';
+    const tier = value.tier === 'primary' ? 'primary' : 'secondary';
+    sanitizedSubjectPreferences[subjectId] = { displayMode, tier };
+  });
+
+  const sanitizedPreferences = {
+    groupSubjectOrder: typeof input.groupSubjectOrder === 'object' && input.groupSubjectOrder ? input.groupSubjectOrder : {},
+    subjectPreferences: sanitizedSubjectPreferences,
+    primaryWeightingEnabled: Boolean(input.primaryWeightingEnabled),
+    primaryWeightPercent: Number.isFinite(primaryWeight)
+      ? Math.max(0, Math.min(100, primaryWeight))
+      : 60,
+  };
+
+  try {
+    const result = await db.query(
+      `INSERT INTO report_preferences (user_id, school_year_id, preferences)
+       VALUES ($1, $2, $3::jsonb)
+       ON CONFLICT (user_id, school_year_id)
+       DO UPDATE SET
+         preferences = EXCLUDED.preferences,
+         updated_at = CURRENT_TIMESTAMP
+       RETURNING preferences`,
+      [req.userId, req.schoolYearId, JSON.stringify(sanitizedPreferences)]
+    );
+
+    res.json({ preferences: result.rows[0].preferences });
+  } catch (err) {
+    console.error('Error saving report preferences:', err);
+    res.status(500).json({ error: 'Failed to save report preferences' });
   }
 });
 

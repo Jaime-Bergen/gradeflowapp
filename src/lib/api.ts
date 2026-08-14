@@ -280,7 +280,7 @@ class ApiClient {
 
   async grantAdminUserLicense(
     adminPasscode: string,
-    payload: { userId: string; schoolYearId: string; notes?: string; setAsActive?: boolean }
+    payload: { userId: string; schoolYearId: string; licenseTier?: 'full' | 'single' | 'trial'; notes?: string; setAsActive?: boolean }
   ) {
     return this.request('/users/admin/licenses/grant', {
       method: 'POST',
@@ -309,6 +309,13 @@ class ApiClient {
 
   async claimFreeYearLicense(payload: { schoolYearId: string; schoolName: string; country: string }) {
     return this.request<{ message: string; activeSchoolYearLabel?: string }>('/billing/claim-free-year', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  }
+
+  async grantTrialLicense(payload: { schoolYearId: string }) {
+    return this.request<{ message: string; school_year_id?: string; license_tier?: 'full' | 'single' | 'trial' }>('/users/licenses/trial', {
       method: 'POST',
       body: JSON.stringify(payload),
     })
@@ -856,6 +863,36 @@ class ApiClient {
       subject_count: number;
       grade_count: number;
     }>('/metadata');
+  }
+
+  async getReportPreferences() {
+    return this.request<{
+      preferences: {
+        groupSubjectOrder: Record<string, string[]>;
+        subjectPreferences: Record<string, { displayMode: 'percentage' | 'letter' | 'gpa'; tier: 'primary' | 'secondary' }>;
+        primaryWeightingEnabled: boolean;
+        primaryWeightPercent: number;
+      };
+    }>('/metadata/report-preferences');
+  }
+
+  async updateReportPreferences(preferences: {
+    groupSubjectOrder: Record<string, string[]>;
+    subjectPreferences: Record<string, { displayMode: 'percentage' | 'letter' | 'gpa'; tier: 'primary' | 'secondary' }>;
+    primaryWeightingEnabled: boolean;
+    primaryWeightPercent: number;
+  }) {
+    return this.request<{
+      preferences: {
+        groupSubjectOrder: Record<string, string[]>;
+        subjectPreferences: Record<string, { displayMode: 'percentage' | 'letter' | 'gpa'; tier: 'primary' | 'secondary' }>;
+        primaryWeightingEnabled: boolean;
+        primaryWeightPercent: number;
+      };
+    }>('/metadata/report-preferences', {
+      method: 'PUT',
+      body: JSON.stringify({ preferences }),
+    });
   }
 
   async getDataStats() {

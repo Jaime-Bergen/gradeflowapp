@@ -3,8 +3,9 @@ import { getDB } from '../database/connection';
 /**
  * Creates default student groups for a user if they don't already exist
  * @param userId - The user ID to create groups for
+ * @param schoolYearId - Optional school year ID (defaults to user's active school year)
  */
-export const createDefaultStudentGroups = async (userId: string): Promise<void> => {
+export const createDefaultStudentGroups = async (userId: string, schoolYearId?: string): Promise<void> => {
   const db = getDB();
   
   const defaultGroups = [
@@ -21,22 +22,37 @@ export const createDefaultStudentGroups = async (userId: string): Promise<void> 
   ];
 
   try {
+    let targetSchoolYearId = schoolYearId;
+
+    if (!targetSchoolYearId) {
+      const yearResult = await db.query(
+        'SELECT active_school_year_id FROM users WHERE id = $1',
+        [userId]
+      );
+      targetSchoolYearId = yearResult.rows[0]?.active_school_year_id || undefined;
+    }
+
+    if (!targetSchoolYearId) {
+      console.log(`ℹ️ Skipping default student groups for user ${userId}: no active school year`);
+      return;
+    }
+
     // Check if user already has groups
     const existingResult = await db.query(
-      'SELECT COUNT(*) as count FROM student_groups WHERE user_id = $1',
-      [userId]
+      'SELECT COUNT(*) as count FROM student_groups WHERE user_id = $1 AND school_year_id = $2',
+      [userId, targetSchoolYearId]
     );
 
     if (existingResult.rows[0].count === '0') {
       // Insert default groups for this user
       for (const group of defaultGroups) {
         await db.query(`
-          INSERT INTO student_groups (user_id, name, description)
-          VALUES ($1, $2, $3)
-          ON CONFLICT (user_id, name) DO NOTHING
-        `, [userId, group.name, group.description]);
+          INSERT INTO student_groups (user_id, school_year_id, name, description)
+          VALUES ($1, $2, $3, $4)
+          ON CONFLICT (user_id, school_year_id, name) DO NOTHING
+        `, [userId, targetSchoolYearId, group.name, group.description]);
       }
-      console.log(`✅ Created default student groups for user ${userId}`);
+      console.log(`✅ Created default student groups for user ${userId} in school year ${targetSchoolYearId}`);
     }
   } catch (error) {
     console.error(`Error creating default student groups for user ${userId}:`, error);

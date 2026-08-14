@@ -107,13 +107,60 @@ router.post('/register', validateRequest(schemas.register), async (req, res, nex
     const saltRounds = 12;
     const passwordHash = await bcrypt.hash(password, saltRounds);
 
-    // Create user
-    const result = await db.query(
-      'INSERT INTO users (email, password_hash, name) VALUES ($1, $2, $3) RETURNING id, email, name, created_at',
-      [email, passwordHash, name]
-    );
+    await db.query('BEGIN')
 
-    const user = result.rows[0];
+    let user: any
+    try {
+      // Create user
+      const result = await db.query(
+        'INSERT INTO users (email, password_hash, name) VALUES ($1, $2, $3) RETURNING id, email, name, created_at',
+        [email, passwordHash, name]
+      );
+
+      user = result.rows[0];
+
+      // Auto-assign a trial license so new users can start entering data immediately.
+      const schoolYearResult = await db.query(
+        `SELECT id
+         FROM school_years
+         WHERE CURRENT_DATE BETWEEN start_date AND end_date
+         ORDER BY start_date DESC
+         LIMIT 1`
+      )
+
+      const fallbackSchoolYearResult = schoolYearResult.rows.length === 0
+        ? await db.query(`SELECT id FROM school_years ORDER BY start_date DESC LIMIT 1`)
+        : { rows: [] }
+
+      const trialSchoolYearId = schoolYearResult.rows[0]?.id || fallbackSchoolYearResult.rows[0]?.id || null
+
+      if (trialSchoolYearId) {
+        await db.query(
+          `INSERT INTO user_school_year_licenses (user_id, school_year_id, grant_source, license_tier, notes)
+           VALUES ($1, $2, 'trial', 'single', $3)
+           ON CONFLICT (user_id, school_year_id)
+           DO UPDATE SET
+             grant_source = EXCLUDED.grant_source,
+             license_tier = EXCLUDED.license_tier,
+             notes = EXCLUDED.notes,
+             updated_at = CURRENT_TIMESTAMP`,
+          [user.id, trialSchoolYearId, 'Auto trial license with 100-grade cap']
+        )
+
+        await db.query(
+          `UPDATE users
+           SET active_school_year_id = $2,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = $1`,
+          [user.id, trialSchoolYearId]
+        )
+      }
+
+      await db.query('COMMIT')
+    } catch (txError) {
+      await db.query('ROLLBACK')
+      throw txError
+    }
 
     const verificationToken = createEmailVerificationToken(user.id, user.email)
     await sendVerificationEmail(user.email, user.name, verificationToken)

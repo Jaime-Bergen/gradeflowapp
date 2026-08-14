@@ -191,6 +191,50 @@ router.put('/student/:studentId/lesson/:lessonId', validateRequest(schemas.grade
       return res.status(400).json({ error: 'Must provide either percentage or both errors and points' });
     }
     
+    // Determine whether this is a new grade insert or an update.
+    const existingGradeResult = await db.query(
+      `SELECT id
+       FROM grades
+       WHERE student_id = $1 AND lesson_id = $2 AND school_year_id = $3
+       LIMIT 1`,
+      [studentId, lessonId, schoolYearId]
+    )
+
+    const isInsert = existingGradeResult.rows.length === 0
+
+    if (isInsert) {
+      const licenseResult = await db.query(
+        `SELECT grant_source, license_tier
+         FROM user_school_year_licenses
+         WHERE user_id = $1 AND school_year_id = $2
+         LIMIT 1`,
+        [req.userId, schoolYearId]
+      )
+
+      const grantSource = String(licenseResult.rows[0]?.grant_source || '').toLowerCase()
+      const licenseTier = String(licenseResult.rows[0]?.license_tier || '').toLowerCase()
+      const isTrialLicense = grantSource === 'trial' || licenseTier === 'trial'
+
+      if (isTrialLicense) {
+        const gradeCountResult = await db.query(
+          `SELECT COUNT(*)::int AS grade_count
+           FROM grades g
+           JOIN students s ON s.id = g.student_id
+           WHERE s.user_id = $1 AND g.school_year_id = $2`,
+          [req.userId, schoolYearId]
+        )
+
+        const gradeCount = Number(gradeCountResult.rows[0]?.grade_count || 0)
+        const trialGradeLimit = 100
+
+        if (gradeCount >= trialGradeLimit) {
+          return res.status(403).json({
+            error: `Trial limit reached: you can save up to ${trialGradeLimit} grades. Upgrade your license to continue.`
+          })
+        }
+      }
+    }
+
     // Upsert the grade
     const result = await db.query(
       `INSERT INTO grades (student_id, lesson_id, percentage, errors, points, school_year_id)

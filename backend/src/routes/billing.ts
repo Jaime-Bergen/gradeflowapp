@@ -171,20 +171,22 @@ const grantLicense = async (db: any, params: {
   userId: string
   schoolYearId: string
   grantSource: 'stripe' | 'free_trial'
+  licenseTier: 'full' | 'single'
   notes: string
 }) => {
-  const { userId, schoolYearId, grantSource, notes } = params
+  const { userId, schoolYearId, grantSource, licenseTier, notes } = params
 
   const insertResult = await db.query(
-    `INSERT INTO user_school_year_licenses (user_id, school_year_id, grant_source, notes)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO user_school_year_licenses (user_id, school_year_id, grant_source, license_tier, notes)
+     VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (user_id, school_year_id)
      DO UPDATE SET
        grant_source = EXCLUDED.grant_source,
+       license_tier = EXCLUDED.license_tier,
        notes = EXCLUDED.notes,
        updated_at = CURRENT_TIMESTAMP
      RETURNING id`,
-    [userId, schoolYearId, grantSource, notes]
+    [userId, schoolYearId, grantSource, licenseTier, notes]
   )
 
   await db.query(
@@ -389,6 +391,23 @@ router.post('/claim-free-year', authenticateToken, async (req: AuthRequest, res,
       return res.status(409).json({ error: 'This school year is already licensed on your account.' })
     }
 
+    // Users with any non-trial single/full license cannot claim a free year.
+    const existingPaidOrGrantedLicense = await db.query(
+      `SELECT 1
+       FROM user_school_year_licenses
+       WHERE user_id = $1
+         AND license_tier IN ('single', 'full')
+         AND COALESCE(grant_source, '') <> 'trial'
+       LIMIT 1`,
+      [req.userId]
+    )
+
+    if (existingPaidOrGrantedLicense.rows.length > 0) {
+      return res.status(409).json({
+        error: 'Free year is only available before you have a single or full license. Please choose a paid plan or contact sales.'
+      })
+    }
+
     const fingerprint = createSchoolFingerprint(String(schoolName), String(country))
 
     try {
@@ -417,6 +436,7 @@ router.post('/claim-free-year', authenticateToken, async (req: AuthRequest, res,
       userId: req.userId!,
       schoolYearId,
       grantSource: 'free_trial',
+      licenseTier: 'full',
       notes: `First year free claim for ${String(schoolName).trim()} (${String(country).trim()})`,
     })
 
@@ -495,6 +515,7 @@ webhookRouter.post('/stripe', express.raw({ type: 'application/json' }), async (
           userId,
           schoolYearId,
           grantSource: 'stripe',
+          licenseTier: plan === 'single' ? 'single' : 'full',
           notes: note,
         })
 

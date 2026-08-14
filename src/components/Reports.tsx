@@ -7,13 +7,32 @@ import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
-import { Eye, Users, FilePdf, Gear } from "@phosphor-icons/react"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Switch } from "@/components/ui/switch"
+import { Eye, Users, FilePdf, Gear, CaretUp, CaretDown } from "@phosphor-icons/react"
 import { Student, Subject, Grade, ReportCard, AttendanceRecord, AttendanceSummary, GradingPeriod } from '@/lib/types'
 import { getLetterGrade, generateReportCard, getSubjectCalculationBreakdown } from '@/lib/reportUtils'
 import { toast } from 'sonner'
 import { pdf } from '@react-pdf/renderer'
 import ReportCardPDF from './ReportCardPDF.tsx'
 import { apiClient } from '@/lib/api'
+
+type SubjectDisplayMode = 'percentage' | 'letter' | 'gpa'
+type SubjectTier = 'primary' | 'secondary'
+
+type ReportSubjectPreference = {
+  displayMode: SubjectDisplayMode
+  tier: SubjectTier
+}
+
+type ReportOptionsState = {
+  groupSubjectOrder: Record<string, string[]>
+  subjectPreferences: Record<string, ReportSubjectPreference>
+  primaryWeightingEnabled: boolean
+  primaryWeightPercent: number
+}
+
+const REPORT_OPTIONS_STORAGE_KEY = 'gradeflow-report-options-v1'
 
 export default function Reports() {
   const [students, setStudents] = useState<Student[]>([])
@@ -34,6 +53,13 @@ export default function Reports() {
   const [comments, setComments] = useState<Record<string, string>>({})
   const [previewStudent, setPreviewStudent] = useState<string>("")
   const [showCalculationDetails, setShowCalculationDetails] = useState(false)
+  const [showReportOptionsDialog, setShowReportOptionsDialog] = useState(false)
+  const [selectedOptionsGroup, setSelectedOptionsGroup] = useState<string>('')
+  const [groupSubjectOrder, setGroupSubjectOrder] = useState<Record<string, string[]>>({})
+  const [subjectPreferences, setSubjectPreferences] = useState<Record<string, ReportSubjectPreference>>({})
+  const [primaryWeightingEnabled, setPrimaryWeightingEnabled] = useState(false)
+  const [primaryWeightPercent, setPrimaryWeightPercent] = useState(60)
+  const [hasLoadedReportPreferences, setHasLoadedReportPreferences] = useState(false)
   const [schoolSettings, setSchoolSettings] = useState({
     schoolName: '',
     firstDayOfSchool: '',
@@ -42,6 +68,29 @@ export default function Reports() {
   })
   const [isGenerating, setIsGenerating] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
+
+  const getSubjectDisplayName = useCallback((subject: Subject) => {
+    return subject.report_card_name && subject.report_card_name.trim() !== ''
+      ? subject.report_card_name
+      : subject.name
+  }, [])
+
+  const getGPAPoints = useCallback((percentage: number): number => {
+    if (typeof percentage !== 'number' || isNaN(percentage)) return 0.0
+    if (percentage >= 97) return 4.0
+    if (percentage >= 93) return 4.0
+    if (percentage >= 90) return 3.7
+    if (percentage >= 87) return 3.3
+    if (percentage >= 83) return 3.0
+    if (percentage >= 80) return 2.7
+    if (percentage >= 77) return 2.3
+    if (percentage >= 73) return 2.0
+    if (percentage >= 70) return 1.7
+    if (percentage >= 67) return 1.3
+    if (percentage >= 65) return 1.0
+    if (percentage >= 60) return 0.7
+    return 0.0
+  }, [])
 
   // Helper function to extract grade number from group name for sorting
   const extractGradeNumber = (groupName: string): number => {
@@ -91,6 +140,157 @@ export default function Reports() {
       students: grouped[groupName].sort((a, b) => a.name.localeCompare(b.name))
     }))
   }
+
+  const availableGroupNames = useMemo(() => {
+    const names = new Set<string>()
+    filteredStudents.forEach(student => {
+      names.add(getFirstGroup(student.group_name))
+    })
+    return Array.from(names).sort((a, b) => {
+      const gradeA = extractGradeNumber(a)
+      const gradeB = extractGradeNumber(b)
+      if (gradeA !== 999 && gradeB !== 999) return gradeA - gradeB
+      if (gradeA !== 999 && gradeB === 999) return -1
+      if (gradeA === 999 && gradeB !== 999) return 1
+      return a.localeCompare(b)
+    })
+  }, [filteredStudents])
+
+  const getSubjectsForGroup = useCallback((groupName: string) => {
+    const inGroup = subjects.filter(subject => {
+      if (!subject.group_name) return false
+      const names = subject.group_name.split(',').map(name => name.trim()).filter(Boolean)
+      return names.includes(groupName)
+    })
+
+    // If group assignments are unavailable, fall back to all subjects.
+    const source = inGroup.length > 0 ? inGroup : subjects
+    return [...source].sort((a, b) => getSubjectDisplayName(a).localeCompare(getSubjectDisplayName(b)))
+  }, [subjects, getSubjectDisplayName])
+
+  const getOrderedSubjectsForGroup = useCallback((groupName: string) => {
+    const baseSubjects = getSubjectsForGroup(groupName)
+    const baseIds = baseSubjects.map(subject => subject.id)
+    const configured = groupSubjectOrder[groupName] || []
+    const filteredConfigured = configured.filter(id => baseIds.includes(id))
+    const missing = baseIds.filter(id => !filteredConfigured.includes(id))
+    const finalOrder = [...filteredConfigured, ...missing]
+
+    return finalOrder
+      .map(id => baseSubjects.find(subject => subject.id === id))
+      .filter(Boolean) as Subject[]
+  }, [getSubjectsForGroup, groupSubjectOrder])
+
+  const moveSubjectOrder = useCallback((groupName: string, subjectId: string, direction: 'up' | 'down') => {
+    const ordered = getOrderedSubjectsForGroup(groupName).map(subject => subject.id)
+    const currentIndex = ordered.indexOf(subjectId)
+    if (currentIndex === -1) return
+
+    const swapIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1
+    if (swapIndex < 0 || swapIndex >= ordered.length) return
+
+    const next = [...ordered]
+    ;[next[currentIndex], next[swapIndex]] = [next[swapIndex], next[currentIndex]]
+
+    setGroupSubjectOrder(prev => ({
+      ...prev,
+      [groupName]: next,
+    }))
+  }, [getOrderedSubjectsForGroup])
+
+  const getSubjectPreference = useCallback((subjectId: string): ReportSubjectPreference => {
+    return subjectPreferences[subjectId] || { displayMode: 'percentage', tier: 'secondary' }
+  }, [subjectPreferences])
+
+  const setSubjectPreference = useCallback((subjectId: string, next: Partial<ReportSubjectPreference>) => {
+    setSubjectPreferences(prev => ({
+      ...prev,
+      [subjectId]: {
+        ...getSubjectPreference(subjectId),
+        ...next,
+      },
+    }))
+  }, [getSubjectPreference])
+
+  const secondaryWeightPercent = Math.max(0, Math.min(100, 100 - primaryWeightPercent))
+  const weightingSkewedWarning = primaryWeightingEnabled && secondaryWeightPercent > primaryWeightPercent
+
+  useEffect(() => {
+    if (availableGroupNames.length > 0 && !selectedOptionsGroup) {
+      setSelectedOptionsGroup(availableGroupNames[0])
+    }
+  }, [availableGroupNames, selectedOptionsGroup])
+
+  const applyReportPreferences = useCallback((parsed: Partial<ReportOptionsState>) => {
+    if (parsed.groupSubjectOrder && typeof parsed.groupSubjectOrder === 'object') {
+      setGroupSubjectOrder(parsed.groupSubjectOrder)
+    }
+    if (parsed.subjectPreferences && typeof parsed.subjectPreferences === 'object') {
+      setSubjectPreferences(parsed.subjectPreferences)
+    }
+    if (typeof parsed.primaryWeightingEnabled === 'boolean') {
+      setPrimaryWeightingEnabled(parsed.primaryWeightingEnabled)
+    }
+    if (typeof parsed.primaryWeightPercent === 'number' && !isNaN(parsed.primaryWeightPercent)) {
+      setPrimaryWeightPercent(Math.max(0, Math.min(100, parsed.primaryWeightPercent)))
+    }
+  }, [])
+
+  const loadLocalReportPreferences = useCallback(() => {
+    try {
+      const raw = localStorage.getItem(REPORT_OPTIONS_STORAGE_KEY)
+      if (!raw) return false
+      const parsed = JSON.parse(raw) as Partial<ReportOptionsState>
+      applyReportPreferences(parsed)
+      return true
+    } catch (error) {
+      console.warn('Failed to load report options from local storage', error)
+      return false
+    }
+  }, [applyReportPreferences])
+
+  const loadReportPreferences = useCallback(async () => {
+    try {
+      const response = await apiClient.getReportPreferences()
+      if (response.error || !response.data?.preferences) {
+        loadLocalReportPreferences()
+        return
+      }
+
+      applyReportPreferences(response.data.preferences)
+    } catch (error) {
+      console.warn('Failed to load report options from API, falling back to local storage', error)
+      loadLocalReportPreferences()
+    } finally {
+      setHasLoadedReportPreferences(true)
+    }
+  }, [applyReportPreferences, loadLocalReportPreferences])
+
+  useEffect(() => {
+    loadReportPreferences()
+  }, [loadReportPreferences])
+
+  useEffect(() => {
+    if (!hasLoadedReportPreferences) return
+
+    const payload: ReportOptionsState = {
+      groupSubjectOrder,
+      subjectPreferences,
+      primaryWeightingEnabled,
+      primaryWeightPercent,
+    }
+
+    localStorage.setItem(REPORT_OPTIONS_STORAGE_KEY, JSON.stringify(payload))
+
+    const timer = setTimeout(async () => {
+      const response = await apiClient.updateReportPreferences(payload)
+      if (response.error) {
+        console.warn('Failed to persist report options to API', response.error)
+      }
+    }, 350)
+
+    return () => clearTimeout(timer)
+  }, [groupSubjectOrder, subjectPreferences, primaryWeightingEnabled, primaryWeightPercent, hasLoadedReportPreferences])
 
   const filterDataByTeacherGroups = useCallback(() => {
     const selectedGroupIds = window.SELECTED_TEACHER_GROUPS
@@ -208,6 +408,7 @@ export default function Reports() {
 
       // Also load settings
       await loadSettings()
+      await loadReportPreferences()
     } catch (error) {
       console.error('Failed to load data:', error)
       toast.error('Failed to load data')
@@ -329,10 +530,10 @@ export default function Reports() {
     }, 100)
   }
 
-  // Filter grades by lesson date for the selected reporting period.
-  const getFilteredGradesForPeriod = (): Grade[] => {
+  // Filter grades by lesson date for the given reporting period.
+  const getFilteredGradesForPeriod = useCallback((periodId: string): Grade[] => {
     if (gradingPeriods.length === 0) return []
-    const period = gradingPeriods.find(p => p.id === reportPeriod) || gradingPeriods[0]
+    const period = gradingPeriods.find(p => p.id === periodId) || gradingPeriods[0]
     if (!period) return []
 
     const start = new Date(period.startDate)
@@ -347,7 +548,22 @@ export default function Reports() {
       const lessonDate = new Date(lesson.date)
       return lessonDate >= start && lessonDate <= end
     })
-  }
+  }, [grades, gradingPeriods, subjects])
+
+  const sortedPeriods = useMemo(
+    () => [...gradingPeriods].sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0)),
+    [gradingPeriods]
+  )
+
+  const selectedPeriodIndex = useMemo(() => {
+    const idx = sortedPeriods.findIndex(period => period.id === reportPeriod)
+    return idx >= 0 ? idx : 0
+  }, [sortedPeriods, reportPeriod])
+
+  const visiblePeriods = useMemo(
+    () => sortedPeriods.slice(0, selectedPeriodIndex + 1),
+    [sortedPeriods, selectedPeriodIndex]
+  )
 
   const handleReportPeriodChange = (value: string) => {
     setReportPeriod(value)
@@ -375,8 +591,108 @@ export default function Reports() {
         return null
       }
       
-      // Get filtered grades for the selected period
-      const filteredGrades = getFilteredGradesForPeriod()
+      if (visiblePeriods.length === 0) {
+        console.warn('No visible periods are available for report generation')
+        return null
+      }
+
+      // Build report snapshots for each visible period so we can render historical columns.
+      const periodReports = visiblePeriods.map(period => {
+        const periodGrades = getFilteredGradesForPeriod(period.id)
+        const periodReport = generateReportCard(studentId, period.name, comments, students, subjects, periodGrades)
+        return { period, periodReport }
+      })
+
+      const currentSnapshot = periodReports[periodReports.length - 1]?.periodReport
+      if (!currentSnapshot || currentSnapshot.subjects.length === 0) return null
+
+      const student = students.find(s => s.id === studentId)
+      if (!student) return null
+
+      const firstGroup = getFirstGroup(student.group_name)
+      const orderedSubjects = getOrderedSubjectsForGroup(firstGroup)
+      const reportSubjectIds = new Set<string>()
+
+      periodReports.forEach(({ periodReport }) => {
+        ;(periodReport?.subjects || []).forEach(subject => reportSubjectIds.add(subject.subjectId))
+      })
+
+      const prioritizedSubjectIds = orderedSubjects
+        .map(subject => subject.id)
+        .filter(id => reportSubjectIds.has(id))
+
+      const remainingSubjectIds = Array.from(reportSubjectIds).filter(id => !prioritizedSubjectIds.includes(id))
+      remainingSubjectIds.sort((a, b) => {
+        const subjectA = subjects.find(subject => subject.id === a)
+        const subjectB = subjects.find(subject => subject.id === b)
+        const nameA = subjectA ? getSubjectDisplayName(subjectA) : a
+        const nameB = subjectB ? getSubjectDisplayName(subjectB) : b
+        return nameA.localeCompare(nameB)
+      })
+
+      const orderedSubjectIds = [...prioritizedSubjectIds, ...remainingSubjectIds]
+
+      const builtSubjects = orderedSubjectIds.map(subjectId => {
+        const currentSubject = currentSnapshot.subjects.find(subject => subject.subjectId === subjectId)
+        const fallbackSubject = subjects.find(subject => subject.id === subjectId)
+        const preference = getSubjectPreference(subjectId)
+        const periodValues = periodReports.map(({ periodReport }) => {
+          const periodSubject = periodReport?.subjects.find(subject => subject.subjectId === subjectId)
+          return periodSubject?.average ?? null
+        })
+
+        const currentAverage = periodValues[periodValues.length - 1]
+        const safeAverage = typeof currentAverage === 'number' && !isNaN(currentAverage)
+          ? currentAverage
+          : (currentSubject?.average ?? 0)
+
+        return {
+          subjectId,
+          subjectName: currentSubject?.subjectName || (fallbackSubject ? getSubjectDisplayName(fallbackSubject) : 'Unknown Subject'),
+          grades: currentSubject?.grades || [],
+          average: safeAverage,
+          letterGrade: getLetterGrade(safeAverage),
+          periodValues,
+          displayMode: preference.displayMode,
+          tier: preference.tier,
+        }
+      })
+
+      const subjectsWithCurrentValues = builtSubjects.filter(subject => {
+        const currentValue = subject.periodValues[subject.periodValues.length - 1]
+        return typeof currentValue === 'number' && !isNaN(currentValue)
+      })
+
+      let overallGPA = 0
+      if (subjectsWithCurrentValues.length > 0) {
+        if (primaryWeightingEnabled) {
+          const primarySubjects = subjectsWithCurrentValues.filter(subject => subject.tier === 'primary')
+          const secondarySubjects = subjectsWithCurrentValues.filter(subject => subject.tier !== 'primary')
+
+          const averageOf = (values: number[]) => values.length > 0
+            ? values.reduce((sum, value) => sum + value, 0) / values.length
+            : null
+
+          const primaryAverage = averageOf(primarySubjects.map(subject => subject.periodValues[subject.periodValues.length - 1] as number))
+          const secondaryAverage = averageOf(secondarySubjects.map(subject => subject.periodValues[subject.periodValues.length - 1] as number))
+
+          const primaryWeight = Math.max(0, Math.min(100, primaryWeightPercent)) / 100
+          const secondaryWeight = Math.max(0, Math.min(100, 100 - primaryWeightPercent)) / 100
+
+          if (primaryAverage !== null && secondaryAverage !== null) {
+            overallGPA = (primaryAverage * primaryWeight) + (secondaryAverage * secondaryWeight)
+          } else if (primaryAverage !== null) {
+            overallGPA = primaryAverage
+          } else if (secondaryAverage !== null) {
+            overallGPA = secondaryAverage
+          }
+        } else {
+          overallGPA = subjectsWithCurrentValues.reduce((sum, subject) => {
+            const currentValue = subject.periodValues[subject.periodValues.length - 1] as number
+            return sum + currentValue
+          }, 0) / subjectsWithCurrentValues.length
+        }
+      }
 
       // Use human-readable period name for the PDF header when grading periods are date-based
       const selectedPeriod = gradingPeriods.find(p => p.id === reportPeriod)
@@ -394,11 +710,23 @@ export default function Reports() {
         return reportPeriod
       })()
 
-      const baseReport = generateReportCard(studentId, displayPeriod, comments, students, subjects, filteredGrades)
-      if (!baseReport) return null
-
       const attendanceSummary = getAttendanceSummaryForStudent(studentId)
-      return { ...baseReport, attendanceSummary }
+      return {
+        studentId,
+        period: displayPeriod,
+        subjects: builtSubjects,
+        overallGPA,
+        comments: comments[studentId],
+        attendanceSummary,
+        periodColumns: visiblePeriods.map(period => ({
+          id: period.id,
+          label: period.name,
+          startDate: period.startDate,
+          endDate: period.endDate,
+        })),
+        primaryWeightingEnabled,
+        primaryWeightPercent,
+      } as ReportCard
     } catch (error) {
       console.error('Error generating report card for student:', studentId, error)
       return null
@@ -688,6 +1016,70 @@ export default function Reports() {
     // Create a stable key from subjects with lessons
     subjects.map(s => `${s.id}:${s.lessons?.length || 0}`).join(',')
   ])
+
+  const previewWeightingBreakdown = useMemo(() => {
+    if (!previewReport) return null
+
+    const subjectsWithCurrentValues = previewReport.subjects
+      .map(subject => {
+        const currentValue = subject.periodValues?.[subject.periodValues.length - 1]
+        const value = typeof currentValue === 'number' && !isNaN(currentValue)
+          ? currentValue
+          : subject.average
+        return {
+          ...subject,
+          currentValue: typeof value === 'number' && !isNaN(value) ? value : null,
+          tier: subject.tier || 'secondary' as SubjectTier,
+        }
+      })
+      .filter(subject => subject.currentValue !== null)
+
+    if (subjectsWithCurrentValues.length === 0) return null
+
+    if (primaryWeightingEnabled) {
+      const primarySubjects = subjectsWithCurrentValues.filter(subject => subject.tier === 'primary')
+      const secondarySubjects = subjectsWithCurrentValues.filter(subject => subject.tier !== 'primary')
+
+      const primaryAverage = primarySubjects.length > 0
+        ? primarySubjects.reduce((sum, subject) => sum + (subject.currentValue as number), 0) / primarySubjects.length
+        : null
+      const secondaryAverage = secondarySubjects.length > 0
+        ? secondarySubjects.reduce((sum, subject) => sum + (subject.currentValue as number), 0) / secondarySubjects.length
+        : null
+
+      const primaryWeight = Math.max(0, Math.min(100, primaryWeightPercent)) / 100
+      const secondaryWeight = (100 - Math.max(0, Math.min(100, primaryWeightPercent))) / 100
+
+      let finalAverage = 0
+      if (primaryAverage !== null && secondaryAverage !== null) {
+        finalAverage = (primaryAverage * primaryWeight) + (secondaryAverage * secondaryWeight)
+      } else if (primaryAverage !== null) {
+        finalAverage = primaryAverage
+      } else if (secondaryAverage !== null) {
+        finalAverage = secondaryAverage
+      }
+
+      return {
+        mode: 'primary-secondary' as const,
+        primarySubjects,
+        secondarySubjects,
+        primaryAverage,
+        secondaryAverage,
+        primaryWeight,
+        secondaryWeight,
+        finalAverage,
+      }
+    }
+
+    const values = subjectsWithCurrentValues.map(subject => subject.currentValue as number)
+    const equalAverage = values.reduce((sum, value) => sum + value, 0) / values.length
+
+    return {
+      mode: 'equal' as const,
+      subjects: subjectsWithCurrentValues,
+      equalAverage,
+    }
+  }, [previewReport, primaryWeightingEnabled, primaryWeightPercent])
   
   const previewStudentData = students.find(s => s.id === previewStudent)
   const attendanceRangeInvalid = Boolean(
@@ -926,6 +1318,23 @@ export default function Reports() {
                 <Label htmlFor="show-percentage">Show overall percentage instead of GPA</Label>
               </div>
 
+              <div className="space-y-2 rounded-md border border-border p-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium">Subject Report Options</p>
+                    <p className="text-xs text-muted-foreground">Order subjects by group, set display mode, and optional primary weighting.</p>
+                  </div>
+                  <Button size="sm" variant="outline" onClick={() => setShowReportOptionsDialog(true)}>
+                    Configure
+                  </Button>
+                </div>
+                {primaryWeightingEnabled && (
+                  <p className="text-xs text-muted-foreground">
+                    Primary weight {primaryWeightPercent}% / Secondary weight {secondaryWeightPercent}%
+                  </p>
+                )}
+              </div>
+
               <div className="space-y-2">
                 <Button 
                   onClick={generateReports} 
@@ -1003,20 +1412,45 @@ export default function Reports() {
                       
                       {previewReport.subjects.map(subject => {
                         // Use filtered grades for the breakdown calculation
-                        const filteredGrades = getFilteredGradesForPeriod()
+                        const filteredGrades = getFilteredGradesForPeriod(reportPeriod)
                         const breakdown = getSubjectCalculationBreakdown(previewStudent, subject.subjectId, subjects, filteredGrades)
+                        const periodColumns = (previewReport as any).periodColumns || []
+                        const displayMode: SubjectDisplayMode = (subject as any).displayMode || 'percentage'
+                        const periodValues: Array<number | null> = (subject as any).periodValues || []
+                        const tier: SubjectTier = (subject as any).tier || 'secondary'
                         
                         return (
                           <div key={subject.subjectId} className="space-y-2">
-                            <div className="flex justify-between items-center text-sm">
-                              <span>{subject.subjectName}</span>
-                              <div className="flex items-center gap-2">
-                                <Badge variant={(subject.average ?? 0) >= 90 ? "default" : (subject.average ?? 0) >= 70 ? "secondary" : "destructive"}>
-                                  {subject.letterGrade}
-                                </Badge>
-                                <span className="text-muted-foreground">
-                                  {(subject.average ?? 0).toFixed(1)}%
-                                </span>
+                            <div className="flex flex-col gap-2 text-sm">
+                              <div className="flex items-center justify-between">
+                                <span>{subject.subjectName}</span>
+                                <div className="flex items-center gap-2">
+                                  {primaryWeightingEnabled && (
+                                    <Badge variant={tier === 'primary' ? 'default' : 'outline'}>
+                                      {tier === 'primary' ? 'Primary' : 'Secondary'}
+                                    </Badge>
+                                  )}
+                                  <Badge variant={(subject.average ?? 0) >= 90 ? "default" : (subject.average ?? 0) >= 70 ? "secondary" : "destructive"}>
+                                    {subject.letterGrade}
+                                  </Badge>
+                                </div>
+                              </div>
+                              <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.max(periodColumns.length, 1)}, minmax(0, 1fr))` }}>
+                                {(periodColumns.length > 0 ? periodColumns : [{ id: 'current', label: 'Current' }]).map((column: any, idx: number) => {
+                                  const value = periodValues[idx]
+                                  const cellValue = (() => {
+                                    if (value === null || value === undefined || isNaN(value)) return '—'
+                                    if (displayMode === 'letter') return getLetterGrade(value)
+                                    if (displayMode === 'gpa') return getGPAPoints(value).toFixed(1)
+                                    return `${value.toFixed(1)}%`
+                                  })()
+                                  return (
+                                    <div key={`${subject.subjectId}-${column.id}`} className="rounded border border-border bg-white/50 px-2 py-1 text-xs">
+                                      <div className="text-[10px] text-muted-foreground truncate">{column.label}</div>
+                                      <div className="font-medium">{cellValue}</div>
+                                    </div>
+                                  )
+                                })}
                               </div>
                             </div>
                             
@@ -1049,6 +1483,52 @@ export default function Reports() {
                           </div>
                         )
                       })}
+
+                      {showCalculationDetails && previewWeightingBreakdown && (
+                        <div className="rounded-md border border-border bg-muted/40 p-3 text-xs space-y-2">
+                          <div className="font-medium">Subject Weighting Calculation:</div>
+
+                          {previewWeightingBreakdown.mode === 'primary-secondary' ? (
+                            <>
+                              <div className="text-muted-foreground">
+                                Primary group ({Math.round(previewWeightingBreakdown.primaryWeight * 100)}%):
+                                {' '}
+                                {previewWeightingBreakdown.primarySubjects.length > 0
+                                  ? previewWeightingBreakdown.primarySubjects.map(s => `${s.subjectName} (${(s.currentValue as number).toFixed(1)}%)`).join(', ')
+                                  : 'No primary subjects selected'}
+                              </div>
+                              <div className="text-muted-foreground">
+                                Secondary group ({Math.round(previewWeightingBreakdown.secondaryWeight * 100)}%):
+                                {' '}
+                                {previewWeightingBreakdown.secondarySubjects.length > 0
+                                  ? previewWeightingBreakdown.secondarySubjects.map(s => `${s.subjectName} (${(s.currentValue as number).toFixed(1)}%)`).join(', ')
+                                  : 'No secondary subjects selected'}
+                              </div>
+                              <div className="pt-2 border-t border-border font-medium">
+                                {previewWeightingBreakdown.primaryAverage !== null && previewWeightingBreakdown.secondaryAverage !== null
+                                  ? `Final: (${previewWeightingBreakdown.primaryAverage.toFixed(1)}% × ${Math.round(previewWeightingBreakdown.primaryWeight * 100)}%) + (${previewWeightingBreakdown.secondaryAverage.toFixed(1)}% × ${Math.round(previewWeightingBreakdown.secondaryWeight * 100)}%) = ${previewWeightingBreakdown.finalAverage.toFixed(1)}%`
+                                  : previewWeightingBreakdown.primaryAverage !== null
+                                    ? `Final: primary average only = ${previewWeightingBreakdown.finalAverage.toFixed(1)}%`
+                                    : `Final: secondary average only = ${previewWeightingBreakdown.finalAverage.toFixed(1)}%`
+                                }
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="text-muted-foreground">
+                                Equal-weight subjects:
+                                {' '}
+                                {previewWeightingBreakdown.subjects
+                                  .map(s => `${s.subjectName} (${(s.currentValue as number).toFixed(1)}%)`)
+                                  .join(', ')}
+                              </div>
+                              <div className="pt-2 border-t border-border font-medium">
+                                Final: average of {previewWeightingBreakdown.subjects.length} subjects = {previewWeightingBreakdown.equalAverage.toFixed(1)}%
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     {previewReport.attendanceSummary && (
@@ -1155,6 +1635,131 @@ export default function Reports() {
           </Card>
         </div>
       </div>
+
+      <Dialog open={showReportOptionsDialog} onOpenChange={setShowReportOptionsDialog}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>Subject Report Options</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label>Student Group</Label>
+                <Select value={selectedOptionsGroup} onValueChange={setSelectedOptionsGroup}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Choose a group" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableGroupNames.map(groupName => (
+                      <SelectItem key={groupName} value={groupName}>{groupName}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2 rounded-md border border-border p-3">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="primary-weighting-toggle">Primary subject average weighting</Label>
+                  <Switch
+                    id="primary-weighting-toggle"
+                    checked={primaryWeightingEnabled}
+                    onCheckedChange={setPrimaryWeightingEnabled}
+                  />
+                </div>
+                {primaryWeightingEnabled && (
+                  <div className="space-y-2">
+                    <Label htmlFor="primary-weight-slider">Primary weight (%)</Label>
+                    <Input
+                      id="primary-weight-slider"
+                      type="range"
+                      min={0}
+                      max={100}
+                      value={primaryWeightPercent}
+                      onChange={(e) => setPrimaryWeightPercent(parseInt(e.target.value || '0', 10))}
+                    />
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                      <span>Primary: {primaryWeightPercent}%</span>
+                      <span>Secondary: {secondaryWeightPercent}%</span>
+                    </div>
+                    {weightingSkewedWarning && (
+                      <p className="text-xs text-amber-700">Secondary weight is greater than primary weight.</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Subject Order and Display (on report cards)</Label>
+              {selectedOptionsGroup ? (
+                <div className="max-h-[50vh] overflow-y-auto space-y-2 rounded-md border border-border p-2">
+                  {getOrderedSubjectsForGroup(selectedOptionsGroup).map((subject, idx, arr) => {
+                    const preference = getSubjectPreference(subject.id)
+                    return (
+                      <div key={subject.id} className="grid gap-2 rounded border border-border bg-muted/30 p-2 md:grid-cols-[1fr_auto_auto_auto] md:items-center">
+                        <div>
+                          <p className="text-sm font-medium">{getSubjectDisplayName(subject)}</p>
+                          <p className="text-xs text-muted-foreground">{subject.name}</p>
+                        </div>
+                        <div className="flex gap-1">
+                          <Button
+                            size="icon"
+                            variant="outline"
+                            className="h-8 w-8"
+                            disabled={idx === 0}
+                            onClick={() => moveSubjectOrder(selectedOptionsGroup, subject.id, 'up')}
+                            aria-label="Move subject up"
+                          >
+                            <CaretUp size={14} />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="outline"
+                            className="h-8 w-8"
+                            disabled={idx === arr.length - 1}
+                            onClick={() => moveSubjectOrder(selectedOptionsGroup, subject.id, 'down')}
+                            aria-label="Move subject down"
+                          >
+                            <CaretDown size={14} />
+                          </Button>
+                        </div>
+                        <Select
+                          value={preference.displayMode}
+                          onValueChange={(value: SubjectDisplayMode) => setSubjectPreference(subject.id, { displayMode: value })}
+                        >
+                          <SelectTrigger className="w-[140px]">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="percentage">Percentage</SelectItem>
+                            <SelectItem value="letter">Letter</SelectItem>
+                            <SelectItem value="gpa">GPA</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        {primaryWeightingEnabled ? (
+                          <div className="flex items-center gap-2 rounded border border-border px-2 py-1">
+                            <span className="text-[11px] text-muted-foreground">S</span>
+                            <Switch
+                              checked={preference.tier === 'primary'}
+                              onCheckedChange={(checked) => setSubjectPreference(subject.id, { tier: checked ? 'primary' : 'secondary' })}
+                              aria-label="Toggle primary or secondary"
+                            />
+                            <span className="text-[11px] text-muted-foreground">P</span>
+                          </div>
+                        ) : (
+                          <div className="text-xs text-muted-foreground">Primary/secondary hidden (off)</div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">No groups available.</p>
+              )}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

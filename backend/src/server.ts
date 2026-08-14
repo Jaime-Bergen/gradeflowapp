@@ -115,7 +115,7 @@ app.use('/api/attendance', authenticateToken, resolveSchoolYearContext, attendan
 app.use('/api/rollover', authenticateToken, resolveSchoolYearContext, rolloverRoutes);
 app.use('/api/billing', billingRoutes);
 app.use('/api/utils', utilsRoutes);
-app.use('/api/metadata', metadataRoutes);
+app.use('/api/metadata', authenticateToken, resolveSchoolYearContext, metadataRoutes);
 app.use('/api/backups', backupRoutes);
 app.use('/api', restoreRoutes); // Restore routes (includes authentication)
 

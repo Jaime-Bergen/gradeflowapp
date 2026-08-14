@@ -17,15 +17,16 @@ import {
   Question
 } from "@phosphor-icons/react"
 
-import UserAuth, { UserData } from './components/UserAuth'
-import TeacherSelector from './components/TeacherSelector'
+import UserAuth, { UserData } from './components/UserAuth.tsx'
+import TeacherSelector from './components/TeacherSelector.tsx'
 import { Toaster, toast } from 'sonner'
 import { apiClient } from '@/lib/api'
 import { SchoolYear } from '@/lib/types'
+import { Badge } from "@/components/ui/badge"
 
-const Dashboard = lazy(() => import('./components/Dashboard'))
-const Students = lazy(() => import('./components/Students'))
-const Subjects = lazy(() => import('./components/Subjects'))
+const Dashboard = lazy(() => import('./components/Dashboard.tsx'))
+const Students = lazy(() => import('./components/Students.tsx'))
+const Subjects = lazy(() => import('./components/Subjects.tsx'))
 const GradeEntry = lazy(() => import('./components/GradeEntry.tsx'))
 const Reports = lazy(() => import('./components/Reports.tsx'))
 const SystemAdmin = lazy(() => import('./components/SystemAdmin.tsx'))
@@ -216,6 +217,16 @@ function App() {
   }
 
   const schoolYearContextLabel = getYearContextLabelFromDateRange(activeSchoolYearId, licensedSchoolYears)
+  const pendingSchoolYear = licensedSchoolYears.find((year: any) => year.id === pendingSchoolYearId)
+  const pendingLicenseType = (pendingSchoolYear as any)?.license_tier === 'trial'
+    ? 'Trial'
+    : (pendingSchoolYear as any)?.license_tier === 'single'
+      ? 'Single Teacher'
+      : 'School'
+  const activeLicensedYear = licensedSchoolYears.find((year: any) => year.id === activeSchoolYearId) as any
+  const activeGrantSource = String(activeLicensedYear?.grant_source || '').toLowerCase()
+  const activeLicenseTier = String(activeLicensedYear?.license_tier || '').toLowerCase()
+  const isTrialMode = activeGrantSource === 'trial' || activeLicenseTier === 'trial'
 
   return (
     <>
@@ -242,6 +253,11 @@ function App() {
                     </div>
                     <div className="flex flex-col items-end gap-1">
                       <TeacherSelector onTeacherChange={handleTeacherChange} />
+                      {isTrialMode && (
+                        <Badge variant="secondary" className="text-[11px]">
+                          Trial Mode · 100 grade limit
+                        </Badge>
+                      )}
                       <button
                         type="button"
                         onClick={openSchoolYearDialog}
@@ -382,6 +398,13 @@ function App() {
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+
+            <div className="space-y-1">
+              <Label>License Type</Label>
+              <div className="text-sm text-muted-foreground">
+                {pendingLicenseType}
+              </div>
             </div>
 
             <p className="text-xs text-muted-foreground">

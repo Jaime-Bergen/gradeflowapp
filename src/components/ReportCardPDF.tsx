@@ -106,10 +106,8 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: '#374151',
   },
-  subjectCol: { width: '40%' },
-  percentCol: { width: '20%', textAlign: 'center' },
-  gradeCol: { width: '20%', textAlign: 'center' },
-  pointsCol: { width: '20%', textAlign: 'center' },
+  subjectCol: { textAlign: 'left' },
+  periodCol: { textAlign: 'center' },
   tableRow: {
     flexDirection: 'row',
     padding: 8,
@@ -358,6 +356,17 @@ const ReportCardPDF: React.FC<ReportCardPDFProps> = ({
     day: 'numeric'
   })
 
+  const periodColumns = reportCard.periodColumns && reportCard.periodColumns.length > 0
+    ? reportCard.periodColumns
+    : [{ id: 'current', label: formatReportPeriod(reportCard.period) }]
+
+  const subjectColumnWidth = periodColumns.length <= 2
+    ? 42
+    : periodColumns.length <= 4
+      ? 34
+      : 28
+  const periodColumnWidth = (100 - subjectColumnWidth) / Math.max(periodColumns.length, 1)
+
   return (
     <Document>
       <Page size="A4" style={styles.page}>
@@ -402,6 +411,11 @@ const ReportCardPDF: React.FC<ReportCardPDFProps> = ({
             <Text style={styles.gradeLevel}>
               {getLetterGrade(typeof reportCard.overallGPA === 'number' ? reportCard.overallGPA : 0)}
             </Text>
+            {reportCard.primaryWeightingEnabled && (
+              <Text style={styles.signatureLabel}>
+                Primary {Math.round(reportCard.primaryWeightPercent ?? 60)}%
+              </Text>
+            )}
           </View>
         </View>
 
@@ -410,54 +424,66 @@ const ReportCardPDF: React.FC<ReportCardPDFProps> = ({
           <Text style={styles.sectionTitle}>Academic Performance</Text>
           <View style={styles.table}>
             <View style={styles.tableHeader}>
-              <Text style={[styles.tableHeaderText, styles.subjectCol]}>Subject</Text>
-              <Text style={[styles.tableHeaderText, styles.percentCol]}>Percentage</Text>
-              <Text style={[styles.tableHeaderText, styles.gradeCol]}>Grade</Text>
-              <Text style={[styles.tableHeaderText, styles.pointsCol]}>{showPercentage ? 'Percentage' : 'Points'}</Text>
+              <Text style={[styles.tableHeaderText, styles.subjectCol, { width: `${subjectColumnWidth}%` }]}>Subject</Text>
+              {periodColumns.map(column => (
+                <Text key={`header-${column.id}`} style={[styles.tableHeaderText, styles.periodCol, { width: `${periodColumnWidth}%` }]}>
+                  {column.label}
+                </Text>
+              ))}
             </View>
             {reportCard.subjects && Array.isArray(reportCard.subjects) && reportCard.subjects.length > 0 ? reportCard.subjects.map((subject, index) => {
               // Add comprehensive safety checks for undefined values
               if (!subject) {
                 return (
                   <View key={`empty-subject-${index}`} style={styles.tableRow}>
-                    <Text style={[styles.tableCell, styles.subjectCol]}>Invalid Subject</Text>
-                    <Text style={[styles.tableCellCenter, styles.percentCol]}>0.0%</Text>
-                    <Text style={[styles.tableCellCenter, styles.gradeCol]}>N/A</Text>
-                    <Text style={[styles.tableCellCenter, styles.pointsCol]}>{showPercentage ? '0.0%' : '0.0'}</Text>
+                    <Text style={[styles.tableCell, styles.subjectCol, { width: `${subjectColumnWidth}%` }]}>Invalid Subject</Text>
+                    {periodColumns.map(column => (
+                      <Text key={`invalid-${column.id}`} style={[styles.tableCellCenter, styles.periodCol, { width: `${periodColumnWidth}%` }]}>--</Text>
+                    ))}
                   </View>
                 )
               }
 
               const rawAverage = subject.average
               const average = typeof rawAverage === 'number' && !isNaN(rawAverage) && isFinite(rawAverage) ? rawAverage : 0
-              const letterGrade = getLetterGrade(average)
-              const gpaPoints = getGPAPoints(average)
-              const safeGpaPoints = typeof gpaPoints === 'number' && !isNaN(gpaPoints) && isFinite(gpaPoints) ? gpaPoints : 0
+              const displayMode = subject.displayMode || 'percentage'
+              const periodValues = subject.periodValues || [average]
+              const tierSuffix = reportCard.primaryWeightingEnabled
+                ? (subject.tier === 'primary' ? ' (P)' : ' (S)')
+                : ''
               
               return (
                 <View key={subject.subjectId || `subject-${index}`} style={styles.tableRow}>
-                  <Text style={[styles.tableCell, styles.subjectCol]}>{subject.subjectName || 'Unknown Subject'}</Text>
-                  <Text style={[styles.tableCellCenter, styles.percentCol]}>
-                    {average.toFixed(1)}%
-                  </Text>
-                  <Text style={[
-                    styles.tableCellCenter, 
-                    styles.gradeCol, 
-                    getGradeStyle(letterGrade)
-                  ]}>
-                    {letterGrade}
-                  </Text>
-                  <Text style={[styles.tableCellCenter, styles.pointsCol]}>
-                    {showPercentage ? `${average.toFixed(1)}%` : safeGpaPoints.toFixed(1)}
-                  </Text>
+                  <Text style={[styles.tableCell, styles.subjectCol, { width: `${subjectColumnWidth}%` }]}>{(subject.subjectName || 'Unknown Subject') + tierSuffix}</Text>
+                  {periodColumns.map((column, periodIdx) => {
+                    const value = periodValues[periodIdx]
+                    const rendered = (() => {
+                      if (value === null || value === undefined || isNaN(value)) return '--'
+                      if (displayMode === 'letter') return getLetterGrade(value)
+                      if (displayMode === 'gpa') return getGPAPoints(value).toFixed(1)
+                      return `${value.toFixed(1)}%`
+                    })()
+                    const dynamicGradeStyle = displayMode === 'letter' && typeof value === 'number'
+                      ? getGradeStyle(getLetterGrade(value))
+                      : {}
+
+                    return (
+                      <Text
+                        key={`${subject.subjectId || `subject-${index}`}-${column.id}`}
+                        style={[styles.tableCellCenter, styles.periodCol, dynamicGradeStyle, { width: `${periodColumnWidth}%` }]}
+                      >
+                        {rendered}
+                      </Text>
+                    )
+                  })}
                 </View>
               )
             }) : (
               <View style={styles.tableRow}>
-                <Text style={[styles.tableCell, styles.subjectCol]}>No subjects available</Text>
-                <Text style={[styles.tableCellCenter, styles.percentCol]}>--</Text>
-                <Text style={[styles.tableCellCenter, styles.gradeCol]}>--</Text>
-                <Text style={[styles.tableCellCenter, styles.pointsCol]}>--</Text>
+                <Text style={[styles.tableCell, styles.subjectCol, { width: `${subjectColumnWidth}%` }]}>No subjects available</Text>
+                {periodColumns.map(column => (
+                  <Text key={`empty-${column.id}`} style={[styles.tableCellCenter, styles.periodCol, { width: `${periodColumnWidth}%` }]}>--</Text>
+                ))}
               </View>
             )}
           </View>

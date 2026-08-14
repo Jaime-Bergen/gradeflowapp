@@ -13,6 +13,7 @@ export interface User {
   active_school_year_label?: string | null
   active_school_year_start_date?: string | null
   active_school_year_end_date?: string | null
+  active_license_tier?: 'full' | 'single' | 'trial' | null
   licensed_school_years?: LicensedSchoolYear[]
 }
 
@@ -21,6 +22,7 @@ export interface SchoolYear {
   label: string
   start_date: string
   end_date: string
+  license_tier?: 'full' | 'single' | 'trial'
   created_at?: string
   updated_at?: string
 }
@@ -28,6 +30,7 @@ export interface SchoolYear {
 export interface LicensedSchoolYear extends SchoolYear {
   license_id: string
   grant_source?: string
+  license_tier?: 'full' | 'single' | 'trial'
   licensed_at?: string
 }
 
@@ -36,6 +39,7 @@ export interface UserSchoolYearLicense {
   user_id: string
   school_year_id: string
   grant_source: string
+  license_tier?: 'full' | 'single' | 'trial'
   notes?: string | null
   created_at: string
   updated_at: string
@@ -174,6 +178,14 @@ export interface ReportCard {
   overallGPA: number
   comments?: string
   attendanceSummary?: AttendanceSummary
+  periodColumns?: Array<{
+    id: string
+    label: string
+    startDate?: string
+    endDate?: string
+  }>
+  primaryWeightingEnabled?: boolean
+  primaryWeightPercent?: number
 }
 
 export interface SubjectGrade {
@@ -182,6 +194,9 @@ export interface SubjectGrade {
   grades: Grade[]
   average: number
   letterGrade: string
+  periodValues?: Array<number | null>
+  displayMode?: 'percentage' | 'letter' | 'gpa'
+  tier?: 'primary' | 'secondary'
 }
 
 export type AttendanceStatus = 'present' | 'absent' | 'tardy' | 'excused'

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 //import { Button } from "@/components/ui/button"
 import { Users } from "lucide-react"
 import { apiClient } from '@/lib/api'
@@ -25,6 +26,7 @@ export default function TeacherSelector({ onTeacherChange }: TeacherSelectorProp
   const [teachers, setTeachers] = useState<Teacher[]>([])
   const [selectedTeacher, setSelectedTeacher] = useState<Teacher | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [isSingleTeacherLicense, setIsSingleTeacherLicense] = useState(false)
 
   useEffect(() => {
     loadTeachers()
@@ -64,12 +66,18 @@ export default function TeacherSelector({ onTeacherChange }: TeacherSelectorProp
   const loadTeachers = async () => {
     try {
       setIsLoading(true)
-      const response = await apiClient.getTeachers()
+      const [response, profileRes] = await Promise.all([
+        apiClient.getTeachers(),
+        apiClient.getProfile()
+      ])
       const teachersData = Array.isArray(response.data?.data) ? response.data.data : []
       setTeachers(teachersData)
+      const profileData: any = profileRes.data || {}
+      const isSingle = profileData.active_license_tier === 'single'
+      setIsSingleTeacherLicense(isSingle)
       
       // Auto-select saved teacher or admin as default if available
-      if (teachersData.length > 0) {
+      if (!isSingle && teachersData.length > 0) {
         const savedTeacherId = localStorage.getItem('selectedTeacherId')
         
         if (savedTeacherId === 'admin') {
@@ -91,6 +99,13 @@ export default function TeacherSelector({ onTeacherChange }: TeacherSelectorProp
         }
         
         // Dispatch event to notify other components
+        window.dispatchEvent(new CustomEvent('teacher-selection-changed'))
+      } else if (isSingle) {
+        // Single-teacher license always runs in a fixed unfiltered mode.
+        setSelectedTeacher(null)
+        onTeacherChange(null)
+        window.SELECTED_TEACHER_GROUPS = []
+        localStorage.setItem('selectedTeacherId', 'admin')
         window.dispatchEvent(new CustomEvent('teacher-selection-changed'))
       }
     } catch (error) {
@@ -142,6 +157,26 @@ export default function TeacherSelector({ onTeacherChange }: TeacherSelectorProp
       <div className="flex items-center gap-2">
         <span className="text-sm text-muted-foreground">No teachers found</span>
       </div>
+    )
+  }
+
+  if (isSingleTeacherLicense) {
+    return (
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div className="inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm">
+              <Users size={16} className="text-muted-foreground" />
+              <span className="font-medium">Teacher Mode</span>
+            </div>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p className="max-w-xs text-xs">
+              Consider upgrading to a school license for full teacher collaboration on a single platform.
+            </p>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
     )
   }
 

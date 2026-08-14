@@ -28,6 +28,7 @@ export const runMigrations = async (): Promise<void> => {
     await createStudentSubjectsTable(db);
     await createSubjectWeightsTable(db);
     await createUserMetadataTable(db);
+    await createReportPreferencesTable(db);
     await createUserBackupsTable(db);
     await createTeachersTable(db);
     await createTeacherGroupLinksTable(db);
@@ -40,8 +41,6 @@ export const runMigrations = async (): Promise<void> => {
     await updateGradesErrorsColumnType(db);
     await addColorToGradeCategoryTypes(db);
     await seedDefaultGradeCategoryTypes(db);
-    await addUniqueConstraintToStudentGroups(db);
-    await seedDefaultStudentGroups(db);
     await addCategoryIdToLessons(db);
     await populateUserMetadata(db);
     await addBirthdayToStudents(db);
@@ -51,6 +50,8 @@ export const runMigrations = async (): Promise<void> => {
     await seedDefaultSchoolYears(db);
     await seedInitialUserSchoolYearLicenses(db);
     await addSchoolYearScopingToTables(db);
+    await addUniqueConstraintToStudentGroups(db);
+    await seedDefaultStudentGroups(db);
     await createRolloverScopesTable(db);
     
     console.log('All migrations completed successfully');
@@ -716,7 +717,11 @@ const seedDefaultGradeCategoryTypes = async (db: any) => {
 const seedDefaultStudentGroups = async (db: any) => {
   try {
     // Get all users to seed default student groups for each
-    const usersResult = await db.query('SELECT id FROM users');
+    const usersResult = await db.query(`
+      SELECT id, active_school_year_id
+      FROM users
+      WHERE active_school_year_id IS NOT NULL
+    `);
     
     const defaultGroups = [
       { name: 'Grade 1', description: 'First grade students' },
@@ -734,18 +739,18 @@ const seedDefaultStudentGroups = async (db: any) => {
     for (const user of usersResult.rows) {
       // Check if user already has groups
       const existingResult = await db.query(
-        'SELECT COUNT(*) as count FROM student_groups WHERE user_id = $1',
-        [user.id]
+        'SELECT COUNT(*) as count FROM student_groups WHERE user_id = $1 AND school_year_id = $2',
+        [user.id, user.active_school_year_id]
       );
       
       if (existingResult.rows[0].count === '0') {
         // Insert default groups for this user
         for (const group of defaultGroups) {
           await db.query(`
-            INSERT INTO student_groups (user_id, name, description)
-            VALUES ($1, $2, $3)
-            ON CONFLICT (user_id, name) DO NOTHING
-          `, [user.id, group.name, group.description]);
+            INSERT INTO student_groups (user_id, school_year_id, name, description)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (user_id, school_year_id, name) DO NOTHING
+          `, [user.id, user.active_school_year_id, group.name, group.description]);
         }
       }
     }
@@ -759,24 +764,29 @@ const seedDefaultStudentGroups = async (db: any) => {
 
 const addUniqueConstraintToStudentGroups = async (db: any) => {
   try {
-    // Check if the unique constraint already exists
-    const constraintCheck = await db.query(`
-      SELECT constraint_name 
-      FROM information_schema.table_constraints 
-      WHERE table_name = 'student_groups' 
-      AND constraint_type = 'UNIQUE' 
-      AND constraint_name LIKE '%user_id%name%'
+    // Move uniqueness to school-year scope so the same group name can be reused across years.
+    await db.query(`
+      ALTER TABLE student_groups DROP CONSTRAINT IF EXISTS student_groups_user_id_name_key;
+      ALTER TABLE student_groups DROP CONSTRAINT IF EXISTS student_groups_user_id_name_unique;
     `);
-    
+
+    const constraintCheck = await db.query(`
+      SELECT 1
+      FROM information_schema.table_constraints
+      WHERE table_name = 'student_groups'
+        AND constraint_type = 'UNIQUE'
+        AND constraint_name = 'student_groups_user_id_school_year_id_name_unique'
+    `);
+
     if (constraintCheck.rows.length === 0) {
-      // Add unique constraint on (user_id, name)
       await db.query(`
-        ALTER TABLE student_groups 
-        ADD CONSTRAINT student_groups_user_id_name_unique UNIQUE (user_id, name)
+        ALTER TABLE student_groups
+        ADD CONSTRAINT student_groups_user_id_school_year_id_name_unique
+        UNIQUE (user_id, school_year_id, name)
       `);
-      console.log('✅ Added unique constraint to student_groups table');
+      console.log('✅ Added school-year scoped unique constraint to student_groups table');
     } else {
-      console.log('✅ Unique constraint on student_groups already exists');
+      console.log('✅ School-year scoped unique constraint on student_groups already exists');
     }
   } catch (error) {
     console.error('Error adding unique constraint to student_groups:', error);
@@ -893,11 +903,22 @@ const createUserSchoolYearLicensesTable = async (db: any) => {
         school_year_id UUID NOT NULL REFERENCES school_years(id) ON DELETE CASCADE,
         granted_by UUID REFERENCES users(id) ON DELETE SET NULL,
         grant_source VARCHAR(40) NOT NULL DEFAULT 'manual',
+        license_tier VARCHAR(20) NOT NULL DEFAULT 'full',
         notes TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(user_id, school_year_id)
       );
+
+      ALTER TABLE user_school_year_licenses
+      ADD COLUMN IF NOT EXISTS license_tier VARCHAR(20) NOT NULL DEFAULT 'full';
+
+      ALTER TABLE user_school_year_licenses
+      DROP CONSTRAINT IF EXISTS chk_user_school_year_license_tier;
+
+      ALTER TABLE user_school_year_licenses
+      ADD CONSTRAINT chk_user_school_year_license_tier
+      CHECK (license_tier IN ('full', 'single', 'trial'));
 
       CREATE INDEX IF NOT EXISTS idx_user_school_year_licenses_user ON user_school_year_licenses(user_id);
       CREATE INDEX IF NOT EXISTS idx_user_school_year_licenses_year ON user_school_year_licenses(school_year_id);
@@ -1201,6 +1222,24 @@ const createUserMetadataTable = async (db: any) => {
     );
   `);
   console.log('✅ User metadata table created/verified');
+};
+
+const createReportPreferencesTable = async (db: any) => {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS report_preferences (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      school_year_id UUID NOT NULL REFERENCES school_years(id) ON DELETE CASCADE,
+      preferences JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(user_id, school_year_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_report_preferences_user_school_year
+      ON report_preferences(user_id, school_year_id);
+  `);
+  console.log('✅ Report preferences table created/verified');
 };
 
 const createUserBackupsTable = async (db: any) => {

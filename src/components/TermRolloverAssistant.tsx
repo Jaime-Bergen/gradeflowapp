@@ -52,6 +52,7 @@ export default function TermRolloverAssistant() {
   const [activeStep, setActiveStep] = useState<0 | 1 | 2 | 3 | 4 | 5>(0)
   const [isBusy, setIsBusy] = useState(false)
 
+  const [availableYears, setAvailableYears] = useState<SchoolYear[]>([])
   const [licensedYears, setLicensedYears] = useState<SchoolYear[]>([])
   const [sourceSchoolYearId, setSourceSchoolYearId] = useState('')
   const [targetSchoolYearId, setTargetSchoolYearId] = useState('')
@@ -70,7 +71,24 @@ export default function TermRolloverAssistant() {
   const [cloneSubjectIds, setCloneSubjectIds] = useState<string[]>([])
   const [newSubjects, setNewSubjects] = useState<NewSubjectDraft[]>([])
 
+  const [newTeacherName, setNewTeacherName] = useState('')
+  const [newTeacherEmail, setNewTeacherEmail] = useState('')
+  const [newTeacherPassword, setNewTeacherPassword] = useState('')
+
   const [autoScopeId, setAutoScopeId] = useState('')
+
+  const licensedYearMap = useMemo(() => {
+    const map = new Map<string, SchoolYear>()
+    for (const year of licensedYears) {
+      map.set(year.id, year)
+    }
+    return map
+  }, [licensedYears])
+
+  const sourceLicense = sourceSchoolYearId ? licensedYearMap.get(sourceSchoolYearId) : undefined
+  const targetLicense = targetSchoolYearId ? licensedYearMap.get(targetSchoolYearId) : undefined
+  const targetLicenseTier = String((targetLicense as any)?.license_tier || '').toLowerCase()
+  const canManageTeachers = targetLicenseTier === 'full' || targetLicenseTier === 'trial'
 
   const requiresLicenseForDate = useMemo(() => {
     if (!firstDayOfSchool || !currentFirstDay) return false
@@ -90,13 +108,16 @@ export default function TermRolloverAssistant() {
 
   const loadBaseData = async () => {
     try {
-      const [yearsRes, profileRes, teachersRes] = await Promise.all([
+      const [availableYearsRes, yearsRes, profileRes, teachersRes] = await Promise.all([
+        apiClient.getAvailableSchoolYears(),
         apiClient.getLicensedSchoolYears(),
         apiClient.getProfile(),
         apiClient.getTeachers(),
       ])
 
+      const allYears = Array.isArray(availableYearsRes.data) ? availableYearsRes.data : []
       const years = Array.isArray(yearsRes.data) ? yearsRes.data : []
+      setAvailableYears(allYears)
       setLicensedYears(years)
 
       const profile: any = profileRes.data || {}
@@ -107,12 +128,12 @@ export default function TermRolloverAssistant() {
         setSourceSchoolYearId(resolvedSourceYearId)
       }
 
-      if (!targetSchoolYearId && years.length > 0) {
-        const defaultTarget = years.find((y) => y.id !== resolvedSourceYearId)?.id || years[0].id
+      if (!targetSchoolYearId && allYears.length > 0) {
+        const defaultTarget = allYears.find((y) => y.id !== resolvedSourceYearId)?.id || allYears[0].id
         setTargetSchoolYearId(defaultTarget)
       }
 
-      const sourceYear = years.find((y) => y.id === resolvedSourceYearId)
+      const sourceYear = allYears.find((y) => y.id === resolvedSourceYearId) || years.find((y) => y.id === resolvedSourceYearId)
       const sourceFirstDay = sourceYear?.start_date
         ? new Date(sourceYear.start_date).toISOString().split('T')[0]
         : ''
@@ -239,6 +260,36 @@ export default function TermRolloverAssistant() {
 
   const closeAll = () => setActiveStep(0)
 
+  const getLicenseLabel = (year?: SchoolYear) => {
+    const tier = String((year as any)?.license_tier || '').toLowerCase()
+    if (tier === 'full') return 'Full'
+    if (tier === 'single') return 'Single'
+    if (tier === 'trial') return 'Trial'
+    return 'Not licensed'
+  }
+
+  const grantTargetTrialLicense = async () => {
+    if (!targetSchoolYearId) {
+      toast.error('Select the target term first')
+      return
+    }
+
+    try {
+      setIsBusy(true)
+      const response = await apiClient.grantTrialLicense({ schoolYearId: targetSchoolYearId })
+      if ((response as any).error) {
+        throw new Error((response as any).error)
+      }
+      toast.success(response.data?.message || 'Trial license granted')
+      await loadBaseData()
+    } catch (error) {
+      console.error('Failed to grant trial license:', error)
+      toast.error(error instanceof Error ? error.message : 'Failed to grant trial license')
+    } finally {
+      setIsBusy(false)
+    }
+  }
+
   const handleStep1Next = () => {
     if (!sourceSchoolYearId) {
       toast.error('Select the source term first')
@@ -256,11 +307,90 @@ export default function TermRolloverAssistant() {
       toast.error('Set the first day of school for the new term')
       return
     }
-    if (requiresLicenseForDate && licensedYears.length === 0) {
+    if (!sourceLicense) {
+      toast.error('Source term must have a valid license')
+      return
+    }
+    if (!targetLicense) {
+      toast.error('Target term is not licensed yet. Grant a trial or purchase a license to continue.')
+      return
+    }
+    if (requiresLicenseForDate && !targetLicense) {
       toast.error('A license is required before continuing to this term')
       return
     }
+
+    if (targetLicenseTier === 'single') {
+      toast.info('Single license detected. Teacher step skipped for this rollover.')
+      goToStep(3)
+      return
+    }
+
     goToStep(2)
+  }
+
+  const addTeacherForRollover = async () => {
+    const name = newTeacherName.trim()
+    const email = newTeacherEmail.trim()
+    const password = newTeacherPassword.trim()
+
+    if (!name) {
+      toast.error('Teacher name is required')
+      return
+    }
+    if (!email) {
+      toast.error('Teacher email is required')
+      return
+    }
+    if (!password) {
+      toast.error('Teacher password is required')
+      return
+    }
+
+    try {
+      setIsBusy(true)
+      const response = await apiClient.createTeacher({
+        name,
+        email,
+        password,
+        selectedGroups: [],
+      })
+      if ((response as any).error) {
+        throw new Error((response as any).error)
+      }
+
+      toast.success('Teacher added')
+      setNewTeacherName('')
+      setNewTeacherEmail('')
+      setNewTeacherPassword('')
+      await loadBaseData()
+    } catch (error) {
+      console.error('Failed to add teacher:', error)
+      toast.error('Could not add teacher')
+    } finally {
+      setIsBusy(false)
+    }
+  }
+
+  const removeTeacherForRollover = async (teacher: TeacherRow) => {
+    if (!window.confirm(`Remove teacher "${teacher.name}"?`)) {
+      return
+    }
+
+    try {
+      setIsBusy(true)
+      const response = await apiClient.deleteTeacher(teacher.id)
+      if ((response as any).error) {
+        throw new Error((response as any).error)
+      }
+      toast.success('Teacher removed')
+      await loadBaseData()
+    } catch (error) {
+      console.error('Failed to remove teacher:', error)
+      toast.error('Could not remove teacher')
+    } finally {
+      setIsBusy(false)
+    }
   }
 
   const handleSaveTeacherAssignments = async () => {
@@ -419,7 +549,7 @@ export default function TermRolloverAssistant() {
                     <SelectValue placeholder="Select target term" />
                   </SelectTrigger>
                   <SelectContent>
-                    {licensedYears.map((y) => (
+                    {availableYears.map((y) => (
                       <SelectItem key={y.id} value={y.id}>
                         {y.label}
                       </SelectItem>
@@ -439,6 +569,20 @@ export default function TermRolloverAssistant() {
               </div>
             </div>
 
+            <div className="grid gap-3 rounded-md border p-3 md:grid-cols-2">
+              <div className="rounded-md border p-3">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Source Term License</p>
+                <p className="text-sm font-medium">{getLicenseLabel(sourceLicense)}</p>
+              </div>
+              <div className="rounded-md border p-3">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Target Term License</p>
+                <p className="text-sm font-medium">{getLicenseLabel(targetLicense)}</p>
+                {!targetLicense ? (
+                  <p className="mt-1 text-xs text-muted-foreground">No license found for this target term yet.</p>
+                ) : null}
+              </div>
+            </div>
+
             <Alert>
               <AlertDescription>
                 Need a license for a future term? Purchase here:{' '}
@@ -447,6 +591,14 @@ export default function TermRolloverAssistant() {
                 </a>
               </AlertDescription>
             </Alert>
+
+            {!targetLicense ? (
+              <div className="flex justify-end">
+                <Button variant="outline" onClick={grantTargetTrialLicense} disabled={isBusy || !targetSchoolYearId}>
+                  {isBusy ? 'Granting Trial...' : 'Grant Trial For Target Term'}
+                </Button>
+              </div>
+            ) : null}
 
             {requiresLicenseForDate ? (
               <p className="text-sm text-muted-foreground">
@@ -468,6 +620,39 @@ export default function TermRolloverAssistant() {
             <DialogTitle>Step 2: Teacher Grade/Group Assignments</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
+            <Alert>
+              <AlertDescription>
+                Target license: {getLicenseLabel(targetLicense)}. Full and Trial licenses can add/remove teachers and manage assignments here.
+              </AlertDescription>
+            </Alert>
+
+            <div className="rounded-md border p-3 space-y-3">
+              <h4 className="font-medium">Add Teacher</h4>
+              <div className="grid gap-2 md:grid-cols-3">
+                <Input
+                  placeholder="Teacher name"
+                  value={newTeacherName}
+                  onChange={(e) => setNewTeacherName(e.target.value)}
+                />
+                <Input
+                  placeholder="Teacher email"
+                  value={newTeacherEmail}
+                  onChange={(e) => setNewTeacherEmail(e.target.value)}
+                />
+                <Input
+                  placeholder="Temporary password"
+                  type="password"
+                  value={newTeacherPassword}
+                  onChange={(e) => setNewTeacherPassword(e.target.value)}
+                />
+              </div>
+              <div className="flex justify-end">
+                <Button onClick={addTeacherForRollover} disabled={isBusy || !canManageTeachers}>
+                  Add Teacher
+                </Button>
+              </div>
+            </div>
+
             {teachers.map((teacher) => (
               <div key={teacher.id} className="rounded-md border p-3 space-y-3">
                 <div>
@@ -503,19 +688,28 @@ export default function TermRolloverAssistant() {
                       <label key={g.id} className="flex items-center gap-2 text-sm">
                         <Checkbox
                           checked={teacher.selectedGroups.includes(g.id)}
-                          onCheckedChange={() => updateTeacherGroupSelection(teacher.id, g.id)}
+                          onCheckedChange={() => canManageTeachers && updateTeacherGroupSelection(teacher.id, g.id)}
                         />
                         <span>{g.name}</span>
                       </label>
                     ))}
                   </div>
                 </div>
+                <div className="flex justify-end">
+                  <Button
+                    variant="ghost"
+                    onClick={() => removeTeacherForRollover(teacher)}
+                    disabled={isBusy || !canManageTeachers}
+                  >
+                    Remove Teacher
+                  </Button>
+                </div>
               </div>
             ))}
 
             <div className="flex justify-between gap-2">
               <Button variant="outline" onClick={() => goToStep(1)}>Back</Button>
-              <Button onClick={handleSaveTeacherAssignments} disabled={isBusy}>
+              <Button onClick={handleSaveTeacherAssignments} disabled={isBusy || !canManageTeachers}>
                 {isBusy ? 'Saving...' : 'Save And Continue'}
               </Button>
             </div>
@@ -582,7 +776,7 @@ export default function TermRolloverAssistant() {
             </div>
 
             <div className="flex justify-between gap-2">
-              <Button variant="outline" onClick={() => goToStep(2)}>Back</Button>
+              <Button variant="outline" onClick={() => goToStep(targetLicenseTier === 'single' ? 1 : 2)}>Back</Button>
               <Button onClick={() => goToStep(4)}>Next</Button>
             </div>
           </div>

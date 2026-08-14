@@ -34,6 +34,7 @@ const getLicensedYearsForUser = async (db: any, userId: string) => {
       sy.end_date,
       usyl.id AS license_id,
       usyl.grant_source,
+      usyl.license_tier,
       usyl.created_at AS licensed_at
      FROM user_school_year_licenses usyl
      JOIN school_years sy ON sy.id = usyl.school_year_id
@@ -49,6 +50,7 @@ const getLicensedYearsForUser = async (db: any, userId: string) => {
     end_date: row.end_date,
     license_id: row.license_id,
     grant_source: row.grant_source,
+    license_tier: row.license_tier,
     licensed_at: row.licensed_at,
   }));
 };
@@ -78,9 +80,13 @@ router.get('/profile', async (req: AuthRequest, res, next) => {
 
     const profile = result.rows[0];
     const licensedYears = await getLicensedYearsForUser(db, req.userId!);
+    const activeLicenseTier = profile.active_school_year_id
+      ? (licensedYears.find((year: any) => year.id === profile.active_school_year_id)?.license_tier || null)
+      : null;
 
     res.json({
       ...profile,
+      active_license_tier: activeLicenseTier,
       licensed_school_years: licensedYears,
     });
   } catch (error) {
@@ -175,12 +181,16 @@ router.put('/profile', async (req: AuthRequest, res, next) => {
       : { rows: [] };
 
     const licensedYears = await getLicensedYearsForUser(db, req.userId!);
+    const activeLicenseTier = updated.active_school_year_id
+      ? (licensedYears.find((year: any) => year.id === updated.active_school_year_id)?.license_tier || null)
+      : null;
 
     res.json({
       ...updated,
       active_school_year_label: activeYear.rows[0]?.label || null,
       active_school_year_start_date: activeYear.rows[0]?.start_date || null,
       active_school_year_end_date: activeYear.rows[0]?.end_date || null,
+      active_license_tier: activeLicenseTier,
       licensed_school_years: licensedYears,
     });
   } catch (error) {
@@ -209,6 +219,59 @@ router.get('/school-years', async (req: AuthRequest, res, next) => {
        ORDER BY start_date DESC`
     );
     res.json(rows);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Grant a trial license for a selected school year (self-service)
+router.post('/licenses/trial', async (req: AuthRequest, res, next) => {
+  try {
+    const { schoolYearId } = req.body;
+    const db = getDB();
+
+    if (!schoolYearId) {
+      return res.status(400).json({ error: 'schoolYearId is required' });
+    }
+
+    const schoolYearResult = await db.query(
+      `SELECT id, label FROM school_years WHERE id = $1 LIMIT 1`,
+      [schoolYearId]
+    );
+
+    if (schoolYearResult.rows.length === 0) {
+      return res.status(404).json({ error: 'School year not found' });
+    }
+
+    const existingLicense = await db.query(
+      `SELECT id, grant_source, license_tier
+       FROM user_school_year_licenses
+       WHERE user_id = $1 AND school_year_id = $2
+       LIMIT 1`,
+      [req.userId, schoolYearId]
+    );
+
+    if (existingLicense.rows.length > 0) {
+      return res.json({
+        message: 'License already exists for this school year',
+        school_year_id: schoolYearId,
+        license_id: existingLicense.rows[0].id,
+        grant_source: existingLicense.rows[0].grant_source,
+        license_tier: existingLicense.rows[0].license_tier,
+      });
+    }
+
+    const insertResult = await db.query(
+      `INSERT INTO user_school_year_licenses (user_id, school_year_id, grant_source, license_tier, notes)
+       VALUES ($1, $2, 'trial', 'trial', $3)
+       RETURNING id, user_id, school_year_id, grant_source, license_tier, created_at, updated_at`,
+      [req.userId, schoolYearId, 'Rollover trial access for target school year']
+    );
+
+    res.status(201).json({
+      message: `Trial license granted for ${schoolYearResult.rows[0].label}`,
+      ...insertResult.rows[0],
+    });
   } catch (error) {
     next(error);
   }
@@ -327,6 +390,7 @@ router.get('/admin/licenses/:userId', async (req: AuthRequest, res, next) => {
         usyl.user_id,
         usyl.school_year_id,
         usyl.grant_source,
+        usyl.license_tier,
         usyl.notes,
         usyl.created_at,
         usyl.updated_at,
@@ -355,22 +419,28 @@ router.post('/admin/licenses/grant', async (req: AuthRequest, res, next) => {
       return;
     }
 
-    const { userId, schoolYearId, notes, setAsActive } = req.body;
+    const { userId, schoolYearId, notes, setAsActive, licenseTier } = req.body;
     const db = getDB();
 
     if (!userId || !schoolYearId) {
       return res.status(400).json({ error: 'userId and schoolYearId are required' });
     }
 
+    const normalizedLicenseTier = String(licenseTier || 'full').toLowerCase();
+    if (normalizedLicenseTier !== 'full' && normalizedLicenseTier !== 'single' && normalizedLicenseTier !== 'trial') {
+      return res.status(400).json({ error: 'licenseTier must be "full", "single", or "trial"' });
+    }
+
     const insert = await db.query(
-      `INSERT INTO user_school_year_licenses (user_id, school_year_id, granted_by, grant_source, notes)
-       VALUES ($1, $2, $3, 'manual', $4)
+      `INSERT INTO user_school_year_licenses (user_id, school_year_id, granted_by, grant_source, license_tier, notes)
+       VALUES ($1, $2, $3, 'manual', $4, $5)
        ON CONFLICT (user_id, school_year_id)
        DO UPDATE SET
+         license_tier = EXCLUDED.license_tier,
          notes = COALESCE(EXCLUDED.notes, user_school_year_licenses.notes),
          updated_at = CURRENT_TIMESTAMP
-       RETURNING id, user_id, school_year_id, grant_source, notes, created_at, updated_at`,
-      [userId, schoolYearId, req.userId || null, notes || null]
+       RETURNING id, user_id, school_year_id, grant_source, license_tier, notes, created_at, updated_at`,
+      [userId, schoolYearId, req.userId || null, normalizedLicenseTier, notes || null]
     );
 
     if (setAsActive) {
