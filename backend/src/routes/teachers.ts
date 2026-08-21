@@ -1,9 +1,32 @@
 import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
+import jwt, { SignOptions } from 'jsonwebtoken';
+import nodemailer from 'nodemailer';
 import { getDB } from '../database/connection';
 import { authenticateToken } from '../middleware/auth';
 
 const router = Router();
+
+const getFrontendUrl = () => {
+  return (process.env.FRONTEND_URL || 'https://gradeflowapp.com').replace(/\/$/, '');
+};
+
+const createMailerTransport = () => {
+  const smtpPort = parseInt(process.env.SMTP_PORT || '587', 10);
+  const smtpSecure = process.env.SMTP_SECURE
+    ? process.env.SMTP_SECURE.toLowerCase() === 'true'
+    : smtpPort === 465;
+
+  return nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port: smtpPort,
+    secure: smtpSecure,
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS,
+    },
+  });
+};
 
 // Apply authentication to all routes
 router.use(authenticateToken);
@@ -378,6 +401,129 @@ router.delete('/:id', async (req: Request, res: Response) => {
     res.status(500).json({ 
       success: false, 
       message: 'Failed to delete teacher',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+// Send a sign-in link to a teacher's email
+// Note: teachers do not have a separate login - the link signs them into the
+// admin's account and pre-selects the teacher's name so filtered views apply.
+router.post('/:id/send-signin-link', async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId;
+    const teacherId = req.params.id;
+    const db = getDB();
+
+    const teacherResult = await db.query(
+      'SELECT id, name, email, is_active FROM teachers WHERE id = $1 AND user_id = $2',
+      [teacherId, userId]
+    );
+
+    if (teacherResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Teacher not found'
+      });
+    }
+
+    const teacher = teacherResult.rows[0];
+
+    if (!teacher.is_active) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot send a sign-in link to a deactivated teacher'
+      });
+    }
+
+    const ownerResult = await db.query(
+      'SELECT id, email, name FROM users WHERE id = $1',
+      [userId]
+    );
+
+    if (ownerResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Admin account not found'
+      });
+    }
+
+    const owner = ownerResult.rows[0];
+
+    const signOptions: SignOptions = { expiresIn: '180d' };
+    const token = jwt.sign(
+      {
+        userId: owner.id,
+        user: {
+          id: owner.id,
+          email: owner.email,
+          name: owner.name
+        },
+        teacherId: teacher.id,
+        purpose: 'teacher_signin'
+      },
+      process.env.JWT_SECRET!,
+      signOptions
+    );
+
+    const signinUrl = `${getFrontendUrl()}/teacher-signin?token=${encodeURIComponent(token)}`;
+
+    try {
+      const transporter = createMailerTransport();
+      const mailOptions = {
+        from: `"${process.env.FROM_NAME || 'GradeFlow'}" <${process.env.FROM_EMAIL}>`,
+        to: teacher.email,
+        subject: 'Your GradeFlow sign-in link',
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h2 style="color: #333;">GradeFlow Sign-In Link</h2>
+            <p>Hello ${teacher.name},</p>
+            <p>Use the link below to sign in to GradeFlow. It will take you directly to your view, filtered to your assigned groups.</p>
+            <p>
+              <a href="${signinUrl}" style="display:inline-block;background:#2563eb;color:#fff;padding:10px 16px;border-radius:6px;text-decoration:none;">
+                Sign In to GradeFlow
+              </a>
+            </p>
+            <p>If the button does not work, use this link:</p>
+            <p><a href="${signinUrl}">${signinUrl}</a></p>
+            <p style="color: #666; font-size: 13px;">This link is tied to your school's account and expires in 180 days. Do not share it with anyone outside your school.</p>
+            <hr style="margin: 30px 0; border: none; border-top: 1px solid #ddd;">
+            <p style="color: #666; font-size: 12px;">
+              This email was sent from GradeFlow.
+            </p>
+          </div>
+        `,
+        text: `
+GradeFlow Sign-In Link
+
+Hello ${teacher.name},
+
+Use the link below to sign in to GradeFlow:
+${signinUrl}
+
+This link is tied to your school's account and expires in 180 days. Do not share it with anyone outside your school.
+        `,
+      };
+
+      const info = await transporter.sendMail(mailOptions);
+      console.log(`[TEACHER SIGNIN LINK] Email sent to ${teacher.email}. Message ID: ${info.messageId}`);
+    } catch (emailError) {
+      console.error(`[TEACHER SIGNIN LINK ERROR] Failed to send email to ${teacher.email}:`, emailError);
+      return res.status(502).json({
+        success: false,
+        message: 'Failed to send sign-in link email'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: `Sign-in link sent to ${teacher.email}`
+    });
+  } catch (error) {
+    console.error('Error sending teacher sign-in link:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to send sign-in link',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }

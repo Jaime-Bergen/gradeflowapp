@@ -33,6 +33,7 @@ const Help = lazy(() => import('./components/Help.tsx'))
 const AdminDanger = lazy(() => import('@/components/AdminDanger.tsx'))
 const Purchase = lazy(() => import('./components/Purchase.tsx'))
 const VerifyEmail = lazy(() => import('./components/VerifyEmail.tsx'))
+const TeacherSignIn = lazy(() => import('./components/TeacherSignIn.tsx'))
 const PURCHASE_URL = '/purchase'
 const SALES_EMAIL = 'sales@gradeflowapp.com'
 
@@ -233,6 +234,7 @@ function App() {
         <Route path="/AdminDanger" element={<Suspense fallback={tabFallback}><AdminDanger /></Suspense>} />
         <Route path="/purchase" element={<Suspense fallback={tabFallback}><Purchase /></Suspense>} />
         <Route path="/verify-email" element={<Suspense fallback={tabFallback}><VerifyEmail /></Suspense>} />
+        <Route path="/teacher-signin" element={<Suspense fallback={tabFallback}><TeacherSignIn /></Suspense>} />
         <Route path="*" element={
           !currentUser ? (
             <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4 gap-8">

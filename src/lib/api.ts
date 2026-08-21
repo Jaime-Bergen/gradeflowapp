@@ -754,6 +754,12 @@ class ApiClient {
     return response
   }
 
+  async sendTeacherSigninLink(id: string) {
+    return this.request(`/teachers/${id}/send-signin-link`, {
+      method: 'POST',
+    });
+  }
+
   async toggleTeacherActive(id: string) {
     const response = await this.request(`/teachers/${id}/toggle-active`, {
       method: 'PATCH',

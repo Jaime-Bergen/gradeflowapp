@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
+import { Alert, AlertDescription } from "@/components/ui/alert"
 import { 
   Database, 
   Users, 
@@ -26,7 +27,9 @@ import {
   Pencil,
   Trash2,
   FileJson,
-  LogOut
+  LogOut,
+  Send,
+  TriangleAlert
 } from "lucide-react"
 import { toast } from 'sonner'
 import { v4 as uuidv4 } from 'uuid'
@@ -514,6 +517,19 @@ export default function SystemAdmin() {
     } catch (error) {
       console.error('Failed to delete teacher:', error)
       toast.error('Failed to delete teacher')
+    }
+  }
+
+  const sendTeacherSigninLink = async (teacher: any) => {
+    try {
+      const response = await apiClient.sendTeacherSigninLink(teacher.id)
+      if ((response as any).error) {
+        throw new Error((response as any).error)
+      }
+      toast.success(`Sign-in link sent to ${teacher.email}`)
+    } catch (error) {
+      console.error('Failed to send teacher sign-in link:', error)
+      toast.error('Failed to send sign-in link')
     }
   }
 
@@ -1437,6 +1453,14 @@ export default function SystemAdmin() {
                         <Button 
                           size="sm" 
                           variant="ghost" 
+                          onClick={() => sendTeacherSigninLink(teacher)}
+                          title="Send Sign-In Link"
+                        >
+                          <Send size={16} />
+                        </Button>
+                        <Button 
+                          size="sm" 
+                          variant="ghost" 
                           onClick={() => openTeacherDialog('edit', teacher)}
                           title="Edit Teacher"
                         >
@@ -1771,6 +1795,15 @@ export default function SystemAdmin() {
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
+            <Alert>
+              <TriangleAlert className="h-4 w-4" />
+              <AlertDescription className="text-xs">
+                Teachers don't sign in with these credentials directly — the email/password here is a record only.
+                Instead, send each teacher a sign-in link (after saving) that signs them into this account with their
+                view filtered to their assigned groups. Because a teacher who has this link has full access to your
+                account, use a school email you control rather than a personal one.
+              </AlertDescription>
+            </Alert>
             <div className="space-y-2">
               <Label htmlFor="teacher-name">Teacher Name *</Label>
               <Input
