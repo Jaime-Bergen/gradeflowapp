@@ -110,7 +110,7 @@ app.use('/api/lessons', authenticateToken, resolveSchoolYearContext, lessonsRout
 app.use('/api/grading-period-markers', authenticateToken, resolveSchoolYearContext, gradingPeriodMarkersRoutes);
 app.use('/api/grading-periods', authenticateToken, resolveSchoolYearContext, gradingPeriodsRoutes);
 app.use('/api/feedback', authenticateToken, feedbackRoutes);
-app.use('/api/teachers', authenticateToken, teachersRoutes);
+app.use('/api/teachers', authenticateToken, resolveSchoolYearContext, teachersRoutes);
 app.use('/api/attendance', authenticateToken, resolveSchoolYearContext, attendanceRoutes);
 app.use('/api/rollover', authenticateToken, resolveSchoolYearContext, rolloverRoutes);
 app.use('/api/billing', billingRoutes);
