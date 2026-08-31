@@ -42,6 +42,7 @@ declare global {
   interface Window {
     CURRENT_USER_ID?: string
     SELECTED_TEACHER_GROUPS?: string[]
+    SELECTED_TEACHER_GROUP_NAMES?: string[]
   }
 }
 
@@ -210,9 +211,11 @@ function App() {
     // Store selected teacher's group IDs globally for filtering
     if (teacher && teacher.assigned_groups) {
       window.SELECTED_TEACHER_GROUPS = teacher.assigned_groups.map((g: any) => g.id)
+      window.SELECTED_TEACHER_GROUP_NAMES = teacher.assigned_groups.map((g: any) => g.name)
     } else {
       // For admin or no teacher selection, set empty array to show all data
       window.SELECTED_TEACHER_GROUPS = []
+      window.SELECTED_TEACHER_GROUP_NAMES = []
     }
   }
 

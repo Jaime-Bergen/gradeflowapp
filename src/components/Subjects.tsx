@@ -625,17 +625,19 @@ function Subjects() {
     }
 
     // Filter subjects by their group membership
+    const teacherGroupNames = new Set<string>([
+      ...studentGroups.filter(group => selectedGroupIds.includes(group.id)).map(group => group.name),
+      ...((window as any).SELECTED_TEACHER_GROUP_NAMES || [])
+    ])
+
     const filtered = subjects.filter(subject => {
       if (!subject.group_name) return true // If no group restriction, show to all teachers
       
       // Parse subject's group names and check if any match selected teacher's groups  
       const subjectGroupNames = subject.group_name.split(',').map((g: string) => g.trim())
-      const teacherGroupNames = studentGroups
-        .filter(group => selectedGroupIds.includes(group.id))
-        .map(group => group.name)
       
       return subjectGroupNames.some((subjectGroup: string) => 
-        teacherGroupNames.includes(subjectGroup)
+        teacherGroupNames.has(subjectGroup)
       )
     })
 

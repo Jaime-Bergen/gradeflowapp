@@ -39,28 +39,32 @@ router.get('/', async (req: Request, res: Response) => {
     
     console.log('Teachers API - userId:', userId);
 
+    // Group links may point at a previous school year's groups, so resolve them
+    // by name to the equivalent group in the active school year.
     const query = `
       SELECT 
         t.*,
         COALESCE(
-          json_agg(
-            json_build_object(
-              'id', sg.id,
-              'name', sg.name,
-              'description', sg.description
-            )
-          ) FILTER (WHERE sg.id IS NOT NULL),
+          json_agg(DISTINCT jsonb_build_object(
+            'id', csg.id,
+            'name', csg.name,
+            'description', csg.description
+          )) FILTER (WHERE csg.id IS NOT NULL),
           '[]'::json
         ) as assigned_groups
       FROM teachers t
       LEFT JOIN teacher_group_links tgl ON t.id = tgl.teacher_id
-      LEFT JOIN student_groups sg ON tgl.student_group_id = sg.id
+      LEFT JOIN student_groups lsg ON tgl.student_group_id = lsg.id
+      LEFT JOIN student_groups csg
+        ON csg.user_id = t.user_id
+       AND csg.school_year_id = $2
+       AND csg.name = lsg.name
       WHERE t.user_id = $1
-      GROUP BY t.id, t.user_id, t.name, t.email, t.password_hash, t.is_active, t.created_at, t.updated_at, t.created_by
+      GROUP BY t.id
       ORDER BY t.name ASC
     `;
 
-    const result = await db.query(query, [userId]);
+    const result = await db.query(query, [userId, (req as any).schoolYearId]);
     
     console.log('Teachers query result:', result.rows);
     
@@ -101,23 +105,25 @@ router.get('/:id', async (req: Request, res: Response) => {
       SELECT 
         t.*,
         COALESCE(
-          json_agg(
-            json_build_object(
-              'id', sg.id,
-              'name', sg.name,
-              'description', sg.description
-            )
-          ) FILTER (WHERE sg.id IS NOT NULL),
+          json_agg(DISTINCT jsonb_build_object(
+            'id', csg.id,
+            'name', csg.name,
+            'description', csg.description
+          )) FILTER (WHERE csg.id IS NOT NULL),
           '[]'::json
         ) as assigned_groups
       FROM teachers t
       LEFT JOIN teacher_group_links tgl ON t.id = tgl.teacher_id
-      LEFT JOIN student_groups sg ON tgl.student_group_id = sg.id
+      LEFT JOIN student_groups lsg ON tgl.student_group_id = lsg.id
+      LEFT JOIN student_groups csg
+        ON csg.user_id = t.user_id
+       AND csg.school_year_id = $3
+       AND csg.name = lsg.name
       WHERE t.id = $1 AND t.user_id = $2
-      GROUP BY t.id, t.user_id, t.name, t.email, t.password_hash, t.is_active, t.created_at, t.updated_at, t.created_by
+      GROUP BY t.id
     `;
 
-    const result = await db.query(query, [teacherId, userId]);
+    const result = await db.query(query, [teacherId, userId, (req as any).schoolYearId]);
     
     if (result.rows.length === 0) {
       return res.status(404).json({
@@ -202,8 +208,8 @@ router.post('/', async (req: Request, res: Response) => {
         for (const groupName of selectedGroups) {
           // Get group ID
           const groupResult = await db.query(
-            'SELECT id FROM student_groups WHERE user_id = $1 AND name = $2',
-            [userId, groupName]
+            'SELECT id FROM student_groups WHERE user_id = $1 AND name = $2 AND school_year_id = $3',
+            [userId, groupName, (req as any).schoolYearId]
           );
 
           if (groupResult.rows.length > 0) {
@@ -312,8 +318,8 @@ router.put('/:id', async (req: Request, res: Response) => {
         for (const groupName of selectedGroups) {
           // Get group ID
           const groupResult = await db.query(
-            'SELECT id FROM student_groups WHERE user_id = $1 AND name = $2',
-            [userId, groupName]
+            'SELECT id FROM student_groups WHERE user_id = $1 AND name = $2 AND school_year_id = $3',
+            [userId, groupName, (req as any).schoolYearId]
           );
 
           if (groupResult.rows.length > 0) {

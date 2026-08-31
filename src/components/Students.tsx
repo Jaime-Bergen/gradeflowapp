@@ -112,17 +112,19 @@ export default function Students() {
     }
 
     // Filter students by their group membership
+    const teacherGroupNames = new Set<string>([
+      ...studentGroups.filter(group => selectedGroupIds.includes(group.id)).map(group => group.name),
+      ...((window as any).SELECTED_TEACHER_GROUP_NAMES || [])
+    ])
+
     const filtered = students.filter(student => {
       if (!student.group_name) return false
       
       // Parse student's group names and check if any match selected teacher's groups
       const studentGroupNames = student.group_name.split(',').map(g => g.trim())
-      const teacherGroupNames = studentGroups
-        .filter(group => selectedGroupIds.includes(group.id))
-        .map(group => group.name)
       
       return studentGroupNames.some(studentGroup => 
-        teacherGroupNames.includes(studentGroup)
+        teacherGroupNames.has(studentGroup)
       )
     })
 
