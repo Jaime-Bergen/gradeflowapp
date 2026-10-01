@@ -27,10 +27,10 @@ router.get('/', async (req: AuthRequest, res, next) => {
 router.put('/', validateRequest(schemas.gradingPeriodsBulk), async (req: AuthRequest, res, next) => {
   const { periods } = req.body as { periods: Array<{ id?: string; name: string; startDate: string; endDate: string; orderIndex: number }> }
   try {
-    const db = getDB()
+    const db = await getDB().connect()
     const schoolYearId = req.schoolYearId
-    await db.query('BEGIN')
     try {
+      await db.query('BEGIN')
       // delete missing ones first to keep things clean
       await db.query('DELETE FROM grading_periods WHERE user_id = $1 AND school_year_id = $2', [req.userId, schoolYearId])
 
@@ -53,6 +53,8 @@ router.put('/', validateRequest(schemas.gradingPeriodsBulk), async (req: AuthReq
     } catch (error) {
       await db.query('ROLLBACK')
       throw error
+    } finally {
+      db.release()
     }
 
     res.json({ success: true, count: periods.length })

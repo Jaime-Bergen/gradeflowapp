@@ -51,6 +51,7 @@ export const runMigrations = async (): Promise<void> => {
     await seedInitialUserSchoolYearLicenses(db);
     await addSchoolYearScopingToTables(db);
     await addUniqueConstraintToStudentGroups(db);
+    await scopeGradingPeriodsUniquenessToSchoolYear(db);
     await seedDefaultStudentGroups(db);
     await createRolloverScopesTable(db);
     
@@ -791,6 +792,22 @@ const addUniqueConstraintToStudentGroups = async (db: any) => {
   } catch (error) {
     console.error('Error adding unique constraint to student_groups:', error);
     // Don't throw - this might fail if constraint already exists
+  }
+};
+
+const scopeGradingPeriodsUniquenessToSchoolYear = async (db: any) => {
+  try {
+    await db.query(`
+      ALTER TABLE grading_periods DROP CONSTRAINT IF EXISTS grading_periods_user_id_order_index_key;
+      ALTER TABLE grading_periods DROP CONSTRAINT IF EXISTS grading_periods_user_id_name_key;
+      CREATE UNIQUE INDEX IF NOT EXISTS grading_periods_user_year_order_unique
+        ON grading_periods(user_id, school_year_id, order_index);
+      CREATE UNIQUE INDEX IF NOT EXISTS grading_periods_user_year_name_unique
+        ON grading_periods(user_id, school_year_id, name);
+    `);
+    console.log('✅ Scoped grading_periods uniqueness to school year');
+  } catch (error) {
+    console.error('Error scoping grading_periods uniqueness:', error);
   }
 };
 
