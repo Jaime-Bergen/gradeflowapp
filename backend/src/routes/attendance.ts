@@ -109,4 +109,26 @@ router.post('/bulk', validateRequest(schemas.attendanceBulk), async (req: AuthRe
   }
 })
 
+// Clear attendance records for specific student/date pairs
+router.post('/bulk-delete', validateRequest(schemas.attendanceBulkDelete), async (req: AuthRequest, res, next) => {
+  try {
+    const db = getDB()
+    const { records } = req.body as { records: Array<{ studentId: string; date: string }> }
+    const studentIds = records.map(r => r.studentId)
+    const dates = records.map(r => r.date)
+
+    const result = await db.query(
+      `DELETE FROM attendance_records ar
+       USING unnest($3::uuid[], $4::date[]) AS t(student_id, date)
+       WHERE ar.user_id = $1 AND ar.school_year_id = $2
+         AND ar.student_id = t.student_id AND ar.date = t.date`,
+      [req.userId, req.schoolYearId, studentIds, dates]
+    )
+
+    res.json({ success: true, count: result.rowCount ?? 0 })
+  } catch (error) {
+    next(error)
+  }
+})
+
 export default router

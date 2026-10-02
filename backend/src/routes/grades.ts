@@ -36,6 +36,7 @@ router.get('/', async (req: AuthRequest, res, next) => {
       studentId: row.student_id,
       lessonId: row.lesson_id,
       subjectId: row.subject_id,
+      lessonName: row.lesson_name,
       percentage: row.percentage,
       points: row.grade_points, // This is the earned points
       maxPoints: row.lesson_points, // This is the total possible points from the lesson

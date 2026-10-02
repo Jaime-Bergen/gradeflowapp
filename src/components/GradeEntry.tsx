@@ -52,6 +52,22 @@ export default function GradeEntry() {
   const [lessonPoints, setLessonPoints] = useState<string>("")
   const [lessonDate, setLessonDate] = useState<string>("")
   const [lessonDatePrefilled, setLessonDatePrefilled] = useState<boolean>(false)
+  const [firstDayOfSchool, setFirstDayOfSchool] = useState<string>("")
+
+  useEffect(() => {
+    const loadFirstDay = async () => {
+      try {
+        const res = await apiClient.getProfile()
+        const raw = (res.data as any)?.first_day_of_school
+        setFirstDayOfSchool(raw ? String(raw).split('T')[0] : '')
+      } catch (error) {
+        console.error('Failed to load first day of school:', error)
+      }
+    }
+    loadFirstDay()
+    window.addEventListener('gradeflow-profile-updated', loadFirstDay)
+    return () => window.removeEventListener('gradeflow-profile-updated', loadFirstDay)
+  }, [])
 
   // Helper to get local-date ISO (avoids UTC off-by-one)
   const getLocalISODate = (daysFromToday = 0) => {
@@ -159,13 +175,14 @@ export default function GradeEntry() {
   const inputRefs = useRef<Record<string, HTMLInputElement>>({})
   const lessonPointsRef = useRef<HTMLInputElement>(null)
   const lessonDateRef = useRef<HTMLInputElement>(null)
+  const lessonSaveInFlight = useRef(false)
 
   // Inline editing state
   const [editingCell, setEditingCell] = useState<{ studentId: string; lessonId: string } | null>(null)
   const [editingLesson, setEditingLesson] = useState<string | null>(null)
   const [lessonEditFocusOnPoints, setLessonEditFocusOnPoints] = useState<boolean>(false)
   const [tempGradeValue, setTempGradeValue] = useState<string>("")
-  const [tempLessonData, setTempLessonData] = useState<{ type?: string; points?: string }>({})
+  const [tempLessonData, setTempLessonData] = useState<{ type?: string; points?: string; date?: string }>({})
   const [subjectLessons, setSubjectLessons] = useState<Record<string, Lesson[]>>({});
   const [loadingLessons, setLoadingLessons] = useState<{ [subjectId: string]: boolean }>({});
   const [subjectSelectOpen, setSubjectSelectOpen] = useState(false);
@@ -785,6 +802,12 @@ export default function GradeEntry() {
     if (!value) return ''
     // Keep date-only portion to avoid timezone shifts
     return value.includes('T') ? value.split('T')[0] : value
+  }
+
+  const isLessonDateOutOfRange = (value?: string | null) => {
+    const iso = normalizeDateInput(value)
+    if (!iso || !firstDayOfSchool) return false
+    return iso < firstDayOfSchool || iso > shiftISODate(firstDayOfSchool, 200)
   }
 
   function editLesson(lesson: Lesson, subjectId: string) {
@@ -1786,11 +1809,14 @@ const saveGrade = async (studentId: string) => {
 
   const startEditingLesson = (lessonId: string, currentType: string, currentPoints: number, focusOnPoints = false) => {
     setEditingLesson(lessonId);
-    setTempLessonData({ type: currentType, points: currentPoints.toString() });
+    const lesson = (subjectLessons[selectedSubjectId] || []).find(l => l.id === lessonId);
+    setTempLessonData({ type: currentType, points: currentPoints.toString(), date: normalizeDateInput(lesson?.date) });
     setLessonEditFocusOnPoints(focusOnPoints);
   };
 
-  const saveLessonInline = async (lessonId: string) => {
+  const saveLessonInline = async (lessonId: string, focusFirstStudentAfter = true) => {
+    if (lessonSaveInFlight.current) return;
+    lessonSaveInFlight.current = true;
     try {
       const updates: any = {};
 
@@ -1810,8 +1836,17 @@ const saveGrade = async (studentId: string) => {
         updates.points = points;
       }
 
+      if (tempLessonData.date !== undefined) {
+        const lesson = (subjectLessons[selectedSubjectId] || []).find(l => l.id === lessonId);
+        if (tempLessonData.date !== normalizeDateInput(lesson?.date)) {
+          updates.date = tempLessonData.date || null;
+        }
+      }
+
       if (Object.keys(updates).length === 0) {
         setEditingLesson(null);
+        setLessonEditFocusOnPoints(false);
+        setTempLessonData({});
         return;
       }
 
@@ -1827,7 +1862,7 @@ const saveGrade = async (studentId: string) => {
       setTempLessonData({}); // Clear temporary data
       
       // After saving lesson, focus on first student in table mode
-      if (activeView === 'table' && displayedStudents.length > 0) {
+      if (focusFirstStudentAfter && activeView === 'table' && displayedStudents.length > 0) {
         const firstStudent = displayedStudents[0];
         const existingGrade = grades.find(g => g.studentId === firstStudent.id && g.lessonId === lessonId);
         const isSkipped = existingGrade && existingGrade.percentage === 0 && existingGrade.errors === (existingGrade.maxPoints || existingGrade.points);
@@ -1847,6 +1882,8 @@ const saveGrade = async (studentId: string) => {
     } catch (error) {
       console.error('Failed to update lesson:', error);
       toast.error('Failed to update lesson');
+    } finally {
+      lessonSaveInFlight.current = false;
     }
   };
 
@@ -2085,7 +2122,15 @@ const saveGrade = async (studentId: string) => {
                           }}
                         >
                           {editingLesson === lesson.id ? (
-                            <div className="space-y-1">
+                            <div
+                              className="space-y-1"
+                              onBlur={(e) => {
+                                // Only close when focus leaves the whole header editor, not when moving between its fields
+                                if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                                  saveLessonInline(lesson.id, false);
+                                }
+                              }}
+                            >
                               <div className="text-xs font-medium truncate max-w-[90px]" title={lesson.name}>
                                 {lesson.name}
                               </div>
@@ -2136,6 +2181,21 @@ const saveGrade = async (studentId: string) => {
                                     }
                                   }}
                                 />
+                                <input
+                                  type="date"
+                                  value={tempLessonData.date ?? ''}
+                                  onChange={(e) => setTempLessonData(prev => ({ ...prev, date: e.target.value }))}
+                                  className={`text-xs p-1 border rounded w-full ${isLessonDateOutOfRange(tempLessonData.date) ? 'border-red-500 bg-red-50 text-red-700' : ''}`}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      saveLessonInline(lesson.id);
+                                    } else if (e.key === 'Escape') {
+                                      setEditingLesson(null);
+                                      setLessonEditFocusOnPoints(false);
+                                      setTempLessonData({});
+                                    }
+                                  }}
+                                />
                               </div>
                             </div>
                           ) : (
@@ -2143,22 +2203,25 @@ const saveGrade = async (studentId: string) => {
                               <div className="text-xs font-medium truncate max-w-[90px]" title={lesson.name}>
                                 {lesson.name}
                               </div>
-                              <Badge
-                                className="text-xs text-white border-0"
-                                style={{ backgroundColor: getCategoryColor(lesson) }}
+                              <div
+                                className={`text-xs ${isLessonDateOutOfRange(lesson.date) ? 'text-red-600 font-semibold bg-red-100 rounded px-1' : 'text-muted-foreground'}`}
+                                title={isLessonDateOutOfRange(lesson.date) ? 'Date is outside the expected school year' : undefined}
                               >
-                                {lesson.type}
-                              </Badge>
-                              <div 
-                                className="text-xs text-muted-foreground hover:bg-gray-100 rounded px-1" 
+                                {lesson.date
+                                  ? new Date(`${normalizeDateInput(lesson.date)}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+                                  : 'No date'}
+                              </div>
+                              <Badge
+                                className="text-xs text-white border-0 hover:opacity-80"
+                                style={{ backgroundColor: getCategoryColor(lesson) }}
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   startEditingLesson(lesson.id, lesson.type, lesson.points || 0, true);
                                 }}
-                                title="Click to edit points directly"
+                                title={`${lesson.type} • Click to edit points directly`}
                               >
                                 {lesson.points}pts
-                              </div>
+                              </Badge>
                             </div>
                           )}
                         </th>
@@ -2816,7 +2879,8 @@ const saveGrade = async (studentId: string) => {
                           updateLessonDate(lessonDate || '')
                         }
                       }}
-                      className="w-36"
+                      className={`w-36 ${isLessonDateOutOfRange(lessonDate) ? 'border-red-500 bg-red-50 text-red-700' : ''}`}
+                      title={isLessonDateOutOfRange(lessonDate) ? 'Date is outside the expected school year' : undefined}
                       disabled={!selectedLesson}
                     />
                     <Button

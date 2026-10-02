@@ -13,9 +13,10 @@ import {
   BookOpen, 
   TrendingUp, 
   Clock,
-  AlertTriangle
+  AlertTriangle,
+  ChevronDown
 } from "lucide-react"
-import { Student, Grade, AttendanceRecord, AttendanceStatus, GradingPeriod } from '@/lib/types'
+import { Student, Subject, Grade, AttendanceRecord, AttendanceStatus, GradingPeriod } from '@/lib/types'
 import { toast } from 'sonner'
 
 type DashboardSummary = {
@@ -27,6 +28,7 @@ type DashboardSummary = {
     total_grades?: number | string
   }
   recentActivity?: Array<{
+    id?: string
     percentage?: number | string | null
     updated_at?: string
     student_name?: string
@@ -46,6 +48,7 @@ export default function Dashboard() {
   const [students, setStudents] = useState<Student[]>([])
   const [filteredStudents, setFilteredStudents] = useState<Student[]>([])
   const [grades, setGrades] = useState<Grade[]>([])
+  const [subjects, setSubjects] = useState<Subject[]>([])
   const [studentGroups, setStudentGroups] = useState<any[]>([])
   const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary>({})
   const [loading, setLoading] = useState(true)
@@ -260,8 +263,17 @@ export default function Dashboard() {
 
   const currentPeriodGrades = getFilteredGradesForPeriod(currentGradingPeriod)
   const analyticsAvailable = gradingPeriods.length > 0
+  const isTeacherFiltered = teacherGroupIds.length > 0
 
-  const countablePeriodGrades = useMemo(() => currentPeriodGrades.filter(isCountableGrade), [currentPeriodGrades])
+  const visibleStudentIds = useMemo(
+    () => (isTeacherFiltered ? new Set(filteredStudents.map(s => s.id)) : null),
+    [isTeacherFiltered, filteredStudents]
+  )
+
+  const countablePeriodGrades = useMemo(
+    () => currentPeriodGrades.filter(g => isCountableGrade(g) && (!visibleStudentIds || visibleStudentIds.has(g.studentId))),
+    [currentPeriodGrades, visibleStudentIds]
+  )
 
   const studentsForDialog = useMemo(() => (filteredStudents.length > 0 ? filteredStudents : students), [filteredStudents, students])
 
@@ -275,6 +287,14 @@ export default function Dashboard() {
       .map(g => g.name)
       .filter(Boolean)
   }, [studentGroups, teacherGroupIds])
+
+  const visibleSubjects = useMemo(() => {
+    if (!isTeacherFiltered) return subjects
+    return subjects.filter(subject => {
+      if (!subject.group_name) return true
+      return subject.group_name.split(',').map(g => g.trim()).some(name => teacherGroupNames.includes(name))
+    })
+  }, [isTeacherFiltered, subjects, teacherGroupNames])
 
   const allGroupNames = useMemo(() => {
     const names = new Set<string>()
@@ -425,17 +445,20 @@ export default function Dashboard() {
         groupsRes,
         dashboardRes,
         gradesRes,
+        subjectsRes,
       ] = await Promise.all([
         refreshGradingSettings(),
         apiClient.getStudents(),
         apiClient.getStudentGroups(),
         apiClient.getDashboardStats(),
         apiClient.getGrades(),
+        apiClient.getSubjects(),
       ])
 
       const { configuredPeriods } = gradingSettings
       const studentsData = Array.isArray(studentsRes.data) ? studentsRes.data : []
       setStudents(studentsData)
+      setSubjects(Array.isArray(subjectsRes.data) ? subjectsRes.data : [])
 
       const groupData = Array.isArray(groupsRes.data) ? groupsRes.data : []
       setStudentGroups(groupData)
@@ -823,6 +846,25 @@ export default function Dashboard() {
     }
   }, [historySaving, weeklyAttendance, loadWeeklyAttendance, loadCurrentWeekAttendance, weekOffset])
 
+  const handleHistoryClear = useCallback(async (records: Array<{ studentId: string; date: string }>) => {
+    if (historySaving || records.length === 0) return
+    const keys = new Set(records.map(r => `${r.studentId}|${r.date}`))
+
+    setWeeklyAttendance(prev => prev.filter(r => !keys.has(`${(r as any).studentId || (r as any).student_id}|${r.date}`)))
+
+    setHistorySaving(true)
+    const res = await apiClient.deleteAttendance(records)
+    setHistorySaving(false)
+    setHistoryMenuTarget(null)
+    setHeaderMenuDate(null)
+
+    if ((res as any).error) {
+      toast.error('Could not clear attendance')
+      loadWeeklyAttendance(weekOffset)
+    }
+    if (weekOffset === 0) loadCurrentWeekAttendance()
+  }, [historySaving, loadWeeklyAttendance, loadCurrentWeekAttendance, weekOffset])
+
   if (loading) {
     return (
       <div className="flex items-center justify-center p-8">
@@ -831,8 +873,12 @@ export default function Dashboard() {
     )
   }
 
-  const totalStudents = Number(dashboardSummary.overview?.total_students ?? students.length)
-  const totalSubjects = Number(dashboardSummary.overview?.total_subjects ?? 0)
+  const totalStudents = isTeacherFiltered
+    ? filteredStudents.length
+    : Number(dashboardSummary.overview?.total_students ?? students.length)
+  const totalSubjects = isTeacherFiltered
+    ? visibleSubjects.length
+    : Number(dashboardSummary.overview?.total_subjects ?? 0)
   const totalTeachers = Number(dashboardSummary.overview?.total_teachers ?? 0)
   // Calculate class average for current grading period
   const averageGrade = countablePeriodGrades.length > 0 
@@ -840,7 +886,7 @@ export default function Dashboard() {
     : 0
 
   // Students at risk based on current grading period
-  const studentsAtRisk = students.filter(student => {
+  const studentsAtRisk = (isTeacherFiltered ? filteredStudents : students).filter(student => {
     const studentGrades = countablePeriodGrades.filter(g => g.studentId === student.id)
     if (studentGrades.length === 0) return false
     const studentAverage = studentGrades.reduce((sum, grade) => sum + getPercentageValue(grade), 0) / studentGrades.length
@@ -848,9 +894,26 @@ export default function Dashboard() {
   })
 
   // Students at risk based on current grading period
-  const recentGrades = Array.isArray(dashboardSummary.recentActivity)
-    ? dashboardSummary.recentActivity.slice(0, 5)
-    : []
+  const recentGrades: NonNullable<DashboardSummary['recentActivity']> = isTeacherFiltered
+    ? (() => {
+        const studentNames = new Map(filteredStudents.map(s => [s.id, s.name]))
+        const subjectNames = new Map(subjects.map(s => [s.id, s.name]))
+        return grades
+          .filter(g => studentNames.has(g.studentId))
+          .sort((a, b) => (b.updated_at || b.date || '').localeCompare(a.updated_at || a.date || ''))
+          .slice(0, 5)
+          .map(g => ({
+            id: g.id,
+            percentage: g.percentage,
+            updated_at: g.updated_at || g.date,
+            student_name: studentNames.get(g.studentId),
+            lesson_name: g.lessonName,
+            subject_name: g.subjectId ? subjectNames.get(g.subjectId) : undefined,
+          }))
+      })()
+    : Array.isArray(dashboardSummary.recentActivity)
+      ? dashboardSummary.recentActivity.slice(0, 5)
+      : []
 
   // Helper function to get grading period name
   const getGradingPeriodName = (period: number): string => {
@@ -895,7 +958,9 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{totalStudents}</div>
-            <p className="text-xs text-muted-foreground">Across {totalTeachers} teachers</p>
+            <p className="text-xs text-muted-foreground">
+              {isTeacherFiltered ? `In ${teacherGroupNames.join(', ') || 'assigned groups'}` : `Across ${totalTeachers} teachers`}
+            </p>
 
             {nextBirthdayInfo ? (
               <div
@@ -1153,7 +1218,7 @@ export default function Dashboard() {
         <DialogContent className="max-w-5xl max-h-[80vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>Attendance history (current week)</DialogTitle>
-            <DialogDescription>Per-day status with frozen names; colors match the legend.</DialogDescription>
+            <DialogDescription>Colors match the legend. Click a day header to set that status for every student in the column.</DialogDescription>
           </DialogHeader>
 
           <div className="flex flex-col gap-3 overflow-hidden flex-1 min-h-0">
@@ -1179,10 +1244,24 @@ export default function Dashboard() {
                       return (
                         <th
                           key={date}
-                          className="border-b border-border px-2 py-2 text-center text-xs text-muted-foreground cursor-pointer relative"
-                          onClick={() => setHeaderMenuDate(prev => (prev === date ? null : date))}
+                          className="border-b border-border px-2 py-2 text-center relative"
                         >
-                          {parseLocalDate(date).toLocaleDateString(undefined, { weekday: 'short' })}
+                          <button
+                            type="button"
+                            aria-haspopup="menu"
+                            aria-expanded={isOpen}
+                            title="Set status for all students on this day"
+                            disabled={historySaving || historyLoading}
+                            className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                              isOpen
+                                ? 'border-primary bg-primary/10 text-primary'
+                                : 'border-border bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground'
+                            }`}
+                            onClick={() => setHeaderMenuDate(prev => (prev === date ? null : date))}
+                          >
+                            {parseLocalDate(date).toLocaleDateString(undefined, { weekday: 'short' })}
+                            <ChevronDown size={12} className={`transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                          </button>
                           {isOpen && (
                             <div className="absolute z-20 top-full left-1/2 -translate-x-1/2 mt-1 rounded border border-border bg-popover shadow-lg p-2 flex gap-2">
                               {attendanceStatusOptions.map(option => (
@@ -1198,6 +1277,18 @@ export default function Dashboard() {
                                   disabled={historySaving || historyLoading}
                                 />
                               ))}
+                              <button
+                                className="text-xs px-2 py-1 rounded border border-border hover:bg-muted"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  const visible = filteredStudents.length > 0 ? filteredStudents : students
+                                  handleHistoryClear(visible.map(s => ({ studentId: s.id, date })))
+                                }}
+                                title="Clear attendance for all students on this day"
+                                disabled={historySaving || historyLoading}
+                              >
+                                Clear
+                              </button>
                               <button
                                 className="text-xs px-2 py-1 rounded border border-border hover:bg-muted"
                                 onClick={(e) => { e.stopPropagation(); setHeaderMenuDate(null) }}
@@ -1263,6 +1354,14 @@ export default function Dashboard() {
                                       disabled={historySaving}
                                     />
                                   ))}
+                                  <button
+                                    className="text-xs px-2 py-1 rounded border border-border hover:bg-muted disabled:opacity-50"
+                                    onClick={(e) => { e.stopPropagation(); handleHistoryClear([{ studentId: student.id, date: day }]) }}
+                                    title="Clear this entry"
+                                    disabled={historySaving || !status}
+                                  >
+                                    Clear
+                                  </button>
                                   <button
                                     className="text-xs px-2 py-1 rounded border border-border hover:bg-muted"
                                     onClick={(e) => { e.stopPropagation(); setHistoryMenuTarget(null) }}

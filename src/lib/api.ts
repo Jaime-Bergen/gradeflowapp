@@ -715,6 +715,13 @@ class ApiClient {
     })
   }
 
+  async deleteAttendance(records: Array<{ studentId: string; date: string }>) {
+    return this.request<{ success: boolean; count: number }>(`/attendance/bulk-delete`, {
+      method: 'POST',
+      body: JSON.stringify({ records })
+    })
+  }
+
   async getStudentAttendance(studentId: string, limit = 50) {
     return this.request<AttendanceRecord[]>(`/attendance/student/${studentId}?limit=${limit}`)
   }

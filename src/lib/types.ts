@@ -160,6 +160,7 @@ export interface Grade {
   studentId: string
   lessonId: string
   subjectId?: string // Derived from lesson, not stored in DB
+  lessonName?: string
   points: number // Earned points (calculated from maxPoints - errors)
   maxPoints: number // Total possible points (stored as 'points' in DB)
   percentage: number
