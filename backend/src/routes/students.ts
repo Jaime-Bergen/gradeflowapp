@@ -263,8 +263,11 @@ router.post('/', validateRequest(schemas.student), async (req: AuthRequest, res,
       // New format: array of group IDs
       for (const groupId of groupIds) {
         await db.query(
-          'INSERT INTO student_group_links (student_id, student_group_id, school_year_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
-          [studentId, groupId, schoolYearId]
+          `INSERT INTO student_group_links (student_id, student_group_id, school_year_id)
+           SELECT $1, sg.id, $3 FROM student_groups sg
+           WHERE sg.id = $2 AND sg.user_id = $4 AND sg.school_year_id = $3
+           ON CONFLICT DO NOTHING`,
+          [studentId, groupId, schoolYearId, req.userId]
         );
       }
     } else if (groupName) {
@@ -415,8 +418,11 @@ router.put('/:id', validateRequest(schemas.student), async (req: AuthRequest, re
       // New format: array of group IDs
       for (const groupId of groupIds) {
         await db.query(
-          'INSERT INTO student_group_links (student_id, student_group_id, school_year_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
-          [id, groupId, schoolYearId]
+          `INSERT INTO student_group_links (student_id, student_group_id, school_year_id)
+           SELECT $1, sg.id, $3 FROM student_groups sg
+           WHERE sg.id = $2 AND sg.user_id = $4 AND sg.school_year_id = $3
+           ON CONFLICT DO NOTHING`,
+          [id, groupId, schoolYearId, req.userId]
         );
       }
     } else if (groupName) {

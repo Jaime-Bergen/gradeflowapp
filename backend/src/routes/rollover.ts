@@ -718,7 +718,7 @@ router.post('/scopes/:scopeId/execute/subjects', async (req: AuthRequest, res, n
 
         if (keepLessons) {
           const sourceLessons = await db.query(
-            `SELECT name, category_id, points, order_index, date
+            `SELECT name, category_id, points, order_index
              FROM lessons
              WHERE subject_id = $1 AND school_year_id = $2
              ORDER BY order_index`,
@@ -739,8 +739,8 @@ router.post('/scopes/:scopeId/execute/subjects', async (req: AuthRequest, res, n
 
             if (existingLesson.rows.length === 0) {
               await db.query(
-                `INSERT INTO lessons (subject_id, school_year_id, name, category_id, points, order_index, date)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7::date)`,
+                `INSERT INTO lessons (subject_id, school_year_id, name, category_id, points, order_index)
+                 VALUES ($1, $2, $3, $4, $5, $6)`,
                 [
                   targetSubjectId,
                   targetSchoolYearId,
@@ -748,7 +748,6 @@ router.post('/scopes/:scopeId/execute/subjects', async (req: AuthRequest, res, n
                   lesson.category_id,
                   keepLessonMaxPoints ? lesson.points : null,
                   lesson.order_index,
-                  lesson.date || null,
                 ]
               );
               lessonsCreated += 1;
