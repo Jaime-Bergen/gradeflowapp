@@ -258,6 +258,8 @@ router.post('/checkout-session', authenticateToken, async (req: AuthRequest, res
       `SELECT 1
        FROM user_school_year_licenses
        WHERE user_id = $1 AND school_year_id = $2
+         AND COALESCE(grant_source, '') <> 'trial'
+         AND license_tier <> 'trial'
        LIMIT 1`,
       [req.userId, schoolYearId]
     )
@@ -383,6 +385,8 @@ router.post('/claim-free-year', authenticateToken, async (req: AuthRequest, res,
       `SELECT 1
        FROM user_school_year_licenses
        WHERE user_id = $1 AND school_year_id = $2
+         AND COALESCE(grant_source, '') <> 'trial'
+         AND license_tier <> 'trial'
        LIMIT 1`,
       [req.userId, schoolYearId]
     )
@@ -424,12 +428,29 @@ router.post('/claim-free-year', authenticateToken, async (req: AuthRequest, res,
         ]
       )
     } catch (error: any) {
-      if (error?.code === '23505') {
+      if (error?.code !== '23505') throw error
+
+      // The user passed the license checks above, so a claim of their own is an orphan from a failed earlier attempt.
+      const orphanClaim = await db.query(
+        `UPDATE free_school_year_claims
+         SET school_year_id = $2, school_name = $3, country = $4, notes = $5
+         WHERE school_fingerprint = $1 AND user_id = $6
+         RETURNING id`,
+        [
+          fingerprint,
+          schoolYearId,
+          String(schoolName).trim(),
+          String(country).trim(),
+          `Free year claimed by ${user.email}`,
+          req.userId,
+        ]
+      )
+
+      if (orphanClaim.rows.length === 0) {
         return res.status(409).json({
           error: 'A free year has already been claimed for this school identity. Please choose a paid plan or contact sales for help.'
         })
       }
-      throw error
     }
 
     await grantLicense(db, {

@@ -27,6 +27,14 @@ const formatPercentage = (percentage: number): string => {
   return percentage.toFixed(1);
 };
 
+// Text shown in a grade input for an existing grade ('S' for skipped, '' when none)
+const gradeInputValue = (grade: Grade | undefined | null, entryMode: 'percentage' | 'errors'): string => {
+  if (!grade) return '';
+  if (grade.skipped) return 'S';
+  const value = entryMode === 'percentage' ? grade.percentage : grade.errors;
+  return value != null ? Number(value).toString() : '';
+};
+
 export default function GradeEntry() {
   const [students, setStudents] = useState<Student[]>([])
   const [filteredStudents, setFilteredStudents] = useState<Student[]>([])
@@ -417,12 +425,7 @@ export default function GradeEntry() {
         if (currentStudentId && currentLessonId) {
           setSelectedLessonId(currentLessonId);
           const existingGrade = grades.find(g => g.studentId === currentStudentId && g.lessonId === currentLessonId);
-          const isSkipped = existingGrade && existingGrade.percentage === 0 && existingGrade.errors === (existingGrade.maxPoints || existingGrade.points);
-          const currentValue = existingGrade
-            ? (isSkipped ? 'S' : (entryMode === 'percentage' 
-                ? ((existingGrade.percentage || 0) > 0 ? (existingGrade.percentage || 0).toString() : '') 
-                : ((existingGrade.errors || 0) > 0 ? (existingGrade.errors || 0).toString() : '')))
-            : '';
+          const currentValue = gradeInputValue(existingGrade, entryMode);
           startEditingGrade(currentStudentId, currentLessonId, currentValue);
         }
       }
@@ -517,12 +520,7 @@ export default function GradeEntry() {
               // Table view: start editing first student in current lesson
               const firstStudent = enrolledStudents[0];
               const existingGrade = grades.find(g => g.studentId === firstStudent.id && g.lessonId === selectedLessonId);
-              const isSkipped = existingGrade && existingGrade.percentage === 0 && existingGrade.errors === (existingGrade.maxPoints || existingGrade.points);
-              const currentValue = existingGrade
-                ? (isSkipped ? 'S' : (entryMode === 'percentage' 
-                    ? ((existingGrade.percentage || 0) > 0 ? (existingGrade.percentage || 0).toString() : '') 
-                    : ((existingGrade.errors || 0) > 0 ? (existingGrade.errors || 0).toString() : '')))
-                : '';
+              const currentValue = gradeInputValue(existingGrade, entryMode);
               startEditingGrade(firstStudent.id, selectedLessonId, currentValue);
               toast.success('Jumped to first student');
             } else {
@@ -543,12 +541,7 @@ export default function GradeEntry() {
               // Table view: start editing last student in current lesson
               const lastStudent = enrolledStudents[enrolledStudents.length - 1];
               const existingGrade = grades.find(g => g.studentId === lastStudent.id && g.lessonId === selectedLessonId);
-              const isSkipped = existingGrade && existingGrade.percentage === 0 && existingGrade.errors === (existingGrade.maxPoints || existingGrade.points);
-              const currentValue = existingGrade
-                ? (isSkipped ? 'S' : (entryMode === 'percentage' 
-                    ? ((existingGrade.percentage || 0) > 0 ? (existingGrade.percentage || 0).toString() : '') 
-                    : ((existingGrade.errors || 0) > 0 ? (existingGrade.errors || 0).toString() : '')))
-                : '';
+              const currentValue = gradeInputValue(existingGrade, entryMode);
               startEditingGrade(lastStudent.id, selectedLessonId, currentValue);
               toast.success('Jumped to last student');
             } else {
@@ -580,12 +573,7 @@ export default function GradeEntry() {
                   if (enrolledStudents.length > 0) {
                     const firstStudent = enrolledStudents[0];
                     const existingGrade = grades.find(g => g.studentId === firstStudent.id && g.lessonId === prevLesson.id);
-                    const isSkipped = existingGrade && existingGrade.percentage === 0 && existingGrade.errors === (existingGrade.maxPoints || existingGrade.points);
-                    const currentValue = existingGrade
-                      ? (isSkipped ? 'S' : (entryMode === 'percentage' 
-                          ? ((existingGrade.percentage || 0) > 0 ? (existingGrade.percentage || 0).toString() : '') 
-                          : ((existingGrade.errors || 0) > 0 ? (existingGrade.errors || 0).toString() : '')))
-                      : '';
+                    const currentValue = gradeInputValue(existingGrade, entryMode);
                     startEditingGrade(firstStudent.id, prevLesson.id, currentValue);
                   }
                 }, 100);
@@ -627,12 +615,7 @@ export default function GradeEntry() {
                   if (enrolledStudents.length > 0) {
                     const firstStudent = enrolledStudents[0];
                     const existingGrade = grades.find(g => g.studentId === firstStudent.id && g.lessonId === nextLesson.id);
-                    const isSkipped = existingGrade && existingGrade.percentage === 0 && existingGrade.errors === (existingGrade.maxPoints || existingGrade.points);
-                    const currentValue = existingGrade
-                      ? (isSkipped ? 'S' : (entryMode === 'percentage' 
-                          ? ((existingGrade.percentage || 0) > 0 ? (existingGrade.percentage || 0).toString() : '') 
-                          : ((existingGrade.errors || 0) > 0 ? (existingGrade.errors || 0).toString() : '')))
-                      : '';
+                    const currentValue = gradeInputValue(existingGrade, entryMode);
                     startEditingGrade(firstStudent.id, nextLesson.id, currentValue);
                   }
                 }, 100);
@@ -1106,19 +1089,13 @@ export default function GradeEntry() {
       const gradeMap: Record<string, string> = {}
       
       lessonGrades.forEach(grade => {
-        // Check if grade was skipped: percentage is 0 and errors equal maxPoints
-        const percentage = grade.percentage || 0;
-        const errors = grade.errors || 0;
-        const maxPoints = grade.maxPoints || grade.points || 0;
-        const isSkipped = percentage === 0 && errors === maxPoints;
-        
-        if (isSkipped) {
+        if (grade.skipped) {
           gradeMap[grade.studentId] = 'S'
         } else if (entryMode === 'percentage') {
           gradeMap[grade.studentId] = grade.percentage != null ? grade.percentage.toString() : ''
         } else {
           // For errors mode, show errors 
-          const errorsValue = grade.errors || (grade.maxPoints ? grade.maxPoints - grade.points : 0)
+          const errorsValue = grade.errors ?? (grade.maxPoints ? grade.maxPoints - grade.points : 0)
           gradeMap[grade.studentId] = errorsValue.toString()
         }
       })
@@ -1187,12 +1164,7 @@ export default function GradeEntry() {
           // Table view: start editing first student in current lesson
           const firstStudent = enrolledStudents[0];
           const existingGrade = grades.find(g => g.studentId === firstStudent.id && g.lessonId === selectedLessonId);
-          const isSkipped = existingGrade && existingGrade.percentage === 0 && existingGrade.errors === (existingGrade.maxPoints || existingGrade.points);
-          const currentValue = existingGrade
-            ? (isSkipped ? 'S' : (entryMode === 'percentage' 
-                ? ((existingGrade.percentage || 0) > 0 ? (existingGrade.percentage || 0).toString() : '') 
-                : ((existingGrade.errors || 0) > 0 ? (existingGrade.errors || 0).toString() : '')))
-            : '';
+          const currentValue = gradeInputValue(existingGrade, entryMode);
           startEditingGrade(firstStudent.id, selectedLessonId, currentValue);
         } else {
           // Entry view: focus first input
@@ -1504,18 +1476,7 @@ export default function GradeEntry() {
   };
 
   // Helper function to get display value from a grade (for comparison)
-  const getGradeDisplayValue = (grade: any): string => {
-    if (!grade) return '';
-    
-    const isSkipped = grade.percentage === 0 && grade.errors === (grade.maxPoints || grade.points);
-    if (isSkipped) return 'S';
-    
-    if (entryMode === 'percentage') {
-      return grade.percentage > 0 ? grade.percentage.toString() : '';
-    } else {
-      return grade.errors > 0 ? grade.errors.toString() : '';
-    }
-  };
+  const getGradeDisplayValue = (grade: any): string => gradeInputValue(grade, entryMode);
 
 const saveGrade = async (studentId: string) => {
   const currentValue = gradeValues[studentId];
@@ -1542,16 +1503,9 @@ const saveGrade = async (studentId: string) => {
 
     const lowerValue = currentValue.toLowerCase();
 
-    // Handle skip case
+    // Handle skip case: no numeric score is stored
     if (lowerValue === 's') {
-      const lessonMaxPoints = selectedLesson.points || 0;
-      if (lessonMaxPoints <= 0) {
-        toast.error('Please set lesson points before skipping grades');
-        return;
-      }
-      gradeData.percentage = 0;
-      gradeData.errors = lessonMaxPoints;
-      gradeData.points = lessonMaxPoints;
+      gradeData.skipped = true;
     } else {
       // Handle letter grade
       const letterPercentage = processLetterGrade(currentValue);
@@ -1614,18 +1568,19 @@ const saveGrade = async (studentId: string) => {
       g => g.studentId === studentId && g.lessonId === selectedLessonId
     );
 
+    const isSkippedEntry = lowerValue === 's';
     const newGrade: Grade = {
       id: (response.data as any)?.id || `${studentId}-${selectedLessonId}`,
       studentId,
       lessonId: selectedLessonId,
       subjectId: selectedSubjectId,
-      percentage: gradeData.percentage,
-      points: gradeData.points - (gradeData.errors || 0),
-      maxPoints: gradeData.points,
-      errors: gradeData.errors,
+      percentage: isSkippedEntry ? null : gradeData.percentage,
+      points: isSkippedEntry ? 0 : gradeData.points - (gradeData.errors || 0),
+      maxPoints: isSkippedEntry ? (selectedLesson.points || 0) : gradeData.points,
+      errors: isSkippedEntry ? null : gradeData.errors,
       date: new Date().toISOString(),
       notes: undefined,
-      skipped: lowerValue === 's',
+      skipped: isSkippedEntry,
       created_at: (response.data as any)?.created_at,
       updated_at: (response.data as any)?.updated_at
     };
@@ -1700,16 +1655,9 @@ const saveGrade = async (studentId: string) => {
       let gradeData: any = {};
       const lowerValue = tempGradeValue.toLowerCase();
 
-      // Handle skip case
+      // Handle skip case: no numeric score is stored
       if (lowerValue === 's') {
-        const lessonMaxPoints = lesson.points || 0;
-        if (lessonMaxPoints <= 0) {
-          toast.error('Please set lesson points before skipping grades');
-          return;
-        }
-        gradeData.percentage = 0;
-        gradeData.errors = lessonMaxPoints;
-        gradeData.points = lessonMaxPoints;
+        gradeData.skipped = true;
       } else {
         // Handle letter grade
         const letterPercentage = processLetterGrade(tempGradeValue);
@@ -1773,18 +1721,19 @@ const saveGrade = async (studentId: string) => {
         g => g.studentId === studentId && g.lessonId === lessonId
       );
 
+      const isSkippedEntry = lowerValue === 's';
       const newGrade: Grade = {
         id: (response.data as any)?.id || `${studentId}-${lessonId}`,
         studentId,
         lessonId,
         subjectId: selectedSubjectId,
-        percentage: gradeData.percentage,
-        points: gradeData.points - (gradeData.errors || 0),
-        maxPoints: gradeData.points,
-        errors: gradeData.errors,
+        percentage: isSkippedEntry ? null : gradeData.percentage,
+        points: isSkippedEntry ? 0 : gradeData.points - (gradeData.errors || 0),
+        maxPoints: isSkippedEntry ? (lesson.points || 0) : gradeData.points,
+        errors: isSkippedEntry ? null : gradeData.errors,
         date: new Date().toISOString(),
         notes: undefined,
-        skipped: lowerValue === 's',
+        skipped: isSkippedEntry,
         created_at: (response.data as any)?.created_at,
         updated_at: (response.data as any)?.updated_at
       };
@@ -1865,12 +1814,7 @@ const saveGrade = async (studentId: string) => {
       if (focusFirstStudentAfter && activeView === 'table' && displayedStudents.length > 0) {
         const firstStudent = displayedStudents[0];
         const existingGrade = grades.find(g => g.studentId === firstStudent.id && g.lessonId === lessonId);
-        const isSkipped = existingGrade && existingGrade.percentage === 0 && existingGrade.errors === (existingGrade.maxPoints || existingGrade.points);
-        const currentValue = existingGrade
-          ? (isSkipped ? 'S' : (entryMode === 'percentage' 
-              ? ((existingGrade.percentage || 0) > 0 ? (existingGrade.percentage || 0).toString() : '') 
-              : ((existingGrade.errors || 0) > 0 ? (existingGrade.errors || 0).toString() : '')))
-          : '';
+        const currentValue = gradeInputValue(existingGrade, entryMode);
         
         // Use a small delay to ensure the lesson editing state is cleared first
         setTimeout(() => {
@@ -1902,12 +1846,7 @@ const saveGrade = async (studentId: string) => {
     if (currentStudentIndex < currentStudents.length - 1) {
       const nextStudent = currentStudents[currentStudentIndex + 1];
       const existingGrade = grades.find(g => g.studentId === nextStudent.id && g.lessonId === currentLessonId);
-      const isSkipped = existingGrade && existingGrade.percentage === 0 && existingGrade.errors === (existingGrade.maxPoints || existingGrade.points);
-      const currentValue = existingGrade
-        ? (isSkipped ? 'S' : (entryMode === 'percentage' 
-            ? ((existingGrade.percentage || 0) > 0 ? (existingGrade.percentage || 0).toString() : '') 
-            : ((existingGrade.errors || 0) > 0 ? (existingGrade.errors || 0).toString() : '')))
-        : '';
+      const currentValue = gradeInputValue(existingGrade, entryMode);
       startEditingGrade(nextStudent.id, currentLessonId, currentValue);
       return;
     }
@@ -1918,12 +1857,7 @@ const saveGrade = async (studentId: string) => {
       const firstStudent = currentStudents[0];
       if (firstStudent) {
         const existingGrade = grades.find(g => g.studentId === firstStudent.id && g.lessonId === nextLesson.id);
-        const isSkipped = existingGrade && existingGrade.percentage === 0 && existingGrade.errors === (existingGrade.maxPoints || existingGrade.points);
-        const currentValue = existingGrade
-          ? (isSkipped ? 'S' : (entryMode === 'percentage' 
-              ? ((existingGrade.percentage || 0) > 0 ? (existingGrade.percentage || 0).toString() : '') 
-              : ((existingGrade.errors || 0) > 0 ? (existingGrade.errors || 0).toString() : '')))
-          : '';
+        const currentValue = gradeInputValue(existingGrade, entryMode);
         startEditingGrade(firstStudent.id, nextLesson.id, currentValue);
       }
       return;
@@ -1974,12 +1908,7 @@ const saveGrade = async (studentId: string) => {
       const newLesson = currentLessons[newLessonIndex];
       if (newStudent && newLesson) {
         const existingGrade = grades.find(g => g.studentId === newStudent.id && g.lessonId === newLesson.id);
-        const isSkipped = existingGrade && existingGrade.percentage === 0 && existingGrade.errors === (existingGrade.maxPoints || existingGrade.points);
-        const currentValue = existingGrade
-          ? (isSkipped ? 'S' : (entryMode === 'percentage' 
-              ? ((existingGrade.percentage || 0) > 0 ? (existingGrade.percentage || 0).toString() : '') 
-              : ((existingGrade.errors || 0) > 0 ? (existingGrade.errors || 0).toString() : '')))
-          : '';
+        const currentValue = gradeInputValue(existingGrade, entryMode);
         startEditingGrade(newStudent.id, newLesson.id, currentValue);
       }
     }
@@ -2260,27 +2189,21 @@ const saveGrade = async (studentId: string) => {
                           let isSkipped = false;
                           
                           if (existingGrade) {
-                            // Use stored values directly from database - convert to numbers
-                            const percentage = typeof existingGrade.percentage === 'number' ? existingGrade.percentage : 
-                                             (typeof existingGrade.percentage === 'string' ? parseFloat(existingGrade.percentage) : 0);
-                            const errors = typeof existingGrade.errors === 'number' ? existingGrade.errors : 
-                                          (typeof existingGrade.errors === 'string' ? parseFloat(existingGrade.errors) : 0);
-                            const maxPoints = existingGrade.maxPoints || existingGrade.points || 0;
-                            
-                            // Check if this is a skipped grade (0% with full errors)
-                            isSkipped = percentage === 0 && errors === maxPoints;
-                            
-                            if (isSkipped) {
-                              displayValue = 'S';
-                              displayPercentage = 0;
-                            } else if (entryMode === 'percentage') {
-                              displayValue = percentage > 0 ? percentage.toString() : '';
-                              displayPercentage = roundToNearestHalf(percentage);
-                            } else {
-                              displayValue = errors > 0 ? errors.toString() : '';
-                              // Calculate percentage from stored values for display
-                              const rawPercentage = maxPoints > 0 ? ((maxPoints - errors) / maxPoints) * 100 : 0;
-                              displayPercentage = roundToNearestHalf(rawPercentage);
+                            isSkipped = !!existingGrade.skipped;
+                            displayValue = gradeInputValue(existingGrade, entryMode);
+
+                            if (!isSkipped) {
+                              const percentage = Number(existingGrade.percentage ?? 0);
+                              const errors = Number(existingGrade.errors ?? 0);
+                              const maxPoints = existingGrade.maxPoints || existingGrade.points || 0;
+
+                              if (entryMode === 'percentage') {
+                                displayPercentage = roundToNearestHalf(percentage);
+                              } else {
+                                // Calculate percentage from stored values for display
+                                const rawPercentage = maxPoints > 0 ? ((maxPoints - errors) / maxPoints) * 100 : 0;
+                                displayPercentage = roundToNearestHalf(rawPercentage);
+                              }
                             }
                           }
                           
@@ -2367,12 +2290,7 @@ const saveGrade = async (studentId: string) => {
                                         if (displayedStudents.length > 0) {
                                           const firstStudent = displayedStudents[0];
                                           const existingGrade = grades.find(g => g.studentId === firstStudent.id && g.lessonId === lesson.id);
-                                          const isSkipped = existingGrade && existingGrade.percentage === 0 && existingGrade.errors === (existingGrade.maxPoints || existingGrade.points);
-                                          const currentValue = existingGrade
-                                            ? (isSkipped ? 'S' : (entryMode === 'percentage' 
-                                                ? ((existingGrade.percentage || 0) > 0 ? (existingGrade.percentage || 0).toString() : '') 
-                                                : ((existingGrade.errors || 0) > 0 ? (existingGrade.errors || 0).toString() : '')))
-                                            : '';
+                                          const currentValue = gradeInputValue(existingGrade, entryMode);
                                           startEditingGrade(firstStudent.id, lesson.id, currentValue);
                                           toast.success('Jumped to first student');
                                         }
@@ -2381,12 +2299,7 @@ const saveGrade = async (studentId: string) => {
                                         if (displayedStudents.length > 0) {
                                           const lastStudent = displayedStudents[displayedStudents.length - 1];
                                           const existingGrade = grades.find(g => g.studentId === lastStudent.id && g.lessonId === lesson.id);
-                                          const isSkipped = existingGrade && existingGrade.percentage === 0 && existingGrade.errors === (existingGrade.maxPoints || existingGrade.points);
-                                          const currentValue = existingGrade
-                                            ? (isSkipped ? 'S' : (entryMode === 'percentage' 
-                                                ? ((existingGrade.percentage || 0) > 0 ? (existingGrade.percentage || 0).toString() : '') 
-                                                : ((existingGrade.errors || 0) > 0 ? (existingGrade.errors || 0).toString() : '')))
-                                            : '';
+                                          const currentValue = gradeInputValue(existingGrade, entryMode);
                                           startEditingGrade(lastStudent.id, lesson.id, currentValue);
                                           toast.success('Jumped to last student');
                                         }
@@ -2394,9 +2307,7 @@ const saveGrade = async (studentId: string) => {
                                     }}
                                     onBlur={() => {
                                       // Auto-save on blur if value changed
-                                      if (tempGradeValue !== (existingGrade
-                                        ? (isSkipped ? 'S' : (entryMode === 'percentage' ? (existingGrade.percentage || 0).toString() : (existingGrade.errors || 0).toString()))
-                                        : '')) {
+                                      if (tempGradeValue !== gradeInputValue(existingGrade, entryMode)) {
                                         saveGradeInline(student.id, lesson.id, false);
                                       } else {
                                         setEditingCell(null);
@@ -2786,12 +2697,7 @@ const saveGrade = async (studentId: string) => {
                               // Table view: start editing first student in current lesson
                               const firstStudent = displayedStudents[0];
                               const existingGrade = grades.find(g => g.studentId === firstStudent.id && g.lessonId === currentSelectedLessonId);
-                              const isSkipped = existingGrade && existingGrade.percentage === 0 && existingGrade.errors === (existingGrade.maxPoints || existingGrade.points);
-                              const currentValue = existingGrade
-                                ? (isSkipped ? 'S' : (entryMode === 'percentage' 
-                                    ? ((existingGrade.percentage || 0) > 0 ? (existingGrade.percentage || 0).toString() : '') 
-                                    : ((existingGrade.errors || 0) > 0 ? (existingGrade.errors || 0).toString() : '')))
-                                : '';
+                              const currentValue = gradeInputValue(existingGrade, entryMode);
                               startEditingGrade(firstStudent.id, currentSelectedLessonId, currentValue);
                             } else {
                               // Entry view: focus first input
@@ -3022,22 +2928,15 @@ const saveGrade = async (studentId: string) => {
                           <div className="col-span-2 flex items-center gap-2">
                             {existingGrade ? (
                               <>
-                                {(() => {
-                                  // Use stored values directly from database
-                                  const percentage = existingGrade.percentage || 0;
-                                  const errors = existingGrade.errors || 0;
-                                  const maxPoints = existingGrade.maxPoints || existingGrade.points || 0;
-                                  const isSkipped = percentage === 0 && errors === maxPoints;
-                                  return isSkipped ? (
-                                    <Badge variant="outline" className="text-xs">
-                                      Skipped
-                                    </Badge>
-                                  ) : (
-                                    <Badge variant="outline" className="text-xs">
-                                      Saved
-                                    </Badge>
-                                  );
-                                })()}
+                                {existingGrade.skipped ? (
+                                  <Badge variant="outline" className="text-xs">
+                                    Skipped
+                                  </Badge>
+                                ) : (
+                                  <Badge variant="outline" className="text-xs">
+                                    Saved
+                                  </Badge>
+                                )}
                                 <Button
                                   size="sm"
                                   variant="ghost"

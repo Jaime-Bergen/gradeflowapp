@@ -161,13 +161,13 @@ export interface Grade {
   lessonId: string
   subjectId?: string // Derived from lesson, not stored in DB
   lessonName?: string
-  points: number // Earned points (calculated from maxPoints - errors)
+  points: number // Earned points (calculated from maxPoints - errors); 0 when skipped
   maxPoints: number // Total possible points (stored as 'points' in DB)
-  percentage: number
-  errors?: number // Number of errors made
+  percentage: number | null // null when skipped
+  errors?: number | null // Number of errors made; null when skipped
   date: string // Mapped from created_at/updated_at
   notes?: string
-  skipped?: boolean // Mark lessons as skipped with "S" input (frontend only)
+  skipped?: boolean // Lesson skipped for this student; no numeric score is stored
   created_at?: string
   updated_at?: string
 }

@@ -150,9 +150,18 @@ router.post('/restore/:timestamp', authenticateToken, async (req: AuthRequest, r
       
       // Restore grades
       for (const grade of backupData.data.grades) {
+        // Backups from before the skipped column stored skips as 0% with every point marked as an error.
+        const isSkipped = grade.skipped ?? (
+          grade.percentage !== null && grade.errors !== null && grade.points !== null &&
+          Number(grade.percentage) <= 0 && Number(grade.errors) >= Number(grade.points)
+        );
         await db.query(
-          'INSERT INTO grades (id, student_id, lesson_id, percentage, errors, points, school_year_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
-          [grade.id, grade.student_id, grade.lesson_id, grade.percentage, grade.errors, grade.points, grade.school_year_id || schoolYearId, grade.created_at, grade.updated_at]
+          'INSERT INTO grades (id, student_id, lesson_id, percentage, errors, points, skipped, school_year_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
+          [
+            grade.id, grade.student_id, grade.lesson_id,
+            isSkipped ? null : grade.percentage, isSkipped ? null : grade.errors, isSkipped ? null : grade.points,
+            isSkipped, grade.school_year_id || schoolYearId, grade.created_at, grade.updated_at
+          ]
         );
       }
       

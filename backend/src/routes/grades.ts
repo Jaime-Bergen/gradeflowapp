@@ -14,7 +14,7 @@ router.get('/', async (req: AuthRequest, res, next) => {
     // Fetch all grades for the user
     const result = await db.query(
       `SELECT 
-        g.id as grade_id, g.percentage, g.errors, g.points as grade_points,
+        g.id as grade_id, g.percentage, g.errors, g.points as grade_points, g.skipped,
         g.created_at, g.updated_at,
         s.id as student_id, s.name as student_name,
         sub.id as subject_id, sub.name as subject_name,
@@ -41,6 +41,7 @@ router.get('/', async (req: AuthRequest, res, next) => {
       points: row.grade_points, // This is the earned points
       maxPoints: row.lesson_points, // This is the total possible points from the lesson
       errors: row.errors,
+      skipped: row.skipped,
       date: row.created_at, // Use the actual created_at timestamp
       notes: undefined,
       created_at: row.created_at,
@@ -111,7 +112,7 @@ router.get('/subject/:subjectId', async (req: AuthRequest, res, next) => {
         s.id as student_id, s.name as student_name,
         l.id as lesson_id, l.name as lesson_name, gct.name as lesson_type, 
         l.points as lesson_points, l.order_index,
-        g.id as grade_id, g.percentage, g.errors, g.points as grade_points
+        g.id as grade_id, g.percentage, g.errors, g.points as grade_points, g.skipped
        FROM students s
        CROSS JOIN lessons l
        LEFT JOIN grade_category_types gct ON l.category_id = gct.id
@@ -140,6 +141,7 @@ router.get('/subject/:subjectId', async (req: AuthRequest, res, next) => {
         orderIndex: row.order_index,
         percentage: row.percentage,
         errors: row.errors,
+        skipped: row.skipped ?? false,
         gradePoints: row.grade_points
       });
       
@@ -156,7 +158,8 @@ router.get('/subject/:subjectId', async (req: AuthRequest, res, next) => {
 router.put('/student/:studentId/lesson/:lessonId', validateRequest(schemas.grade), async (req: AuthRequest, res, next) => {
   try {
     const { studentId, lessonId } = req.params;
-    const { percentage, errors, points } = req.body;
+    const { percentage, errors, points, skipped } = req.body;
+    const isSkipped = skipped === true;
     const db = getDB();
     const schoolYearId = req.schoolYearId;
     
@@ -181,7 +184,12 @@ router.put('/student/:studentId/lesson/:lessonId', validateRequest(schemas.grade
     let finalErrors = errors;
     let finalPoints = points;
     
-    if (finalPercentage !== undefined && finalPercentage !== null) {
+    if (isSkipped) {
+      // Skipped grades carry no numeric score so they can never be mistaken for 0%.
+      finalPercentage = null;
+      finalErrors = null;
+      finalPoints = null;
+    } else if (finalPercentage !== undefined && finalPercentage !== null) {
       // Percentage provided, calculate errors (preserve decimal precision)
       finalErrors = Math.round((lessonPoints * (1 - finalPercentage / 100)) * 2) / 2; // Round to nearest 0.5
       finalPoints = lessonPoints;
@@ -238,17 +246,18 @@ router.put('/student/:studentId/lesson/:lessonId', validateRequest(schemas.grade
 
     // Upsert the grade
     const result = await db.query(
-      `INSERT INTO grades (student_id, lesson_id, percentage, errors, points, school_year_id)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO grades (student_id, lesson_id, percentage, errors, points, skipped, school_year_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (student_id, lesson_id)
        DO UPDATE SET 
          percentage = $3, 
          errors = $4, 
          points = $5,
-         school_year_id = $6,
+         skipped = $6,
+         school_year_id = $7,
          updated_at = CURRENT_TIMESTAMP
        RETURNING *`,
-      [studentId, lessonId, finalPercentage, finalErrors, finalPoints, schoolYearId]
+      [studentId, lessonId, finalPercentage, finalErrors, finalPoints, isSkipped, schoolYearId]
     );
     
     res.json(result.rows[0]);

@@ -30,6 +30,7 @@ type DashboardSummary = {
   recentActivity?: Array<{
     id?: string
     percentage?: number | string | null
+    skipped?: boolean
     updated_at?: string
     student_name?: string
     lesson_name?: string
@@ -207,8 +208,8 @@ export default function Dashboard() {
   }
 
   const isCountableGrade = (grade: Grade) => {
-    // Skip grades flagged as skipped or with percentage < 1 (represents skipped/not attempted)
-    return !grade.skipped && getPercentageValue(grade) >= 1
+    // Skipped grades have no percentage and are excluded from averages
+    return !grade.skipped && grade.percentage !== null && grade.percentage !== undefined
   }
 
   const refreshGradingSettings = useCallback(async () => {
@@ -905,6 +906,7 @@ export default function Dashboard() {
           .map(g => ({
             id: g.id,
             percentage: g.percentage,
+            skipped: g.skipped,
             updated_at: g.updated_at || g.date,
             student_name: studentNames.get(g.studentId),
             lesson_name: g.lessonName,
@@ -1083,9 +1085,13 @@ export default function Dashboard() {
                         </p>
                       </div>
                       <div className="text-right">
-                        <Badge variant={percentage >= 90 ? "default" : percentage >= 70 ? "secondary" : "destructive"}>
-                          {percentage.toFixed(0)}%
-                        </Badge>
+                        {grade.skipped ? (
+                          <Badge variant="outline">Skipped</Badge>
+                        ) : (
+                          <Badge variant={percentage >= 90 ? "default" : percentage >= 70 ? "secondary" : "destructive"}>
+                            {percentage.toFixed(0)}%
+                          </Badge>
+                        )}
                         <p className="text-xs text-muted-foreground mt-1">
                           {grade.updated_at ? new Date(grade.updated_at).toLocaleDateString() : ''}
                         </p>
@@ -1388,7 +1394,7 @@ export default function Dashboard() {
         <DialogContent className="max-w-4xl">
           <DialogHeader>
             <DialogTitle>Weekly average by group</DialogTitle>
-            <DialogDescription>Select groups to show or hide. Skipped and zero-percent grades are excluded.</DialogDescription>
+            <DialogDescription>Select groups to show or hide. Skipped grades are excluded.</DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-4">
             <div className="flex flex-wrap gap-3">

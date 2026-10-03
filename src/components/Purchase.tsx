@@ -122,8 +122,11 @@ export default function Purchase() {
         setAccountEmail(data.email || null)
         setEmailVerified(Boolean(data.email_verified))
         setSchoolName((data.school_name || '').trim())
+        // Trial licenses are auto-assigned (100 grade cap) and don't count as owned.
         const ownedYears = Array.isArray(data.licensed_school_years)
-          ? data.licensed_school_years.map((year: any) => String(year.id))
+          ? data.licensed_school_years
+              .filter((year: any) => year.grant_source !== 'trial' && year.license_tier !== 'trial')
+              .map((year: any) => String(year.id))
           : []
         setOwnedSchoolYearIds(ownedYears)
         setAvailableSchoolYears(years)
@@ -397,7 +400,7 @@ export default function Purchase() {
               <div className="flex items-center justify-between">
                 <CardTitle className="flex items-center gap-2">
                   <Users size={18} />
-                  Full School License
+                  Full School License (Show this to your school board!)
                 </CardTitle>
                 <Badge className="bg-emerald-100 text-emerald-900 hover:bg-emerald-100">Best For Teams</Badge>
               </div>
@@ -431,7 +434,7 @@ export default function Purchase() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <User size={18} />
-                Single Teacher License
+                Single Teacher License (I'd rather pay myself.)
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">

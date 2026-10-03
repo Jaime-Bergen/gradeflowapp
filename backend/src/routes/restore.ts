@@ -475,22 +475,33 @@ router.post('/restore/json', authenticateToken, upload.single('backupFile'), asy
         if (existing.rows.length > 0) continue;
       }
 
+      // Older backups stored skips as 0% with every point marked as an error.
+      const rawPercentage = grade.percentage ?? grade.grade_value ?? null;
+      const rawErrors = grade.errors ?? null;
+      const rawPoints = grade.points ?? grade.max_points ?? null;
+      const isSkipped: boolean = grade.skipped ?? (
+        rawPercentage !== null && rawErrors !== null && rawPoints !== null &&
+        Number(rawPercentage) <= 0 && Number(rawErrors) >= Number(rawPoints)
+      );
+
       await client.query(
-        `INSERT INTO grades (student_id, lesson_id, percentage, errors, points, school_year_id, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `INSERT INTO grades (student_id, lesson_id, percentage, errors, points, skipped, school_year_id, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          ON CONFLICT (student_id, lesson_id)
          DO UPDATE SET
            percentage = EXCLUDED.percentage,
            errors = EXCLUDED.errors,
            points = EXCLUDED.points,
+           skipped = EXCLUDED.skipped,
            school_year_id = EXCLUDED.school_year_id,
            updated_at = EXCLUDED.updated_at`,
         [
           newStudentId,
           newLessonId,
-          grade.percentage ?? grade.grade_value ?? null,
-          grade.errors ?? null,
-          grade.points ?? grade.max_points ?? null,
+          isSkipped ? null : rawPercentage,
+          isSkipped ? null : rawErrors,
+          isSkipped ? null : rawPoints,
+          isSkipped,
           schoolYearId,
           grade.created_at || nowIso,
           grade.updated_at || nowIso,

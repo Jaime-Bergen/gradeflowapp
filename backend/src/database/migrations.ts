@@ -39,6 +39,7 @@ export const runMigrations = async (): Promise<void> => {
     await removeLessonTypeConstraint(db);
     await removeLegacyWeightColumns(db);
     await updateGradesErrorsColumnType(db);
+    await addSkippedToGrades(db);
     await addColorToGradeCategoryTypes(db);
     await seedDefaultGradeCategoryTypes(db);
     await addCategoryIdToLessons(db);
@@ -1210,6 +1211,30 @@ const updateGradesErrorsColumnType = async (db: any) => {
     console.log('✅ Updated grades.errors column to support decimal values');
   } catch (error) {
     console.error('Error updating grades column types:', error);
+    throw error;
+  }
+};
+
+const addSkippedToGrades = async (db: any) => {
+  try {
+    const existing = await db.query(`
+      SELECT 1 FROM information_schema.columns
+      WHERE table_name = 'grades' AND column_name = 'skipped'
+    `);
+    if (existing.rows.length > 0) return;
+
+    await db.query(`ALTER TABLE grades ADD COLUMN skipped BOOLEAN NOT NULL DEFAULT false`);
+
+    // One-time backfill: legacy skips were stored as 0% with every point marked as an error.
+    // Must not re-run, or genuine 0% grades would be reclassified as skipped.
+    const backfill = await db.query(`
+      UPDATE grades
+      SET skipped = true, percentage = NULL, errors = NULL, points = NULL
+      WHERE percentage <= 0 AND errors IS NOT NULL AND points IS NOT NULL AND errors >= points
+    `);
+    console.log(`✅ Added skipped column to grades (backfilled ${backfill.rowCount} legacy skips)`);
+  } catch (error) {
+    console.error('Error adding skipped column to grades:', error);
     throw error;
   }
 };

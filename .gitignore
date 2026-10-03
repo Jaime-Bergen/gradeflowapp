@@ -35,3 +35,6 @@ packages
 
 # TypeScript incremental build cache
 *.tsbuildinfo
+
+# Compiled output must not shadow .ts/.tsx sources in Vite resolution
+src/**/*.js

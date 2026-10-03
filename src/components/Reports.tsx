@@ -642,16 +642,16 @@ export default function Reports() {
         })
 
         const currentAverage = periodValues[periodValues.length - 1]
-        const safeAverage = typeof currentAverage === 'number' && !isNaN(currentAverage)
-          ? currentAverage
-          : (currentSubject?.average ?? 0)
+        const hasCurrentAverage = typeof currentAverage === 'number' && !isNaN(currentAverage)
+        // No countable grades this period (e.g. everything skipped): leave the subject ungraded rather than 0%
+        const safeAverage = hasCurrentAverage ? currentAverage : 0
 
         return {
           subjectId,
           subjectName: currentSubject?.subjectName || (fallbackSubject ? getSubjectDisplayName(fallbackSubject) : 'Unknown Subject'),
           grades: currentSubject?.grades || [],
           average: safeAverage,
-          letterGrade: getLetterGrade(safeAverage),
+          letterGrade: hasCurrentAverage ? getLetterGrade(safeAverage) : 'N/A',
           periodValues,
           displayMode: preference.displayMode,
           tier: preference.tier,
@@ -1023,7 +1023,7 @@ export default function Reports() {
     const subjectsWithCurrentValues = previewReport.subjects
       .map(subject => {
         const currentValue = subject.periodValues?.[subject.periodValues.length - 1]
-        const value = typeof currentValue === 'number' && !isNaN(currentValue)
+        const value = subject.periodValues && subject.periodValues.length > 0
           ? currentValue
           : subject.average
         return {

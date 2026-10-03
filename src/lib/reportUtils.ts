@@ -22,6 +22,13 @@ export const getLetterGrade = (percentage: number): string => {
   return 'F'
 }
 
+// Percentage that counts toward averages, or null for skipped/unscored grades
+export const getCountablePercentage = (grade: Grade): number | null => {
+  if (grade.skipped || grade.percentage === null || grade.percentage === undefined) return null
+  const value = typeof grade.percentage === 'string' ? parseFloat(grade.percentage) : grade.percentage
+  return typeof value === 'number' && !isNaN(value) ? value : null
+}
+
 export const calculateSubjectGrade = (
   studentId: string, 
   subjectId: string, 
@@ -60,25 +67,9 @@ export const calculateSubjectGrade = (
   const gradesByType = studentGrades.reduce((acc, grade) => {
     const lesson = subject.lessons.find(l => l.id === grade.lessonId)
     if (lesson) {
-      if (!acc[lesson.type]) acc[lesson.type] = []
-      // Convert percentage to number, handling both string and number inputs
-      let percentage = 0
-      if (typeof grade.percentage === 'number' && !isNaN(grade.percentage)) {
-        percentage = grade.percentage
-      } else if (typeof grade.percentage === 'string') {
-        const parsed = parseFloat(grade.percentage)
-        percentage = !isNaN(parsed) ? parsed : 0
-      }
-      
-      console.log('calculateSubjectGrade: Processing grade', {
-        gradeId: grade.id,
-        originalPercentage: grade.percentage,
-        convertedPercentage: percentage,
-        lessonType: lesson.type
-      })
-      
-      // Skip grades with percentage < 1 (these represent skipped/not attempted grades)
-      if (percentage >= 1) {
+      const percentage = getCountablePercentage(grade)
+      if (percentage !== null) {
+        if (!acc[lesson.type]) acc[lesson.type] = []
         acc[lesson.type].push(percentage)
       }
     } else {
@@ -90,6 +81,9 @@ export const calculateSubjectGrade = (
     }
     return acc
   }, {} as Record<string, number[]>)
+
+  // Every grade was skipped/unscored: there is no average to report
+  if (Object.keys(gradesByType).length === 0) return null
 
   console.log('calculateSubjectGrade: Grades by type', { subjectId, gradesByType })
 
@@ -269,21 +263,16 @@ export const getSubjectCalculationBreakdown = (
   const gradesByType = studentGrades.reduce((acc, grade) => {
     const lesson = subject.lessons.find(l => l.id === grade.lessonId)
     if (lesson) {
-      if (!acc[lesson.type]) acc[lesson.type] = []
-      let percentage = 0
-      if (typeof grade.percentage === 'number' && !isNaN(grade.percentage)) {
-        percentage = grade.percentage
-      } else if (typeof grade.percentage === 'string') {
-        const parsed = parseFloat(grade.percentage)
-        percentage = !isNaN(parsed) ? parsed : 0
-      }
-      // Skip grades with percentage < 1 (these represent skipped/not attempted grades)
-      if (percentage >= 1) {
+      const percentage = getCountablePercentage(grade)
+      if (percentage !== null) {
+        if (!acc[lesson.type]) acc[lesson.type] = []
         acc[lesson.type].push(percentage)
       }
     }
     return acc
   }, {} as Record<string, number[]>)
+
+  if (Object.keys(gradesByType).length === 0) return null
 
   const subjectWeights = subject.weights || {}
   const weightMapping: Record<string, number> = {}

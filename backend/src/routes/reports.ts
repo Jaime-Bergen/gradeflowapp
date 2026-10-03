@@ -44,7 +44,7 @@ router.get('/student/:studentId', async (req: AuthRequest, res, next) => {
       const gradesResult = await db.query(
         `SELECT 
           l.id as lesson_id, l.name as lesson_name, l.category_id, l.points as lesson_points,
-          g.percentage, g.errors, g.points as grade_points,
+          g.percentage, g.errors, g.points as grade_points, COALESCE(g.skipped, false) as skipped,
           gct.name as lesson_type
          FROM lessons l
            LEFT JOIN grades g ON l.id = g.lesson_id AND g.student_id = $1 AND g.school_year_id = $3
@@ -69,10 +69,10 @@ router.get('/student/:studentId', async (req: AuthRequest, res, next) => {
       });
       
       // Group grades by category_id (not lesson_type string)
-      // Skip grades with percentage < 1 (these represent skipped/not attempted grades)
+      // Skipped grades have no percentage and are excluded from averages
       const gradesByCategory = {};
       gradesResult.rows.forEach(grade => {
-        if (grade.percentage !== null && grade.percentage >= 1 && grade.category_id) {
+        if (!grade.skipped && grade.percentage !== null && grade.category_id) {
           if (!gradesByCategory[grade.category_id]) {
             gradesByCategory[grade.category_id] = [];
           }
@@ -112,7 +112,7 @@ router.get('/student/:studentId', async (req: AuthRequest, res, next) => {
         grades: gradesResult.rows,
         typeAverages,
         weightedAverage,
-        totalGrades: gradesResult.rows.filter(g => g.percentage !== null && g.percentage >= 1).length,
+        totalGrades: gradesResult.rows.filter(g => !g.skipped && g.percentage !== null).length,
         totalLessons: gradesResult.rows.length
       });
     }
@@ -182,12 +182,12 @@ router.get('/group/:groupId', async (req: AuthRequest, res, next) => {
       
       for (const subject of subjectsResult.rows) {
         // Get grades for this student in this subject
-        // Exclude grades with percentage < 1 (skipped grades)
+        // Exclude skipped grades (percentage is NULL)
         const gradesResult = await db.query(
           `SELECT g.percentage, l.category_id
            FROM grades g
            JOIN lessons l ON g.lesson_id = l.id
-           WHERE g.student_id = $1 AND l.subject_id = $2 AND g.percentage >= 1
+           WHERE g.student_id = $1 AND l.subject_id = $2 AND g.skipped = false AND g.percentage IS NOT NULL
              AND g.school_year_id = $3 AND l.school_year_id = $3`,
           [student.id, subject.id, schoolYearId]
         );
@@ -289,7 +289,7 @@ router.get('/dashboard', async (req: AuthRequest, res, next) => {
     // Get recent activity (last 10 grades entered)
     const recentActivity = await db.query(
       `SELECT 
-        g.percentage, g.updated_at,
+        g.percentage, g.skipped, g.updated_at,
         s.name as student_name,
         l.name as lesson_name,
         sub.name as subject_name
@@ -308,7 +308,7 @@ router.get('/dashboard', async (req: AuthRequest, res, next) => {
     );
     
     // Get subject performance summary
-    // Exclude grades with percentage < 1 (skipped grades) from averages
+    // Exclude skipped grades from averages
     const subjectPerformance = await db.query(
       `SELECT 
         sub.name as subject_name,
@@ -317,7 +317,7 @@ router.get('/dashboard', async (req: AuthRequest, res, next) => {
         AVG(g.percentage) as average_percentage
        FROM subjects sub
        LEFT JOIN lessons l ON l.subject_id = sub.id AND l.school_year_id = $2
-       LEFT JOIN grades g ON g.lesson_id = l.id AND g.percentage >= 1 AND g.school_year_id = $2
+       LEFT JOIN grades g ON g.lesson_id = l.id AND g.skipped = false AND g.school_year_id = $2
        LEFT JOIN students s ON g.student_id = s.id AND s.school_year_id = $2
        WHERE sub.user_id = $1 AND sub.school_year_id = $2
        GROUP BY sub.id, sub.name
@@ -326,7 +326,7 @@ router.get('/dashboard', async (req: AuthRequest, res, next) => {
     );
     
     // Get grade distribution
-    // Exclude grades with percentage < 1 (skipped grades)
+    // Exclude skipped grades
     const gradeDistribution = await db.query(
       `SELECT 
         CASE 
@@ -339,7 +339,7 @@ router.get('/dashboard', async (req: AuthRequest, res, next) => {
         COUNT(*) as count
        FROM grades g
        JOIN students s ON g.student_id = s.id
-       WHERE s.user_id = $1 AND s.school_year_id = $2 AND g.school_year_id = $2 AND g.percentage IS NOT NULL AND g.percentage >= 1
+       WHERE s.user_id = $1 AND s.school_year_id = $2 AND g.school_year_id = $2 AND g.skipped = false AND g.percentage IS NOT NULL
        GROUP BY 
          CASE 
            WHEN percentage >= 90 THEN 'A (90-100%)'
